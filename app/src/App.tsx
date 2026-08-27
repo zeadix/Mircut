@@ -32,8 +32,14 @@ export default function App() {
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
   const [exportPct, setExportPct] = useState<number | null>(null);
+  const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
+  const [presetIdx, setPresetIdx] = useState(0);
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    api.listExportPresets().then(setPresets).catch(() => {});
+  }, []);
 
   // 导出进度事件
   useEffect(() => {
@@ -144,12 +150,13 @@ export default function App() {
       out = picked;
       setExportPath(picked);
     }
+    const preset = presets[presetIdx];
     const req: api.ExportRequest = {
       outPath: out,
-      width: 1280,
-      height: 720,
-      fps: Math.round(fps),
-      crf: 20,
+      width: preset?.width ?? 1280,
+      height: preset?.height ?? 720,
+      fps: preset?.fps ?? Math.round(fps),
+      crf: preset?.crf ?? 20,
     };
     setStatus("导出中...");
     setExportPct(0);
@@ -214,12 +221,13 @@ export default function App() {
 
   async function onPreviewCmd() {
     if (!doc) return;
+    const preset = presets[presetIdx];
     const cmd = await api.previewExportCmd({
       outPath: exportPath,
-      width: 1280,
-      height: 720,
-      fps: Math.round(fps),
-      crf: 20,
+      width: preset?.width ?? 1280,
+      height: preset?.height ?? 720,
+      fps: preset?.fps ?? Math.round(fps),
+      crf: preset?.crf ?? 20,
     });
     setExportCmd(cmd);
   }
@@ -385,8 +393,20 @@ export default function App() {
           className="ti"
           value={exportPath}
           onChange={(e) => setExportPath(e.target.value)}
-          style={{ width: 280 }}
+          style={{ width: 240 }}
         />
+        <select
+          className="ti"
+          value={presetIdx}
+          onChange={(e) => setPresetIdx(Number(e.target.value))}
+          title="平台预设"
+        >
+          {presets.map((p, i) => (
+            <option key={p.name} value={i}>
+              {p.name} ({p.width}x{p.height}@{p.fps})
+            </option>
+          ))}
+        </select>
         <button className="btn" onClick={onPreviewCmd}>FFmpeg 命令预览</button>
         {exportPct !== null && (
           <>

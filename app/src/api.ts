@@ -146,6 +146,19 @@ export async function cancelExport(): Promise<boolean> {
   return invoke("cancel_export");
 }
 
+export interface ExportPresetInfo {
+  name: string;
+  width: number;
+  height: number;
+  fps: number;
+  crf: number;
+  audio_bitrate: string;
+}
+
+export async function listExportPresets(): Promise<ExportPresetInfo[]> {
+  return invoke("list_export_presets");
+}
+
 export async function previewExportCmd(req: ExportRequest): Promise<string> {
   const payload = {
     req: {

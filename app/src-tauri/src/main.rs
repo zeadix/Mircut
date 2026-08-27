@@ -747,6 +747,24 @@ fn cancel_export() -> bool {
     true
 }
 
+/// 平台导出预设列表。
+#[tauri::command]
+fn list_export_presets() -> Vec<serde_json::Value> {
+    veditor_export::export_presets()
+        .into_iter()
+        .map(|p| {
+            serde_json::json!({
+                "name": p.name,
+                "width": p.width,
+                "height": p.height,
+                "fps": p.fps,
+                "crf": p.crf,
+                "audio_bitrate": p.audio_bitrate,
+            })
+        })
+        .collect()
+}
+
 fn state_export_cancel(
 ) -> &'static std::sync::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> {
     static C: std::sync::OnceLock<
@@ -813,6 +831,7 @@ fn main() {
             open_project,
             import_jianying,
             cancel_export,
+            list_export_presets,
             seek_frame,
             export_video,
             preview_export_cmd

@@ -39,6 +39,85 @@ impl Default for ExportParams {
     }
 }
 
+/// 平台导出预设(规格 2.8 P1)。
+#[derive(Debug, Clone)]
+pub struct ExportPreset {
+    pub name: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub crf: u32,
+    pub audio_bitrate: &'static str,
+}
+
+/// 内置预设:B站 / YouTube / 抖音 + 通用 1080p/720p。
+pub fn export_presets() -> Vec<ExportPreset> {
+    vec![
+        ExportPreset {
+            name: "B站 1080P",
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            crf: 20,
+            audio_bitrate: "192k",
+        },
+        ExportPreset {
+            name: "B站 4K",
+            width: 3840,
+            height: 2160,
+            fps: 30,
+            crf: 20,
+            audio_bitrate: "320k",
+        },
+        ExportPreset {
+            name: "YouTube 1080P",
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            crf: 18,
+            audio_bitrate: "192k",
+        },
+        ExportPreset {
+            name: "YouTube 4K",
+            width: 3840,
+            height: 2160,
+            fps: 60,
+            crf: 18,
+            audio_bitrate: "320k",
+        },
+        ExportPreset {
+            name: "抖音 1080P 竖屏",
+            width: 1080,
+            height: 1920,
+            fps: 30,
+            crf: 21,
+            audio_bitrate: "128k",
+        },
+        ExportPreset {
+            name: "通用 720P",
+            width: 1280,
+            height: 720,
+            fps: 30,
+            crf: 22,
+            audio_bitrate: "128k",
+        },
+    ]
+}
+
+impl ExportPreset {
+    pub fn to_params(&self, out_path: impl Into<PathBuf>) -> ExportParams {
+        ExportParams {
+            out_path: out_path.into(),
+            width: self.width,
+            height: self.height,
+            fps: self.fps,
+            crf: self.crf,
+            audio_bitrate: self.audio_bitrate.into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// 编译单条 FFmpeg 命令(整条时间轴,顺序 concat 方案)。
 /// M1 简化模型:每轨按时间顺序 concat;视频轨取最上层非隐藏轨;音频轨全部混音。
 pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> {
@@ -611,6 +690,21 @@ mod tests {
             .map(|(_, b)| b.clone())
             .unwrap();
         assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+    }
+
+    #[test]
+    fn presets_cover_platforms() {
+        let ps = export_presets();
+        assert!(ps.len() >= 5);
+        let names: Vec<&str> = ps.iter().map(|p| p.name).collect();
+        assert!(names.iter().any(|n| n.contains("B站")));
+        assert!(names.iter().any(|n| n.contains("YouTube")));
+        assert!(names.iter().any(|n| n.contains("抖音")));
+        let dy = ps.iter().find(|p| p.name.contains("抖音")).unwrap();
+        assert_eq!(dy.height, 1920); // 竖屏
+        let params = dy.to_params("/tmp/dy.mp4");
+        assert_eq!(params.width, 1080);
+        assert_eq!(params.out_path, PathBuf::from("/tmp/dy.mp4"));
     }
 
     #[test]
