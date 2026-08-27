@@ -124,13 +124,15 @@ impl ExportPreset {
 pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> {
     let mut args: Vec<String> = vec!["-y".into()];
 
-    // 视频轨:最上层(最后声明)非隐藏视频轨
-    let video_track = doc
+    // 视频轨:全部非隐藏视频轨,自下而上;主轨(最下)全尺寸,上层 overlay
+    let video_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .rfind(|t| t.kind == TrackKind::Video && !t.hidden)
-        .map(|t| t.id.clone());
-    // 音频轨:所有轨
+        .filter(|t| t.kind == TrackKind::Video && !t.hidden)
+        .map(|t| t.id.clone())
+        .collect();
+    let video_track = video_tracks.first().cloned(); // 主轨
+                                                     // 音频轨:所有轨
     let audio_tracks: Vec<String> = doc
         .tracks
         .iter()
@@ -145,7 +147,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         clip_id: String,
     }
     let mut uses: Vec<InputUse> = Vec::new();
-    if let Some(vt) = &video_track {
+    for vt in &video_tracks {
         for c in doc.clips_on_track(vt) {
             if let Some(a) = doc.asset(&c.asset.asset_id) {
                 if !a.path.is_empty() {
@@ -337,6 +339,61 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         }
     }
 
+    // 上层视频轨(画中画):每片段独立链(缩放/位置)后按时间窗 overlay 到 [vcat]
+    // 最终视频输出标签(可能被 overlay 链推进为 [vovN])
+    let mut vout = "[vcat]".to_string();
+    let mut ov_n = 0usize;
+    let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
+    for vt in video_tracks.iter().skip(1) {
+        for c in doc.clips_on_track(vt) {
+            let input_idx = input_of(&c.id);
+            let st = c.start as f64 / fps_tb;
+            let en = (c.start + c.duration) as f64 / fps_tb;
+            // 画中画尺寸:fx.scale 静态值(默认 0.35);位置:x/y_offset(0-1,默认 0.72/0.72 右下)
+            let pip_scale =
+                c.fx.scale
+                    .value_at(c.start)
+                    .unwrap_or(0.35)
+                    .clamp(0.05, 1.0);
+            let pip_x =
+                c.fx.x_offset
+                    .value_at(c.start)
+                    .unwrap_or(0.72)
+                    .clamp(0.0, 1.0);
+            let pip_y =
+                c.fx.y_offset
+                    .value_at(c.start)
+                    .unwrap_or(0.72)
+                    .clamp(0.0, 1.0);
+            let pw = (params.width as f64 * pip_scale).round() as u32;
+            let ph = (params.height as f64 * pip_scale).round() as u32;
+            let ox = ((params.width - pw) as f64 * pip_x).round() as i32;
+            let oy = ((params.height - ph) as f64 * pip_y).round() as i32;
+            // 片段链:trim -> 缩放画中画 -> (透明度) -> 设定 pts 起始 -> overlay
+            let mut chain = format!(
+                "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,scale={pw}:{ph}:force_original_aspect_ratio=decrease,format=yuva420p",
+                input_idx,
+                c.asset.source_in,
+                c.source_span_secs(&doc.timebase),
+            );
+            // 透明度(静态)
+            if let Some(op) = c.fx.opacity.value_at(c.start) {
+                if (op - 1.0).abs() > 1e-3 {
+                    chain.push_str(&format!(",colorchannelmixer=aa={op:.3}"));
+                }
+            }
+            let pip_label = format!("[pip{ov_n}]");
+            chain.push_str(&pip_label);
+            filters.push(chain);
+            let out_label = format!("[vov{ov_n}]");
+            filters.push(format!(
+                "{vout}{pip_label}overlay=x={ox}:y={oy}:eof_action=pass:enable='between(t,{st:.3},{en:.3})'{out_label}"
+            ));
+            vout = out_label;
+            ov_n += 1;
+        }
+    }
+
     // 音频:各轨片段 trim 后 concat,再 amix
     let mut audio_labels: Vec<String> = Vec::new();
     for (ti, at) in audio_tracks.iter().enumerate() {
@@ -385,15 +442,14 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         ));
     }
 
-    // 字幕烧录 + 文字叠层:在 [vcat] 之后逐条 drawtext(enable 时间窗)
+    // 字幕烧录 + 文字叠层:在最终视频(vout,可能含画中画)之后逐条 drawtext
     let has_video_out = video_track
         .as_ref()
         .is_some_and(|vt| !doc.clips_on_track(vt).is_empty());
-    let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
     let has_subs = has_video_out && !doc.subtitles.cues.is_empty();
     let has_texts = has_video_out && !doc.text_overlays.is_empty();
     if has_subs || has_texts {
-        let mut chain = String::from("[vcat]");
+        let mut chain = String::from(&vout);
         if has_subs {
             for cue in &doc.subtitles.cues {
                 let start = cue.start as f64 / fps_tb;
@@ -457,7 +513,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             args.push(if use_vsub {
                 "[vsub]".into()
             } else {
-                "[vcat]".into()
+                vout.clone()
             });
         }
     }
@@ -964,6 +1020,90 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"video"), "应含视频流: {kinds:?}");
         assert!(kinds.contains(&"audio"), "应含音频流: {kinds:?}");
+    }
+
+    /// 画中画:双层轨导出,主轨全时长,上层 35% 右下角;验证输出时长与画面差异。
+    #[test]
+    fn e2e_picture_in_picture_two_layers() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !std::path::Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        d.assets[0].has_audio = false; // 主轨纯视频,避免音频流干扰
+        d.tracks.push(Track {
+            id: "v2".into(),
+            kind: TrackKind::Video,
+            name: "V2".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        // 主轨 t1: 0-1s;上层 v2: 0.2-1.2s(重叠窗口)
+        d.clips[1].track_id = "v2".into();
+        d.clips[1].start = 6; // 0.2s @30fps
+        d.clips[1].duration = 30;
+
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_pip.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        let args = compile_ffmpeg_cmd(&d, &params);
+        run_export(&args).unwrap();
+
+        // 时长 = 主轨 1s
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let dur: f64 = String::from_utf8_lossy(&probe.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        assert!((dur - 1.0).abs() < 0.35, "PiP 时长应 ~1s, got {dur}");
+
+        // 画面验证:0.6s(画中画激活)与 0.05s(无 PiP)的右下角像素差异
+        let grab = |t: &str| -> u64 {
+            let img = std::env::temp_dir().join(format!("veditor-media-tests/pip_{t}.png"));
+            let _ = std::fs::remove_file(&img);
+            let o = Command::new("ffmpeg")
+                .args(["-y", "-ss", t, "-i"])
+                .arg(&out)
+                .args([
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    "crop=96:72:200:150",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "gray",
+                ])
+                .arg(&img)
+                .output()
+                .unwrap();
+            assert!(o.status.success());
+            let sum: u64 = std::fs::read(&img).unwrap().iter().map(|b| *b as u64).sum();
+            sum
+        };
+        let with_pip = grab("0.6");
+        let without_pip = grab("0.05");
+        assert_ne!(with_pip, without_pip, "画中画窗口内像素应与无 PiP 帧不同");
     }
 
     #[test]

@@ -24,6 +24,8 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   // 入/出点数字编辑(秒)
   const [inSecs, setInSecs] = useState("0.00");
   const [outSecs, setOutSecs] = useState("0.00");
+  // 画中画(上层轨片段)
+  const [pip, setPip] = useState({ scale: 0.35, x: 0.72, y: 0.72 });
 
   useEffect(() => {
     if (clip) {
@@ -66,6 +68,28 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
       setOutSecs(clip.asset.source_out.toFixed(2));
     }
   }, [clip?.id, clip?.asset.source_in, clip?.asset.source_out]);
+
+  useEffect(() => {
+    if (clip?.fx) {
+      setPip({
+        scale: clip.fx.scale.value_at(clip.start) ?? 0.35,
+        x: clip.fx.x_offset.value_at(clip.start) ?? 0.72,
+        y: clip.fx.y_offset.value_at(clip.start) ?? 0.72,
+      });
+    }
+  }, [clip?.id]);
+
+  /// 画中画参数写入(fx 静态单帧)。
+  async function applyPip() {
+    if (!clip) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const fx = clip.fx ?? emptyFx();
+    fx.scale = { keyframes: [{ t: 0, value: pip.scale, interp: "Smooth" }] };
+    fx.x_offset = { keyframes: [{ t: 0, value: pip.x, interp: "Smooth" }] };
+    fx.y_offset = { keyframes: [{ t: 0, value: pip.y, interp: "Smooth" }] };
+    await invoke("set_clip_fx", { clipId: clip.id, fx });
+    await onRefresh();
+  }
 
   /// 数字入/出点提交:换算 ticks 走 trim_clip(项目 30fps 基准)。
   async function applyTrimByNumbers(edge: "left" | "right", secsStr: string) {
@@ -186,8 +210,7 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   }
 
   /// 特效预设(规格 P1):一键写入 fx 组合。
-  async function applyPreset(name: string) {
-    const { invoke } = await import("@tauri-apps/api/core");
+  async function applyPreset(name: string) {    const { invoke } = await import("@tauri-apps/api/core");
     const fx = clip!.fx ?? emptyFx();
     if (name === "电影感") {
       fx.grade = { brightness: -0.03, contrast: 1.12, saturation: 1.05, temperature: 0 };
@@ -346,6 +369,29 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
           onBlur={applyLut}
         />
         {lutPath && <div style={{ color: "#667", marginTop: 4 }}>已应用(强度 100%)</div>}
+      </fieldset>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>画中画(上层轨道片段)</legend>
+        {([["scale", "大小", 0.05, 1.0], ["x", "横向位置", 0, 1], ["y", "纵向位置", 0, 1]] as const).map(
+          ([key, label, min, max]) => (
+            <label key={key} style={{ display: "block", marginBottom: 3 }}>
+              {label}: {(pip[key] * 100).toFixed(0)}%
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={0.01}
+                value={pip[key]}
+                onChange={(e) => setPip({ ...pip, [key]: parseFloat(e.target.value) })}
+                onMouseUp={applyPip}
+                onTouchEnd={applyPip}
+                style={{ width: "100%" }}
+              />
+            </label>
+          )
+        )}
+        <div style={{ color: "#667", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
