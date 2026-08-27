@@ -1,7 +1,7 @@
 //! VEditor core:M2 扩展命令(轨道管理/波纹删除/关键帧/变速/转场/调色/音量静音)。
 //! 与 lib.rs 的基础命令共用 Command trait。
 
-use crate::{Clip, Command, Document, Ticks, Track, TrackKind};
+use crate::{Clip, Command, Document, Ticks, Track};
 
 /// 添加轨道(指定类型与名称)。
 pub struct AddTrack {
@@ -397,7 +397,7 @@ impl Command for RemoveTransition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AssetRef, CommandStack};
+    use crate::{AssetRef, CommandStack, TrackKind};
 
     fn clip(id: &str, track: &str, start: Ticks, duration: Ticks) -> Clip {
         Clip {
