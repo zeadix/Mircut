@@ -5,10 +5,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use veditor_core::{
-    AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, ColorGrade, Command, CommandStack,
-    DetachAudio, Document, Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio,
-    SetFx, SetSpeed, SetTrackFlags, SetTransition, SplitClip, Ticks, Track, TrackKind, Transition,
-    TransitionKind,
+    AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, DetachAudio, Document,
+    Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed,
+    SetTrackFlags, SetTransition, SplitClip, Ticks, Track, TrackKind, Transition, TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
