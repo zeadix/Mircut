@@ -237,6 +237,7 @@ fn add_clip(
         speed: 1.0,
         volume: 1.0,
         muted: false,
+        fx: Default::default(),
     };
     inner.exec(Box::new(AddClip { clip: clip.clone() }));
     Ok(clip)
@@ -410,6 +411,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                fx: Default::default(),
             };
             inner.exec(Box::new(AddClip { clip }));
             assert_eq!(inner.doc.clips.len(), 1);

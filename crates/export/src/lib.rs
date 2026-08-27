@@ -234,6 +234,7 @@ mod tests {
             volume: 1.0,
             muted: false,
             track_id: "t1".into(),
+            fx: Default::default(),
         });
         doc.clips.push(Clip {
             id: "c2".into(),
@@ -248,6 +249,7 @@ mod tests {
             volume: 0.5,
             muted: false,
             track_id: "t2".into(),
+            fx: Default::default(),
         });
         doc
     }

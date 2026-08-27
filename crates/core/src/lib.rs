@@ -3,6 +3,15 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod commands_m2;
+pub mod fx;
+
+pub use commands_m2::{
+    AddTrack, DetachAudio, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio, SetFx,
+    SetSpeed, SetTrackFlags, SetTransition,
+};
+pub use fx::{Animatable, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind};
+
 /// 有理数时间基(如 30fps -> 1/30)。
 pub type Rational = (i64, i64);
 
@@ -61,6 +70,9 @@ pub struct Clip {
     pub volume: f64,
     /// 是否静音。
     pub muted: bool,
+    /// 特效属性(不透明度/缩放/旋转/位移/调色/音量动画)。
+    #[serde(default)]
+    pub fx: ClipFx,
 }
 
 impl Clip {
@@ -111,6 +123,9 @@ pub struct Document {
     pub tracks: Vec<Track>,
     pub clips: Vec<Clip>,
     pub assets: Vec<Asset>,
+    /// 片段间转场。
+    #[serde(default)]
+    pub transitions: Vec<Transition>,
 }
 
 impl Default for Document {
@@ -120,6 +135,7 @@ impl Default for Document {
             tracks: Vec::new(),
             clips: Vec::new(),
             assets: Vec::new(),
+            transitions: Vec::new(),
         }
     }
 }
@@ -359,6 +375,7 @@ impl Command for SplitClip {
             speed,
             volume: left.volume,
             muted: left.muted,
+            fx: left.fx.clone(),
         };
         doc.clips.push(right);
         self.right_id = Some(right_id);
@@ -448,6 +465,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            fx: Default::default(),
         }
     }
 

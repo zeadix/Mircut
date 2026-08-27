@@ -178,6 +178,7 @@ mod tests {
             volume: 1.0,
             muted: false,
             track_id: "t1".into(),
+            fx: Default::default(),
         });
         doc
     }
