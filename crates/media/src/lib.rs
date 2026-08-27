@@ -1,5 +1,9 @@
-//! VEditor 媒体层:ffprobe 元数据探测、缩略图/波形生成、惰性代理转码。
+//! VEditor 媒体层:ffprobe 元数据探测、缩略图/波形生成、惰性代理转码、剪映草稿导入。
 //! M0 提供 `probe`;其余 M1 实现。
+
+pub mod jianying;
+
+pub use jianying::import_jianying_draft;
 
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
