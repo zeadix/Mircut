@@ -8,63 +8,51 @@ interface Props {
   renderMode: "proxy" | "realtime";
 }
 
+type SeekResp = { jpeg_path: string | null; error: string | null };
+
+async function fetchFrame(cmd: string, t: number): Promise<SeekResp> {
+  return invoke<SeekResp>(cmd, { t });
+}
+
 /// 预览:proxy 模式=节流单帧 JPEG;realtime 模式=连续帧流(父组件驱动播放头推进)。
+/// 关键:取帧请求在飞行中就不发新请求(防积压),播放中降频轮询而非
+/// 依赖 effect 重入——否则 cleanup 会不断取消未到期定时器导致永远取不到帧。
 export default function Preview({ playheadTicks, fps, playing, renderMode }: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const lastReq = useRef(0);
+  const inFlight = useRef(false);
+  const pendingT = useRef<number>(playheadTicks);
 
   useEffect(() => {
-    // 播放中 realtime 由 App 的 rAF 循环推进 playhead,这里逐帧取
-    const interval = playing && renderMode === "realtime" ? 0 : 80;
-    if (interval === 0) {
-      // realtime 播放:每帧立即取
-      let cancelled = false;
-      (async () => {
-        const cmd = renderMode === "realtime" ? "realtime_frame" : "seek_frame";
-        try {
-          const r = await invoke<{ jpeg_path: string | null; error: string | null }>(cmd, {
-            t: playheadTicks,
-          });
-          if (!cancelled) {
-            if (r.jpeg_path) {
-              setSrc(convertFileSrc(r.jpeg_path) + `?v=${Date.now()}`);
-              setErr(null);
-            } else {
-              setErr(r.error ?? "无画面");
-            }
-          }
-        } catch (e) {
-          if (!cancelled) setErr(String(e));
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }
-    // proxy:停止移动后节流刷新
+    pendingT.current = playheadTicks;
+    // 已有请求在飞行:让它完成时用最新 pendingT 即可
+    if (inFlight.current) return;
+
     let cancelled = false;
-    const now = Date.now();
-    if (now - lastReq.current < interval) return;
-    const timer = setTimeout(async () => {
-      lastReq.current = now;
+    const pull = async () => {
+      if (cancelled) return;
+      inFlight.current = true;
       try {
-        const r = await invoke<{ jpeg_path: string | null; error: string | null }>(
-          "seek_frame",
-          { t: playheadTicks }
-        );
-        if (cancelled) return;
-        if (r.jpeg_path) {
-          setSrc(convertFileSrc(r.jpeg_path));
-          setErr(null);
-        } else {
-          setSrc(null);
-          setErr(r.error ?? "无画面");
+        const cmd = renderMode === "realtime" ? "realtime_frame" : "seek_frame";
+        const r = await fetchFrame(cmd, pendingT.current);
+        if (!cancelled) {
+          if (r.jpeg_path) {
+            // 时间戳破缓存:realtime 每帧同一路径
+            setSrc(convertFileSrc(r.jpeg_path) + `?v=${pendingT.current}`);
+            setErr(null);
+          } else {
+            setSrc(null);
+            setErr(r.error ?? "无画面");
+          }
         }
       } catch (e) {
         if (!cancelled) setErr(String(e));
+      } finally {
+        inFlight.current = false;
       }
-    }, interval);
+    };
+    // 拖动/播放高频率下节流:停止 60ms 后或播放中每 120ms 拉一帧
+    const timer = setTimeout(pull, playing ? 120 : 60);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -86,7 +74,7 @@ export default function Preview({ playheadTicks, fps, playing, renderMode }: Pro
       {src ? (
         <img src={src} alt="preview" style={{ maxWidth: "100%", maxHeight: "48vh" }} />
       ) : (
-        <span>{err ?? "黑场"}</span>
+        <span style={{ fontSize: 12 }}>{err ?? "黑场(该位置无视频片段)"}</span>
       )}
       <span
         style={{

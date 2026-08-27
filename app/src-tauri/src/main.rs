@@ -1124,6 +1124,14 @@ fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>) -> String 
 }
 
 fn main() {
+    // Linux WebKitGTK 规避:NVIDIA 等驱动上 DMABUF 渲染器会导致 WebView
+    // 黑屏/静默崩溃(Tauri 已知问题),禁用后走软件路径。
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
