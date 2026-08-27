@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod diag;
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -147,6 +149,41 @@ impl Inner {
     }
 }
 
+/// URL 百分号解码(路径用)。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() + 1 && i + 2 <= bytes.len() - 1 + 1 => {
+                let hex = |b: u8| -> Option<u8> {
+                    match b {
+                        b'0'..=b'9' => Some(b - b'0'),
+                        b'a'..=b'f' => Some(b - b'a' + 10),
+                        b'A'..=b'F' => Some(b - b'A' + 10),
+                        _ => None,
+                    }
+                };
+                if i + 2 < bytes.len() {
+                    if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                        out.push(h << 4 | l);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
 /// 简易时间戳(不引 chrono)。
 fn chrono_like_now() -> String {
     std::process::Command::new("date")
@@ -165,6 +202,7 @@ fn read_media_base64(path: String) -> Result<String, String> {
     let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    diag::log_cmd("read_b64", &format!("{} bytes", buf.len()));
     let mime = if path.ends_with(".png") {
         "image/png"
     } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
@@ -1070,9 +1108,15 @@ struct SeekResult {
 
 #[tauri::command(async)]
 fn seek_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
+    diag::log_cmd("seek_frame", &format!("t={t} begin"));
     let mut inner = state.inner.lock().unwrap();
     inner.ensure();
-    match inner.renderer.as_mut().unwrap().seek(t) {
+    let res = inner.renderer.as_mut().unwrap().seek(t);
+    diag::log_cmd(
+        "seek_frame",
+        &format!("t={t} {}", if res.is_ok() { "ok" } else { "err" }),
+    );
+    match res {
         Ok(f) => SeekResult {
             jpeg_path: Some(f.jpeg_path.to_string_lossy().to_string()),
             error: None,
@@ -1087,6 +1131,7 @@ fn seek_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
 /// 实时引擎:顺序取一帧并编码 PNG 写盘(播放模式用,前端 rAF 轮询)。
 #[tauri::command(async)]
 fn realtime_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
+    diag::log_cmd("realtime_frame", &format!("t={t} begin"));
     // 锁内只做解码读帧;PNG 编码(ffmpeg 子进程)在锁外执行,
     // 避免播放时长时间持锁阻塞所有其他命令。
     let frame = {
@@ -1272,6 +1317,82 @@ fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>) -> String 
 }
 
 fn main() {
+    // 诊断模式:VEDITOR_AUTO_STRESS=1 时启动后自动在后端执行
+    // seek/base64/scopes 风暴(不经 WebView),用于二分"点击即崩"的崩溃域。
+    if std::env::var("VEDITOR_AUTO_STRESS").is_ok() {
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            eprintln!("[stress] 开始后端风暴测试");
+            let st = AppState::default();
+            // 建一个含 fixture 的文档
+            {
+                let mut inner = st.inner.lock().unwrap();
+                inner.ensure();
+                let fixture = veditor_media::tests_fixture();
+                inner.doc.assets.push(Asset {
+                    id: "astress".into(),
+                    path: fixture.to_string_lossy().to_string(),
+                    duration_secs: 2.0,
+                    has_video: true,
+                    has_audio: true,
+                    width: Some(320),
+                    height: Some(240),
+                    tags: vec![],
+                });
+                inner.doc.clips.push(Clip {
+                    id: "cstress".into(),
+                    track_id: "v1".into(),
+                    start: 0,
+                    duration: 60,
+                    asset: AssetRef {
+                        asset_id: "astress".into(),
+                        source_in: 0.0,
+                        source_out: 2.0,
+                    },
+                    speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fx: Default::default(),
+                });
+                let snapshot = inner.doc.clone();
+                if let Some(r) = inner.renderer.as_mut() {
+                    r.invalidate(&snapshot);
+                }
+            }
+            for i in 0..300 {
+                let t = i % 60;
+                // seek
+                let r = {
+                    let mut inner = st.inner.lock().unwrap();
+                    match inner.renderer.as_mut().unwrap().seek(t) {
+                        Ok(f) => Some(f.jpeg_path.to_string_lossy().to_string()),
+                        Err(e) => {
+                            eprintln!("[stress] seek err {e}");
+                            None
+                        }
+                    }
+                };
+                // base64
+                if let Some(p) = r {
+                    let _ = read_media_base64(p);
+                }
+                // scopes
+                let _ = {
+                    let _inner = st.inner.lock().unwrap();
+                    veditor_media::analyze_frame_scopes(
+                        &PathBuf::from("/tmp/veditor-media-tests/fixture.mp4"),
+                        (t as f64) / 30.0,
+                    )
+                };
+                if i % 50 == 0 {
+                    eprintln!("[stress] {i}/300");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+            eprintln!("[stress] 完成:后端无崩溃,问题在 WebView/IPC 层");
+        });
+    }
+
     // panic 落盘:窗口静默退出时可查 ~/.veditor/panic.log
     std::panic::set_hook(Box::new(|info| {
         let msg = format!(
@@ -1304,6 +1425,44 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        // 自定义 veditor:// 协议:WebView 直接二进制加载预览帧,
+        // 绕过 base64-over-IPC(大字符串高频传输致 WebKit 渲染进程崩溃)。
+        .register_uri_scheme_protocol("veditor", |_app, request| {
+            use tauri::http::{Response as HttpResponse, StatusCode};
+            // veditor://preview/<url-encoded-path>?v=<cache-bust>
+            let uri = request.uri().to_string();
+            let path_part = uri
+                .strip_prefix("veditor://preview/")
+                .unwrap_or("")
+                .split('?')
+                .next()
+                .unwrap_or("");
+            let decoded = percent_decode(path_part);
+            match std::fs::read(&decoded) {
+                Ok(bytes) => {
+                    let mime = if decoded.ends_with(".png") {
+                        "image/png"
+                    } else {
+                        "image/jpeg"
+                    };
+                    HttpResponse::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", mime)
+                        .header("Cache-Control", "no-store")
+                        .body(bytes)
+                        .unwrap_or_else(|_| {
+                            HttpResponse::builder()
+                                .status(StatusCode::NO_CONTENT)
+                                .body(Vec::new())
+                                .unwrap()
+                        })
+                }
+                Err(_) => HttpResponse::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Vec::new())
+                    .unwrap(),
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             ping,
             read_media_base64,

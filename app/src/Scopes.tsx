@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 interface Props {
   playheadTicks: number;
   fps: number;
+  playing?: boolean;
+  dragging?: boolean;
 }
 
 interface ScopeData {
@@ -19,6 +21,8 @@ export default function Scopes({ playheadTicks, fps }: Props) {
   const vectRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    // 空闲时才分析(播放/拖动中跳过,降低 IPC 与解码压力)
+    if (playing || dragging) return;
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
@@ -30,12 +34,12 @@ export default function Scopes({ playheadTicks, fps }: Props) {
       } catch (e) {
         if (!cancelled) setErr(String(e));
       }
-    }, 150);
+    }, 250);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [playheadTicks]);
+  }, [playheadTicks, playing, dragging]);
 
   // 波形图
   useEffect(() => {

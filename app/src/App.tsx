@@ -134,7 +134,7 @@ export default function App() {
           .genThumbnails(path, 4)
           .then(async (r) => {
             if (r.files[0]) {
-              const url = await invoke<string>("read_media_base64", { path: r.files[0] });
+              const url = `veditor://preview/${encodeURIComponent(r.files[0])}`;
               setThumbs((prev) => ({ ...prev, [asset.id]: url }));
             }
           })
@@ -479,7 +479,7 @@ export default function App() {
             assetPreview={assetPreview}
             onAssetPreviewDone={() => setAssetPreview(null)}
           />
-          <Scopes playheadTicks={playhead} fps={fps} />
+          <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}
           </div>

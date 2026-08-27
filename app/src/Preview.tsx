@@ -13,11 +13,15 @@ interface Props {
 
 type SeekResp = { jpeg_path: string | null; error: string | null };
 
+/// 帧文件 -> veditor:// 协议 URL(WebView 二进制直载,零 IPC 负载)。
+function frameUrl(path: string): string {
+  return `veditor://preview/${encodeURIComponent(path)}`;
+}
+
 /**
- * 预览显示。核心是自驱动拉取循环:上一次取帧完成后,延时(空闲 60ms /
- * 播放 90ms)再取"最新"播放头位置。不依赖 playhead effect 调度——
- * 高频 playhead 变化下任何 setTimeout 都会被 cleanup 反复取消,
- * 导致永远取不到帧(两轮修复教训)。
+ * 预览显示。自驱动拉取循环:取帧命令只返回轻量"文件路径",
+ * 图像经自定义 veditor:// 协议由 WebView 直接加载——
+ * 避免 base64 大字符串高频过 IPC(WebKit 渲染进程崩溃根因)。
  */
 export default function Preview({
   playheadTicks,
@@ -27,10 +31,10 @@ export default function Preview({
   assetPreview,
   onAssetPreviewDone,
 }: Props) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const latest = useRef({ t: playheadTicks, playing, mode: renderMode, asset: assetPreview });
-  latest.current = { t: playheadTicks, playing, mode: renderMode, asset: assetPreview };
+  const latest = useRef({ t: playheadTicks, playing, mode: renderMode });
+  latest.current = { t: playheadTicks, playing, mode: renderMode };
 
   useEffect(() => {
     let stopped = false;
@@ -38,36 +42,26 @@ export default function Preview({
 
     async function pull() {
       if (stopped) return;
-      const { t, mode, asset } = latest.current;
+      const { t, mode } = latest.current;
       try {
-        // 素材直读模式优先(一次性,显示后回调清除)
-        const r: SeekResp = asset
+        const r: SeekResp = assetPreview
           ? await invoke<SeekResp>("preview_asset_frame", {
-              path: asset.path,
-              secs: asset.secs,
+              path: assetPreview.path,
+              secs: assetPreview.secs,
             })
           : await invoke<SeekResp>(mode === "realtime" ? "realtime_frame" : "seek_frame", { t });
         if (stopped) return;
         if (r.jpeg_path) {
-          try {
-            const url = await invoke<string>("read_media_base64", { path: r.jpeg_path });
-            if (!stopped) {
-              setDataUrl(url);
-              setErr(null);
-            }
-          } catch (e) {
-            if (!stopped) setErr(`图像读取失败: ${String(e).slice(0, 120)}`);
-          }
+          setUrl(frameUrl(r.jpeg_path));
+          setErr(null);
         } else {
-          if (!stopped) {
-            setDataUrl(null);
-            setErr(r.error ? String(r.error).slice(0, 160) : "无画面");
-          }
+          setUrl(null);
+          setErr(r.error ? String(r.error).slice(0, 160) : "无画面");
         }
-        if (asset && !stopped) onAssetPreviewDone?.();
+        if (assetPreview && !stopped) onAssetPreviewDone?.();
       } catch (e) {
         if (!stopped) setErr(String(e).slice(0, 160));
-        if (asset && !stopped) onAssetPreviewDone?.();
+        if (assetPreview && !stopped) onAssetPreviewDone?.();
       }
       if (!stopped) {
         const wait = latest.current.playing ? 90 : 60;
@@ -94,8 +88,8 @@ export default function Preview({
         position: "relative",
       }}
     >
-      {dataUrl ? (
-        <img src={dataUrl} alt="preview" style={{ maxWidth: "100%", maxHeight: "48vh" }} />
+      {url ? (
+        <img src={url} alt="preview" style={{ maxWidth: "100%", maxHeight: "48vh" }} />
       ) : (
         <span style={{ fontSize: 12, padding: "0 24px", textAlign: "center", wordBreak: "break-all" }}>
           {err ?? "黑场(该位置无视频片段)"}
