@@ -17,6 +17,10 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   const [transKind, setTransKind] = useState("fade");
   const [transDur, setTransDur] = useState("0.5");
   const [ck, setCk] = useState({ similarity: 0, color: "#00ff00", blend: 0.1 });
+  // 音频滤镜 / LUT(注意:所有 hooks 必须在条件早退之前——
+  // 曾因早退后还有 hooks 导致 "Rendered more hooks" 致命错误,点击片段即崩)
+  const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0 });
+  const [lutPath, setLutPath] = useState("");
 
   useEffect(() => {
     if (clip) {
@@ -36,6 +40,22 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
       }
     }
   }, [clip?.id, clip?.speed, clip?.volume]);
+
+  useEffect(() => {
+    if (clip?.fx?.audio_fx) {
+      const a = clip.fx.audio_fx;
+      setAfx({
+        fade_in: a.fade_in,
+        fade_out: a.fade_out,
+        denoise: a.denoise,
+        pitch: a.pitch_semitones,
+        eq_low: a.eq_low,
+        eq_mid: a.eq_mid,
+        eq_high: a.eq_high,
+      });
+    }
+    if (clip?.fx?.lut) setLutPath(clip.fx.lut.path);
+  }, [clip?.id]);
 
   if (!clip) {
     return (
@@ -99,26 +119,6 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
     });
     await onRefresh();
   }
-
-  // ---------- 音频滤镜 / LUT / 特效预设 ----------
-  const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0 });
-  const [lutPath, setLutPath] = useState("");
-
-  useEffect(() => {
-    if (clip?.fx?.audio_fx) {
-      const a = clip.fx.audio_fx;
-      setAfx({
-        fade_in: a.fade_in,
-        fade_out: a.fade_out,
-        denoise: a.denoise,
-        pitch: a.pitch_semitones,
-        eq_low: a.eq_low,
-        eq_mid: a.eq_mid,
-        eq_high: a.eq_high,
-      });
-    }
-    if (clip?.fx?.lut) setLutPath(clip.fx.lut.path);
-  }, [clip?.id]);
 
   async function applyAudioFx() {
     const { invoke } = await import("@tauri-apps/api/core");
