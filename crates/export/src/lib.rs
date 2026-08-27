@@ -85,25 +85,83 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let input_idx = asset_paths.iter().position(|p| *p == path).unwrap_or(0);
                 let src = format!("[{}:v]", input_idx);
                 let label = format!("[v{i}]");
-                let trim = format!(
-                    "trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS",
+                let mut chain = format!(
+                    "{src}trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS",
                     c.asset.source_in,
                     c.source_span_secs(&doc.timebase)
                 );
+                // 变速:时间轴时长 = 源时长 / speed
+                if (c.speed - 1.0).abs() > 1e-3 {
+                    chain.push_str(&format!(",setpts=PTS/{}", c.speed));
+                }
                 let scale = format!("scale={}:{}", params.width, params.height);
-                chain_parts.push(format!(
-                    "{src}{trim},{scale},fps={},format=yuv420p{label}",
-                    params.fps
-                ));
+                chain.push_str(&format!(",{scale},fps={}", params.fps));
+                // 调色(非默认才加)
+                let g = &c.fx.grade;
+                if (g.brightness - 0.0).abs() > 1e-3
+                    || (g.contrast - 1.0).abs() > 1e-3
+                    || (g.saturation - 1.0).abs() > 1e-3
+                {
+                    chain.push_str(&format!(
+                        ",eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
+                        g.brightness, g.contrast, g.saturation
+                    ));
+                }
+                // 不透明度(有关键帧时取首帧值;M2 静态近似)
+                if let Some(op) = c.fx.opacity.value_at(c.start) {
+                    if (op - 1.0).abs() > 1e-3 {
+                        chain.push_str(&format!(
+                            ",format=yuva420p,colorchannelmixer=aa={op:.3},format=yuv420p"
+                        ));
+                    }
+                }
+                chain.push_str(&label);
+                chain_parts.push(chain);
             }
-            // 各片段 chain + concat 串联为一条 filter
-            let mut combined = chain_parts.join(";");
-            let inputs: String = (0..clips.len())
-                .map(|i| format!("[v{i}]"))
-                .collect::<Vec<_>>()
-                .join("");
-            combined.push_str(&format!(";{inputs}concat=n={}:v=1:a=0[vcat]", clips.len()));
-            filters.push(combined);
+            let has_transitions = clips.len() > 1 && !doc.transitions.is_empty();
+            if !has_transitions {
+                let mut combined = chain_parts.join(";");
+                let inputs: String = (0..clips.len())
+                    .map(|i| format!("[v{i}]"))
+                    .collect::<Vec<_>>()
+                    .join("");
+                combined.push_str(&format!(";{inputs}concat=n={}:v=1:a=0[vcat]", clips.len()));
+                filters.push(combined);
+            } else {
+                // xfade 链:逐对叠加转场(无转场的相邻对用极短 fade 衔接)
+                let mut prev_label = "[v0]".to_string();
+                let mut acc = doc.timebase.secs(clips[0].duration);
+                let mut last_label = String::new();
+                for i in 1..clips.len() {
+                    let c = &clips[i];
+                    let trans = doc.transitions.iter().find(|t| t.right_clip_id == c.id);
+                    let (kind_str, dur) = match trans {
+                        Some(t) => (
+                            match t.kind {
+                                veditor_core::TransitionKind::Fade => "fade",
+                                veditor_core::TransitionKind::Dissolve => "dissolve",
+                                veditor_core::TransitionKind::SlideLeft => "slideleft",
+                                veditor_core::TransitionKind::SlideRight => "slideright",
+                                veditor_core::TransitionKind::Zoom => "smoothleft",
+                            },
+                            t.duration_secs,
+                        ),
+                        None => ("fade", 0.001),
+                    };
+                    let out = format!("[vx{i}]");
+                    let offset = (acc - dur).max(0.0);
+                    filters.push(format!(
+                        "{prev_label}[v{i}]xfade=transition={kind_str}:duration={dur:.3}:offset={offset:.3}{out}"
+                    ));
+                    last_label = out.clone();
+                    prev_label = out;
+                    acc = offset + doc.timebase.secs(c.duration);
+                }
+                // 终点标签统一替换为 [vcat]
+                if let Some(e) = filters.last_mut() {
+                    *e = e.replace(&last_label, "[vcat]");
+                }
+            }
         }
     }
 
@@ -123,12 +181,18 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             let src = format!("[{}:a]", input_idx);
             let label = format!("[a{ti}_{i}]");
             let vol = if c.muted { 0.0 } else { c.volume };
-            filters.push(format!(
-                "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS,volume={vol:.3}{}",
+            let mut chain = format!(
+                "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS",
                 c.asset.source_in,
-                c.source_span_secs(&doc.timebase),
-                label
-            ));
+                c.source_span_secs(&doc.timebase)
+            );
+            // 音频变速(atempo 支持 0.5-2.0,范围外链式;M2 直接夹取)
+            if (c.speed - 1.0).abs() > 1e-3 {
+                let tempo = c.speed.clamp(0.5, 2.0);
+                chain.push_str(&format!(",atempo={tempo:.3}"));
+            }
+            chain.push_str(&format!(",volume={vol:.3}{label}"));
+            filters.push(chain);
             audio_labels.push(label);
         }
     }
@@ -275,6 +339,66 @@ mod tests {
         assert!(fc.contains("concat=n=1"), "fc = {fc}");
         assert!(fc.contains("amix"), "fc = {fc}");
         assert!(fc.contains("volume=0.500"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_applies_speed_and_grade() {
+        let mut d = doc();
+        d.clips[0].speed = 2.0;
+        d.clips[1].speed = 2.0;
+        d.clips[0].fx.grade.brightness = 0.1;
+        d.clips[0].fx.grade.saturation = 1.5;
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("setpts=PTS/2"), "fc = {fc}");
+        assert!(fc.contains("eq=brightness=0.100"), "fc = {fc}");
+        assert!(fc.contains("saturation=1.500"), "fc = {fc}");
+        assert!(fc.contains("atempo=2.000"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_transition_uses_xfade() {
+        let mut d = doc();
+        // 两个相邻视频片段
+        d.clips.push(Clip {
+            id: "c3".into(),
+            start: 30,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 1.0,
+                source_out: 2.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            track_id: "t1".into(),
+            fx: Default::default(),
+        });
+        d.transitions.push(veditor_core::Transition {
+            id: "tr1".into(),
+            left_clip_id: "c1".into(),
+            right_clip_id: "c3".into(),
+            kind: veditor_core::TransitionKind::Dissolve,
+            duration_secs: 0.5,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("xfade=transition=dissolve:duration=0.500"),
+            "fc = {fc}"
+        );
+        assert!(fc.contains("[vcat]"), "fc = {fc}");
     }
 
     #[test]
