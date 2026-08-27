@@ -759,6 +759,24 @@ fn drop_asset(
         muted: false,
         fx: Default::default(),
     };
+    // 插入语义(剪映式):新片段落点若与现有片段重叠,将其后(含被叠者)
+    // 的片段统一右移让位,保持时间顺序;不重叠则直接放置。
+    let overlapped: Vec<(String, i64)> = inner
+        .doc
+        .clips
+        .iter()
+        .filter(|c| {
+            c.track_id == target_track && c.start < start + duration && start < c.start + c.duration
+        })
+        .map(|c| (c.id.clone(), c.start))
+        .collect();
+    for (cid, s) in &overlapped {
+        inner.exec(Box::new(veditor_core::MoveClip::new(
+            cid.clone(),
+            s + duration,
+            target_track.clone(),
+        )));
+    }
     inner.exec(Box::new(AddClip { clip: clip.clone() }));
     inner.schedule_track(&target_track, Some(&clip.id));
     Ok(clip.id)
@@ -2113,6 +2131,94 @@ mod tests {
             inner.exec(Box::new(AddTrack { track }));
             assert_eq!(id, "v3");
             assert_eq!(inner.doc.tracks.len(), 3);
+        }
+    }
+
+    /// 插入语义:新片段落到已有片段位置时,旧片段右移让位,时间顺序保持。
+    #[test]
+    fn drop_insert_keeps_order() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 10.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            // 已有片段 A [0,60)
+            inner.doc.clips.push(Clip {
+                id: "A".into(),
+                track_id: "v1".into(),
+                start: 0,
+                duration: 60,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 2.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                fx: Default::default(),
+            });
+            // 模拟 drop_asset:新片段 B(60 ticks)落到 0 —— 复刻插入逻辑
+            let duration = 60i64;
+            let start = 0i64;
+            let target_track = "v1".to_string();
+            let overlapped: Vec<(String, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| {
+                    c.track_id == target_track
+                        && c.start < start + duration
+                        && start < c.start + c.duration
+                })
+                .map(|c| (c.id.clone(), c.start))
+                .collect();
+            for (cid, s) in &overlapped {
+                inner.exec(Box::new(veditor_core::MoveClip::new(
+                    cid.clone(),
+                    s + duration,
+                    target_track.clone(),
+                )));
+            }
+            inner.doc.clips.push(Clip {
+                id: "B".into(),
+                track_id: "v1".into(),
+                start: 0,
+                duration: 60,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 2.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                fx: Default::default(),
+            });
+            // B 在前 [0,60),A 顺延 [60,120)
+            let a = inner.doc.clip("A").unwrap();
+            let b = inner.doc.clip("B").unwrap();
+            assert_eq!(b.start, 0);
+            assert_eq!(a.start, 60);
+            assert_eq!(a.start, b.start + b.duration, "无缝相接");
         }
     }
 

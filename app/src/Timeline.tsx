@@ -11,15 +11,11 @@ interface Props {
   onClipMove?: (clipId: string, newStart: number, trackId: string) => void;
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
-  /// 每素材波形峰值(可选,用于音频轨绘制)。
   waveforms?: Record<string, number[]>;
-  /// 跨轨对齐吸附的其他轨道边缘(ticks),由父组件聚合传入。
   alignEdges?: number[];
-  /// 卡片拖放的落点回调。
   onDropAsset?: (assetId: string, trackId: string | null, startTicks: number) => void;
 }
 
-const PX_PER_TICK = 0.5;
 const MIN_TRACK_H = 36;
 const EDGE_HIT_PX = 6;
 
@@ -57,6 +53,10 @@ export default function Timeline({
   const [trackH, setTrackH] = useState(56);
   const [snap, setSnap] = useState(true);
   const [ripple, setRipple] = useState(false);
+  /// 横向滚动位移(px)。
+  const [scrollX, setScrollX] = useState(0);
+  /// 缩放:每 ticks 像素(0.1 - 4)。
+  const [pxPerTick, setPxPerTick] = useState(0.5);
   /// 拖拽虚影:拖动中的目标位置(ticks),绘制幽灵片段。
   const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number } | null>(null);
   /// 修剪预览:edge + 新起点/时长。
@@ -66,12 +66,35 @@ export default function Timeline({
   /// 拖放置预览(绿色插入线/新层提示)。
   const [dropHint, setDropHint] = useState<{ x: number; trackIdx: number; newLayer: boolean } | null>(null);
 
+  /// 内容总宽 = max(最末片段末尾, 播放头, 视口) + 10s 余量。
+  const contentTicks = Math.max(
+    doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0),
+    playheadTicks,
+    (scrollX + (wrapRef.current?.clientWidth ?? 800)) / pxPerTick
+  ) + doc.timebase.num * 10;
+  const contentW = Math.max(contentTicks * pxPerTick, 400);
+
+  const tps = doc.timebase.num / doc.timebase.den;
+
+  // 播放时自动跟随:播放头超出视口右侧 85% 则滚动跟随
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const headPx = playheadTicks * pxPerTick;
+    const viewR = scrollX + wrap.clientWidth;
+    if (headPx > viewR - 60) {
+      setScrollX(Math.max(0, headPx - wrap.clientWidth * 0.15));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadTicks, pxPerTick]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const wrap = wrapRef.current;
     if (!canvas || !wrap) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = wrap.clientWidth;
+    const viewW = wrap.clientWidth;
+    const w = contentW;
     const h = doc.tracks.length * trackH + 24;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
@@ -81,7 +104,7 @@ export default function Timeline({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // 轨道背景
+    // 轨道背景(整条内容宽)
     doc.tracks.forEach((track, i) => {
       const y = i * trackH;
       ctx.fillStyle = i % 2 === 0 ? "#1e1f24" : "#23242a";
@@ -91,23 +114,16 @@ export default function Timeline({
       ctx.moveTo(0, y + trackH);
       ctx.lineTo(w, y + trackH);
       ctx.stroke();
-      ctx.fillStyle = track.kind === "Video" ? "#8ea2d8" : "#7fb8a2";
-      ctx.font = "12px sans-serif";
-      ctx.fillText(track.name, 8, y + 20);
-      if (track.muted) {
-        ctx.fillStyle = "#777";
-        ctx.fillText("静音", 8, y + 38);
-      }
     });
 
-    // 时间刻度(每秒)
-    const totalTicks = w / PX_PER_TICK;
-    const secs = Math.ceil(totalTicks / doc.timebase.num);
+    // 时间刻度(每秒;视口范围内的秒段)
+    const s0 = Math.max(0, Math.floor(scrollX / pxPerTick / doc.timebase.num));
+    const s1 = Math.ceil((scrollX + viewW) / pxPerTick / doc.timebase.num);
     ctx.strokeStyle = "#3a3d46";
     ctx.fillStyle = "#9aa0ab";
     ctx.font = "10px sans-serif";
-    for (let s = 0; s <= secs; s++) {
-      const x = s * doc.timebase.num * PX_PER_TICK;
+    for (let s = s0; s <= s1; s++) {
+      const x = s * doc.timebase.num * pxPerTick;
       ctx.beginPath();
       ctx.moveTo(x, doc.tracks.length * trackH);
       ctx.lineTo(x, doc.tracks.length * trackH + 6);
@@ -120,8 +136,8 @@ export default function Timeline({
       const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
       if (ti < 0) return;
       const y = ti * trackH + 5;
-      const x = clip.start * PX_PER_TICK;
-      const cw = clip.duration * PX_PER_TICK;
+      const x = clip.start * pxPerTick;
+      const cw = clip.duration * pxPerTick;
       const track = doc.tracks[ti];
       const grad = ctx.createLinearGradient(0, y, 0, y + trackH - 10);
       if (track.kind === "Video") {
@@ -136,17 +152,15 @@ export default function Timeline({
       // 音频轨/含音轨视频:绘制迷你波形(峰值竖线)
       const wf = waveforms?.[clip.asset.asset_id];
       if (wf && cw > 8) {
-        const tps = doc.timebase.num / doc.timebase.den;
-        const peaksPerSec = 10; // 后端固定 10/s
         ctx.strokeStyle = "rgba(220, 235, 255, 0.55)";
         ctx.beginPath();
         const x0 = Math.max(x, 0);
         const x1 = Math.min(x + cw, w);
         for (let px = x0; px < x1; px += 2) {
-          const tickAtPx = px / PX_PER_TICK;
+          const tickAtPx = px / pxPerTick;
           const secsInClip = (tickAtPx - clip.start) / tps * clip.speed;
           const srcSecs = clip.asset.source_in + secsInClip;
-          const peakIdx = Math.floor(srcSecs * peaksPerSec);
+          const peakIdx = Math.floor(srcSecs * 10); // 后端 10 峰值/s
           const peak = wf[peakIdx] ?? 0;
           if (peak > 0.01) {
             const ph = peak * (trackH - 16) * 0.9;
@@ -172,38 +186,40 @@ export default function Timeline({
         ctx.fillRect(x + Math.max(cw, 2) - 3, y, 3, trackH - 10);
         ctx.lineWidth = 1;
       }
-      ctx.fillStyle = "#dfe3ea";
-      ctx.font = "11px sans-serif";
-      const asset = doc.assets.find((a) => a.id === clip.asset.asset_id);
-      const name = asset?.path.split("/").pop() ?? clip.id;
-      ctx.fillText(name.slice(0, 18), x + 4, y + 15, Math.max(cw - 8, 2));
+      // 文件名(视口内才有意义)
+      if (x + cw > scrollX && x < scrollX + viewW) {
+        ctx.fillStyle = "#dfe3ea";
+        ctx.font = "11px sans-serif";
+        const asset = doc.assets.find((a) => a.id === clip.asset.asset_id);
+        const name = asset?.path.split("/").pop() ?? clip.id;
+        ctx.fillText(name.slice(0, 18), x + 4, y + 15, Math.max(cw - 8, 2));
+      }
     });
 
-    // 文字叠层标记(顶部横条)
+    // 文字叠层标记(底部横条)
     doc.text_overlays?.forEach((t) => {
-      const x = t.start * PX_PER_TICK;
-      const cw = (t.end - t.start) * PX_PER_TICK;
+      const x = t.start * pxPerTick;
+      const cw = (t.end - t.start) * pxPerTick;
       ctx.fillStyle = "#a86ecb";
       ctx.fillRect(x, doc.tracks.length * trackH + 10, Math.max(cw, 2), 6);
     });
 
-    // 拖拽虚影:目标位置半透明 + 落点竖线
+    // 拖拽虚影
     if (ghost) {
       const gy = ghost.trackIdx * trackH + 5;
-      const gx = ghost.start * PX_PER_TICK;
-      const gw = ghost.duration * PX_PER_TICK;
+      const gx = ghost.start * pxPerTick;
+      const gw = ghost.duration * pxPerTick;
       ctx.fillStyle = "rgba(126, 168, 255, 0.35)";
       ctx.fillRect(gx, gy, Math.max(gw, 2), trackH - 10);
       ctx.strokeStyle = "#7ea8ff";
       ctx.setLineDash([4, 3]);
       ctx.strokeRect(gx, gy, Math.max(gw, 2), trackH - 10);
       ctx.setLineDash([]);
-      // 被拖片段原位置淡化
       const orig = doc.clips.find((c) => c.id === ghost.clipId);
       if (orig) {
         const oy = doc.tracks.findIndex((t) => t.id === orig.track_id) * trackH + 5;
         ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(orig.start * PX_PER_TICK, oy, Math.max(orig.duration * PX_PER_TICK, 2), trackH - 10);
+        ctx.fillRect(orig.start * pxPerTick, oy, Math.max(orig.duration * pxPerTick, 2), trackH - 10);
       }
     }
 
@@ -217,7 +233,6 @@ export default function Timeline({
       ctx.lineTo(hx, trimHint.y + trackH);
       ctx.stroke();
       ctx.lineWidth = 1;
-      const tps = doc.timebase.num / doc.timebase.den;
       const label = trimHint.edge === "left"
         ? `入 ${fmtTicks(trimHint.newStart, tps)}`
         : `出 ${fmtTicks(trimHint.newStart + trimHint.newDuration, tps)}`;
@@ -225,7 +240,7 @@ export default function Timeline({
       const txt = `${label}  ${durLabel}`;
       ctx.font = "11px sans-serif";
       const tw = ctx.measureText(txt).width + 10;
-      const bx = Math.min(Math.max(4, hx - tw / 2), w - tw - 4);
+      const bx = Math.min(Math.max(scrollX + 4, hx - tw / 2), scrollX + viewW - tw - 4);
       ctx.fillStyle = "rgba(20,21,26,0.92)";
       ctx.fillRect(bx, trimHint.y - 20, tw, 16);
       ctx.strokeStyle = "#ffd75e";
@@ -238,7 +253,7 @@ export default function Timeline({
     if (dropHint) {
       const gy = dropHint.trackIdx * trackH;
       ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : "rgba(126, 217, 87, 0.10)";
-      ctx.fillRect(0, gy, w, trackH);
+      ctx.fillRect(scrollX, gy, viewW, trackH);
       ctx.strokeStyle = "#7ed957";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -249,37 +264,41 @@ export default function Timeline({
       if (dropHint.newLayer) {
         ctx.fillStyle = "#7ec8ff";
         ctx.font = "11px sans-serif";
-        ctx.fillText("+ 新建上层轨道", 8, gy + 16);
+        ctx.fillText("+ 新建上层轨道", scrollX + 8, gy + 16);
       }
     }
 
     // 播放头
-    const px = playheadTicks * PX_PER_TICK;
-    ctx.strokeStyle = "#ff5f5f";
-    ctx.beginPath();
-    ctx.moveTo(px, 0);
-    ctx.lineTo(px, doc.tracks.length * trackH);
-    ctx.stroke();
-  }, [doc, playheadTicks, selectedClipId, trackH, ghost, trimHint, hoverEdge, waveforms, dropHint]);
+    const px = playheadTicks * pxPerTick;
+    if (px >= scrollX - 2 && px <= scrollX + viewW + 2) {
+      ctx.strokeStyle = "#ff5f5f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, doc.tracks.length * trackH);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }, [doc, playheadTicks, selectedClipId, trackH, ghost, trimHint, hoverEdge, waveforms, dropHint, scrollX, pxPerTick, contentW, tps]);
 
-  function ticksFromEvent(e: React.MouseEvent): number {
+  /// 事件 ticks(含滚动偏移)。
+  function ticksFromClientX(clientX: number): number {
     const rect = canvasRef.current!.getBoundingClientRect();
-    return Math.max(0, Math.round((e.clientX - rect.left) / PX_PER_TICK));
+    return Math.max(0, Math.round((clientX - rect.left) / pxPerTick));
   }
 
-  /// 吸附:本轨片段边缘 + 整秒 + 跨轨对齐边缘(阈值 6 ticks)。
+  /// 吸附:本轨片段边缘 + 整秒 + 跨轨对齐边缘。
   function snapTicks(t: number, excludeClipId?: string): number {
-    const tps = doc.timebase.num / doc.timebase.den;
     return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 6, alignEdges ?? []);
   }
 
-  /// 命中检测:返回片段 + 边缘类型(左右 6px 命中)。
-  function hitTest(t: number, e: React.MouseEvent): { clipId: string; edge: "left" | "right" | "body" } | null {
+  /// 命中检测:片段 + 边缘类型(左右 6px)。
+  function hitTest(t: number, clientX: number): { clipId: string; edge: "left" | "right" | "body" } | null {
     const rect = canvasRef.current!.getBoundingClientRect();
-    const px = e.clientX - rect.left;
+    const px = clientX - rect.left;
     for (const c of doc.clips) {
-      const x0 = c.start * PX_PER_TICK;
-      const x1 = (c.start + c.duration) * PX_PER_TICK;
+      const x0 = c.start * pxPerTick;
+      const x1 = (c.start + c.duration) * pxPerTick;
       if (t >= c.start && t < c.start + c.duration) {
         if (px - x0 <= EDGE_HIT_PX) return { clipId: c.id, edge: "left" };
         if (x1 - px <= EDGE_HIT_PX) return { clipId: c.id, edge: "right" };
@@ -290,11 +309,10 @@ export default function Timeline({
   }
 
   function onPointerDown(e: React.MouseEvent) {
-    const t = ticksFromEvent(e);
-    const hit = hitTest(t, e);
+    const t = ticksFromClientX(e.clientX);
+    const hit = hitTest(t, e.clientX);
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
-      // 锁定轨道不可编辑
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
       if (track?.locked) return;
       onClipClick(hit.clipId);
@@ -314,43 +332,43 @@ export default function Timeline({
   function onPointerMove(e: React.MouseEvent) {
     const d = dragRef.current;
     if (!d) {
-      // 悬停光标反馈
-      const t = ticksFromEvent(e);
-      const hit = hitTest(t, e);
+      const t = ticksFromClientX(e.clientX);
+      const hit = hitTest(t, e.clientX);
       setHoverEdge(hit?.edge === "left" || hit?.edge === "right" ? hit.edge : null);
       return;
     }
     const clip = doc.clips.find((c) => c.id === d.clipId);
     if (!clip) return;
-    const t = snapTicks(ticksFromEvent(e), d.clipId);
+    const t = snapTicks(ticksFromClientX(e.clientX), d.clipId);
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
     if (d.kind === "move") {
       setGhost({ clipId: d.clipId, start: Math.max(0, t), duration: clip.duration, trackIdx: ti });
       setTrimHint(null);
     } else if (d.kind === "trimL") {
-      const maxStart = clip.start + clip.duration - 1; // 至少 1 tick
+      const maxStart = clip.start + clip.duration - 1;
       const newStart = Math.min(Math.max(0, t), maxStart);
+      const rect = canvasRef.current?.getBoundingClientRect();
       setTrimHint({
         clipId: d.clipId, edge: "left", newStart,
         newDuration: clip.start + clip.duration - newStart,
-        x: e.clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
+        x: (rect?.left ?? 0) >= 0 ? e.clientX - (rect?.left ?? 0) : 0,
         y: ti * trackH,
       });
       setGhost(null);
     } else {
-      const minDur = 1;
-      const newEnd = Math.max(clip.start + minDur, t);
+      const newEnd = Math.max(clip.start + 1, t);
+      const rect = canvasRef.current?.getBoundingClientRect();
       setTrimHint({
         clipId: d.clipId, edge: "right", newStart: clip.start,
         newDuration: newEnd - clip.start,
-        x: e.clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
+        x: e.clientX - (rect?.left ?? 0),
         y: ti * trackH,
       });
       setGhost(null);
     }
   }
 
-  function onPointerUp(_e: React.MouseEvent) {
+  function onPointerUp(e: React.MouseEvent) {
     const d = dragRef.current;
     dragRef.current = null;
     setGhost(null);
@@ -359,8 +377,8 @@ export default function Timeline({
     if (!d) return;
     if (d.kind === "move") {
       const clip = doc.clips.find((c) => c.id === d.clipId);
-      if (clip && onClipMove && Math.abs(_e.clientX - (d as { startX: number }).startX) > 3) {
-        const t = snapTicks(ticksFromEvent(_e), d.clipId);
+      if (clip && onClipMove && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
+        const t = snapTicks(ticksFromClientX(e.clientX), d.clipId);
         onClipMove(d.clipId, Math.max(0, t), clip.track_id);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
@@ -370,20 +388,18 @@ export default function Timeline({
     }
   }
 
-  /// 拖放落点计算:Y 命中轨道行 -> 该轨(类型不符后端会改道);
-  /// 轨道间缝隙/底部 -> "__newlayer__"(新建上层视频轨)。
+  /// 拖放落点计算:Y 命中轨道行 -> 该轨;缝隙/底部 -> "__newlayer__"。
   function dropTargetFromEvent(e: React.DragEvent): { trackId: string | null; start: number } | null {
     if (!onDropAsset) return null;
-    const wrap = wrapRef.current;
-    if (!wrap) return null;
-    const rect = wrap.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
     const yIn = e.clientY - rect.top;
-    const t = Math.max(0, Math.round((e.clientX - rect.left) / PX_PER_TICK));
+    const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
     const row = Math.floor(yIn / trackH);
-    const inGap = yIn - row * trackH > trackH - 6; // 行底 6px 视为缝隙
+    const inGap = yIn - row * trackH > trackH - 6;
     if (row < 0) return null;
     if (row >= doc.tracks.length || inGap) {
-      // 底部或缝隙:新建层
       return { trackId: "__newlayer__", start: t };
     }
     const track = doc.tracks[row];
@@ -395,9 +411,9 @@ export default function Timeline({
     if (!onDropAsset) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const rect = wrap.getBoundingClientRect();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const target = dropTargetFromEvent(e);
     if (!target) {
       setDropHint(null);
@@ -405,9 +421,9 @@ export default function Timeline({
     }
     const yIn = e.clientY - rect.top;
     const row = Math.floor(yIn / trackH);
-    const t = Math.max(0, Math.round((e.clientX - rect.left) / PX_PER_TICK));
+    const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
     setDropHint({
-      x: t * PX_PER_TICK,
+      x: t * pxPerTick,
       trackIdx: target.trackId && target.trackId !== "__newlayer__" ? row : doc.tracks.length,
       newLayer: target.trackId === "__newlayer__",
     });
@@ -424,12 +440,7 @@ export default function Timeline({
   }
 
   return (
-    <div
-      style={{ background: "#17181c", userSelect: "none" }}
-      onDragOver={onDragOver}
-      onDragLeave={() => setDropHint(null)}
-      onDrop={onDrop}
-    >
+    <div style={{ background: "#17181c", userSelect: "none" }}>
       <div style={{ display: "flex", fontSize: 10, color: "#667", padding: "2px 8px", gap: 10, alignItems: "center" }}>
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
@@ -445,12 +456,30 @@ export default function Timeline({
             max={120}
             value={trackH}
             onChange={(e) => setTrackH(Number(e.target.value))}
-            style={{ verticalAlign: "middle", width: 80 }}
+            style={{ verticalAlign: "middle", width: 70 }}
           />
         </label>
+        <label>
+          缩放
+          <input
+            type="range"
+            min={-1}
+            max={2}
+            step={0.05}
+            value={Math.log10(pxPerTick)}
+            onChange={(e) => setPxPerTick(Math.pow(10, Number(e.target.value)))}
+            style={{ verticalAlign: "middle", width: 90 }}
+            title="时间轴缩放(也支持 Ctrl+滚轮)"
+          />
+        </label>
+        <span style={{ flex: 1 }} />
+        <span>
+          {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(
+            doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0), tps)}
+        </span>
       </div>
       <div style={{ display: "flex" }}>
-        {/* 轨道头 */}
+        {/* 轨道头(粘性,不随横向滚动) */}
         <div style={{ width: 120, flexShrink: 0 }}>
           {doc.tracks.map((track) => (
             <div
@@ -487,8 +516,18 @@ export default function Timeline({
             </div>
           ))}
         </div>
-        {/* 轨道画布 */}
-        <div ref={wrapRef} style={{ flex: 1, overflow: "hidden" }}>
+        {/* 可横向滚动的时间轴视口 */}
+        <div
+          ref={wrapRef}
+          style={{ flex: 1, overflowX: "auto", overflowY: "hidden" }}
+          onScroll={(e) => setScrollX((e.target as HTMLDivElement).scrollLeft)}
+          onWheel={(e) => {
+            if (e.ctrlKey) {
+              e.preventDefault();
+              setPxPerTick((p) => Math.min(4, Math.max(0.1, p * (e.deltaY < 0 ? 1.12 : 0.89))));
+            }
+          }}
+        >
           <canvas
             ref={canvasRef}
             onMouseDown={onPointerDown}
