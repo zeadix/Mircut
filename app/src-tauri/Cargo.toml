@@ -1,0 +1,15 @@
+[package]
+name = "veditor-app"
+description = "VEditor 桌面应用(Tauri 壳)"
+version.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+veditor-media = { path = "../../crates/media" }
