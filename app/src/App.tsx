@@ -47,9 +47,10 @@ export default function App() {
   const lastTsRef = useRef<number>(0);
   const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
 
-  // 播放循环:推进播放头(JKL 变速)
+  // 播放循环:推进播放头(JKL 变速);超出最末片段自动停
   useEffect(() => {
     if (!playing || !doc) return;
+    const endTick = doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
     lastTsRef.current = performance.now();
     const step = (ts: number) => {
       const dt = (ts - lastTsRef.current) / 1000;
@@ -63,6 +64,16 @@ export default function App() {
     rafRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafRef.current);
   }, [playing, doc, fps, playSpeed]);
+
+  // 到达末尾自动暂停
+  useEffect(() => {
+    if (!playing || !doc) return;
+    const endTick = doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
+    if (endTick > 0 && playhead >= endTick) {
+      setPlaying(false);
+      setPlaySpeed(1);
+    }
+  }, [playhead, playing, doc]);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -142,7 +153,8 @@ export default function App() {
     const dur = Math.round((doc.assets.find((a) => a.id === assetId)?.duration_secs ?? 1) * fps);
     const vTrack = doc.tracks.find((t) => t.kind === "Video");
     if (!vTrack) return;
-    await api.addClip(assetId, vTrack.id, 0, dur);
+    // start=-1:追加到轨道末尾(后端语义),避免重复双击重叠
+    await api.addClip(assetId, vTrack.id, -1, dur);
     await refresh();
   }
 

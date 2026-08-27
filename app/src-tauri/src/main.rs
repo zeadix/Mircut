@@ -415,10 +415,23 @@ fn add_clip(
         .asset(&asset_id)
         .cloned()
         .ok_or("素材不存在,请先导入")?;
+    // 追加语义:start<0 时自动排到该轨末尾(剪映式:重复双击依次排列,不重叠)
+    let effective_start = if start < 0 {
+        inner
+            .doc
+            .clips
+            .iter()
+            .filter(|c| c.track_id == track_id)
+            .map(|c| c.start + c.duration)
+            .max()
+            .unwrap_or(0)
+    } else {
+        start
+    };
     let clip = Clip {
         id: format!("c{}", inner.doc.clips.len() + 1),
         track_id,
-        start,
+        start: effective_start,
         duration,
         asset: AssetRef {
             asset_id: asset.id.clone(),
@@ -1061,20 +1074,24 @@ fn seek_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
 /// 实时引擎:顺序取一帧并编码 PNG 写盘(播放模式用,前端 rAF 轮询)。
 #[tauri::command(async)]
 fn realtime_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
-    let mut inner = state.inner.lock().unwrap();
-    inner.ensure();
-    let Some(rt) = inner.realtime.as_mut() else {
-        return SeekResult {
-            jpeg_path: None,
-            error: Some("实时引擎未初始化".into()),
+    // 锁内只做解码读帧;PNG 编码(ffmpeg 子进程)在锁外执行,
+    // 避免播放时长时间持锁阻塞所有其他命令。
+    let frame = {
+        let mut inner = state.inner.lock().unwrap();
+        inner.ensure();
+        let Some(rt) = inner.realtime.as_mut() else {
+            return SeekResult {
+                jpeg_path: None,
+                error: Some("实时引擎未初始化".into()),
+            };
         };
+        rt.next_frame(t)
     };
-    match rt.next_frame(t) {
+    match frame {
         Ok(frame) => {
-            // RGB24 -> PNG 用 ffmpeg 管道写盘(避免引 png 编码库)
             let dir = std::env::temp_dir().join("veditor-render-cache-rt");
             let _ = std::fs::create_dir_all(&dir);
-            let png = dir.join("latest.png");
+            let png = dir.join(format!("{}.png", t));
             use std::io::Write;
             let child = std::process::Command::new("ffmpeg")
                 .args([
