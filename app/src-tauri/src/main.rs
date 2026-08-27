@@ -143,6 +143,51 @@ impl Inner {
     }
 }
 
+/// 读取媒体缓存文件为 base64 data URL(预览帧/缩略图显示用,
+/// 绕过 asset protocol 在部分 WebKitGTK 环境的不可用问题)。
+#[tauri::command(async)]
+fn read_media_base64(path: String) -> Result<String, String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let mime = if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else {
+        "application/octet-stream"
+    };
+    Ok(format!("data:{mime};base64,{}", base64_encode(&buf)))
+}
+
+/// 零依赖 base64 编码(标准字母表,含 padding)。
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(T[(n >> 18) as usize & 63] as char);
+        out.push(T[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
@@ -1137,6 +1182,7 @@ fn main() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             ping,
+            read_media_base64,
             probe_media,
             get_document,
             undo,
@@ -1206,6 +1252,29 @@ mod tests {
     }
 
     #[test]
+    fn base64_encode_known_vectors() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        // 与标准实现一致性抽查
+        assert_eq!(base64_encode(&[0, 255, 128]), "AP+A");
+    }
+
+    #[test]
+    fn read_media_base64_roundtrip() {
+        let dir = std::env::temp_dir().join("veditor-base64-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("t.png");
+        std::fs::write(&f, b"\x89PNG fake-bytes").unwrap();
+        let url = read_media_base64(f.to_str().unwrap().to_string()).unwrap();
+        assert!(url.starts_with("data:image/png;base64,"));
+        let err = read_media_base64("/nonexistent/x.png".into());
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn uuid_of_is_stable() {
         assert_eq!(uuid_of("/a/b.mp4"), uuid_of("/a/b.mp4"));
         assert_ne!(uuid_of("/a/b.mp4"), uuid_of("/a/c.mp4"));
@@ -1213,10 +1282,20 @@ mod tests {
 
     #[test]
     fn add_and_remove_clip_via_state() {
+        // 隔离:确保不受开发运行残留的 autosave 影响
         let st = AppState::default();
         {
             let mut inner = st.inner.lock().unwrap();
             inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
                 path: "/tmp/x.mp4".into(),

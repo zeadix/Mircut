@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
@@ -120,7 +120,12 @@ export default function App() {
         const { asset } = await api.importMedia(path);
         api
           .genThumbnails(path, 4)
-          .then((r) => setThumbs((prev) => ({ ...prev, [asset.id]: r.files[0] ?? "" })))
+          .then(async (r) => {
+            if (r.files[0]) {
+              const url = await invoke<string>("read_media_base64", { path: r.files[0] });
+              setThumbs((prev) => ({ ...prev, [asset.id]: url }));
+            }
+          })
           .catch(() => {});
         api.makeProxy(path, asset.id).catch(() => {});
         setStatus(`已导入 ${path.split("/").pop()}`);
@@ -413,7 +418,7 @@ export default function App() {
               style={{ cursor: "pointer" }}
             >
               {thumbs[a.id] ? (
-                <img src={convertFileSrc(thumbs[a.id])} style={{ width: "100%", borderRadius: 4 }} />
+                <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
               ) : (
                 <div style={{ background: "#24262c", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>
                   {a.has_video ? "视频" : "音频"}
