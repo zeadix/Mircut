@@ -60,6 +60,24 @@ export interface Transition {
   duration_secs: number;
 }
 
+export interface SubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface SubtitleStyle {
+  font_size: number;
+  color: string;
+  outline: string | null;
+  bold: boolean;
+}
+
+export interface SubtitleTrack {
+  cues: SubtitleCue[];
+  style: SubtitleStyle;
+}
+
 export interface Asset {
   id: string;
   path: string;

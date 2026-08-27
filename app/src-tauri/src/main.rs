@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use veditor_ai::Transcriber;
 use veditor_core::{
     AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, DetachAudio, Document,
     Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed,
@@ -435,6 +436,143 @@ fn remove_transition(left_clip_id: String, state: State<'_, AppState>) -> bool {
     true
 }
 
+// ---------- M3:字幕/ASR/TTS ----------
+
+#[derive(Serialize)]
+struct AsrResult {
+    segments: Vec<veditor_ai::TranscriptSegment>,
+    engine: String,
+}
+
+#[tauri::command(async)]
+fn transcribe(path: String, state: State<'_, AppState>) -> Result<AsrResult, String> {
+    // 优先 whisper-cli(模型在 ~/.veditor/models/),降级静音切分
+    let model = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".veditor/models/ggml-base.bin");
+    let media = PathBuf::from(&path);
+    let engine;
+    let segments = if model.exists() {
+        let mut w = veditor_ai::WhisperCli::new(&model);
+        match w.transcribe(&media) {
+            Ok(s) => {
+                engine = "whisper-cli".into();
+                s
+            }
+            Err(_) => {
+                let mut sil = veditor_ai::SilenceSegments::default();
+                engine = "silence".into();
+                sil.transcribe(&media).map_err(|e| e.to_string())?
+            }
+        }
+    } else {
+        let mut sil = veditor_ai::SilenceSegments::default();
+        engine = "silence".into();
+        sil.transcribe(&media).map_err(|e| e.to_string())?
+    };
+    let _ = state;
+    Ok(AsrResult { segments, engine })
+}
+
+/// 将 ASR 结果写入文档字幕轨。
+#[tauri::command]
+fn apply_subtitle_segments(
+    segments: Vec<veditor_ai::TranscriptSegment>,
+    offset_ticks: i64,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    inner.doc.subtitles.cues = segments
+        .into_iter()
+        .map(|s| veditor_core::SubtitleCue {
+            start: (s.start_secs as i64 * tps) + offset_ticks,
+            end: (s.end_secs as i64 * tps) + offset_ticks,
+            text: s.text,
+        })
+        .collect();
+    true
+}
+
+#[tauri::command]
+fn get_subtitles(state: State<'_, AppState>) -> veditor_core::SubtitleTrack {
+    let inner = state.inner.lock().unwrap();
+    inner.doc.subtitles.clone()
+}
+
+#[tauri::command]
+fn set_subtitle_cue(
+    index: usize,
+    cue: veditor_core::SubtitleCue,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(c) = inner.doc.subtitles.cues.get_mut(index) {
+        *c = cue;
+    }
+    true
+}
+
+#[tauri::command]
+fn add_subtitle_cue(cue: veditor_core::SubtitleCue, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.doc.subtitles.cues.push(cue);
+    true
+}
+
+#[tauri::command]
+fn remove_subtitle_cue(index: usize, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if index < inner.doc.subtitles.cues.len() {
+        inner.doc.subtitles.cues.remove(index);
+    }
+    true
+}
+
+#[tauri::command]
+fn import_srt(path: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let cues = veditor_core::parse_srt(&content, tps);
+    let n = cues.len();
+    inner.doc.subtitles.cues = cues;
+    Ok(n)
+}
+
+#[tauri::command(async)]
+fn export_srt(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let srt = veditor_core::to_srt(&inner.doc.subtitles.cues, tps);
+    std::fs::write(&path, srt).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn tts_synthesize(text: String, id: String) -> Result<String, String> {
+    let engine = if env_has("piper") {
+        "piper"
+    } else {
+        "espeak-ng"
+    };
+    let tts = veditor_ai::Tts {
+        engine: engine.into(),
+        out_dir: std::env::temp_dir().join("veditor-tts"),
+    };
+    let wav = tts.synthesize(&text, &id).map_err(|e| e.to_string())?;
+    Ok(wav.to_string_lossy().to_string())
+}
+
+fn env_has(bin: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(bin)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 // ---------- 预览 ----------
 
 #[derive(Serialize)]
@@ -533,6 +671,15 @@ fn main() {
             set_keyframe,
             set_transition,
             remove_transition,
+            transcribe,
+            apply_subtitle_segments,
+            get_subtitles,
+            set_subtitle_cue,
+            add_subtitle_cue,
+            remove_subtitle_cue,
+            import_srt,
+            export_srt,
+            tts_synthesize,
             seek_frame,
             export_video,
             preview_export_cmd

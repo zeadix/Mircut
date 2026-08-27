@@ -5,6 +5,7 @@ import type { Document } from "./types";
 import Timeline from "./Timeline";
 import Preview from "./Preview";
 import Inspector from "./Inspector";
+import SubtitlePanel from "./SubtitlePanel";
 import {
   FilmSlate,
   FolderOpen,
@@ -28,6 +29,7 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
+  const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
@@ -258,14 +260,38 @@ export default function App() {
           </div>
         </main>
 
-        {/* 属性检查器 */}
+        {/* 属性检查器 / 字幕 */}
         <aside style={{ width: 240, background: "#17181c", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
-          <Inspector
-            doc={doc}
-            clip={doc.clips.find((c) => c.id === selected) ?? null}
-            onRefresh={refresh}
-            playheadTicks={playhead}
-          />
+          <div style={{ display: "flex", borderBottom: "1px solid #2a2c33" }}>
+            <button
+              className="btn"
+              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "inspector" ? "#30333c" : "transparent" }}
+              onClick={() => setRightTab("inspector")}
+            >
+              属性
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "subtitles" ? "#30333c" : "transparent" }}
+              onClick={() => setRightTab("subtitles")}
+            >
+              字幕
+            </button>
+          </div>
+          {rightTab === "inspector" ? (
+            <Inspector
+              doc={doc}
+              clip={doc.clips.find((c) => c.id === selected) ?? null}
+              onRefresh={refresh}
+              playheadTicks={playhead}
+            />
+          ) : (
+            <SubtitlePanel
+              assetPaths={doc.assets.map((a) => a.path)}
+              onRefresh={refresh}
+              fps={fps}
+            />
+          )}
         </aside>
       </div>
 

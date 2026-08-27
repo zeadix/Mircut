@@ -204,15 +204,51 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         ));
     }
 
+    // 字幕烧录:在 [vcat] 之后逐条 drawtext(enable 时间窗)
+    let has_video_out = video_track
+        .as_ref()
+        .is_some_and(|vt| !doc.clips_on_track(vt).is_empty());
+    if has_video_out && !doc.subtitles.cues.is_empty() {
+        let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
+        let mut chain = String::from("[vcat]");
+        for cue in &doc.subtitles.cues {
+            let start = cue.start as f64 / fps_tb;
+            let end = cue.end as f64 / fps_tb;
+            let text = cue
+                .text
+                .replace('\\', "\\\\")
+                .replace(':', "\\:")
+                .replace("'", "\\'");
+            let style = &doc.subtitles.style;
+            let color = &style.color;
+            let border = style.outline.as_deref().unwrap_or("black");
+            chain.push_str(&format!(
+                ",drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
+                style.font_size
+            ));
+        }
+        chain.push_str("[vsub]");
+        filters.push(chain);
+        // 输出映射改用 [vsub]
+        args.push("__USE_VSUB__".into());
+    }
+
     if !filters.is_empty() {
         args.push("-filter_complex".into());
         args.push(filters.join(";"));
     }
 
+    let use_vsub = args.iter().any(|a| a == "__USE_VSUB__");
+    args.retain(|a| a != "__USE_VSUB__");
+
     if let Some(vt) = video_track.as_ref() {
         if !doc.clips_on_track(vt).is_empty() {
             args.push("-map".into());
-            args.push("[vcat]".into());
+            args.push(if use_vsub {
+                "[vsub]".into()
+            } else {
+                "[vcat]".into()
+            });
         }
     }
     if !audio_labels.is_empty() {
@@ -398,6 +434,28 @@ mod tests {
             "fc = {fc}"
         );
         assert!(fc.contains("[vcat]"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_subtitle_uses_drawtext() {
+        let mut d = doc();
+        d.subtitles.cues.push(veditor_core::SubtitleCue {
+            start: 0,
+            end: 30,
+            text: "你好世界".into(),
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("drawtext=text='你好世界'"), "fc = {fc}");
+        assert!(fc.contains("[vsub]"), "fc = {fc}");
+        // map 应指向 vsub
+        let map_idx = args.iter().position(|a| a == "-map").unwrap();
+        assert_eq!(args[map_idx + 1], "[vsub]");
     }
 
     #[test]

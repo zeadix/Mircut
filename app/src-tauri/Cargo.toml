@@ -16,3 +16,4 @@ veditor-core = { path = "../../crates/core" }
 veditor-media = { path = "../../crates/media" }
 veditor-render = { path = "../../crates/render" }
 veditor-export = { path = "../../crates/export" }
+veditor-ai = { path = "../../crates/ai" }

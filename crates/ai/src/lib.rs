@@ -132,7 +132,7 @@ impl Transcriber for SilenceSegments {
                 cur_start = s.trim().parse::<f64>().ok();
             } else if let Some(e) = line.split("silence_end:").nth(1) {
                 let end = e
-                    .split(|c: char| c == ' ' || c == '\t' || c == '|')
+                    .split([' ', '\t', '|'])
                     .find(|v| !v.is_empty())
                     .and_then(|v| v.parse::<f64>().ok());
                 if let (Some(s), Some(e)) = (cur_start.take(), end) {

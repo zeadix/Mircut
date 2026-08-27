@@ -46,8 +46,8 @@ pub struct SubtitleTrack {
 /// 解析 SRT 文本("HH:MM:SS,mmm --> HH:MM:SS,mmm")。
 pub fn parse_srt(content: &str, ticks_per_sec: i64) -> Vec<SubtitleCue> {
     let mut cues = Vec::new();
-    let mut blocks = content.split("\n\n");
-    while let Some(block) = blocks.next() {
+    let blocks = content.split("\n\n");
+    for block in blocks {
         let lines: Vec<&str> = block.lines().filter(|l| !l.trim().is_empty()).collect();
         if lines.len() < 2 {
             continue;
