@@ -6,3 +6,4 @@ edition.workspace = true
 
 [dependencies]
 veditor-core = { path = "../core" }
+anyhow = { workspace = true }
