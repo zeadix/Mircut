@@ -32,8 +32,7 @@ mod tests {
     #[test]
     fn probe_media_returns_dimensions() {
         let fixture = test_fixture();
-        let info =
-            probe_media(fixture.to_str().unwrap().to_string()).expect("probe 应成功");
+        let info = probe_media(fixture.to_str().unwrap().to_string()).expect("probe 应成功");
         assert_eq!(info.video().unwrap().width, Some(320));
     }
 
