@@ -205,6 +205,64 @@ pub struct ProxySpec {
     pub max_edge: u32,
 }
 
+/// 示波器分析结果(单帧,降采样)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeData {
+    /// 亮度波形:每列的 Y 值集合(0-255),按 64 列降采样。
+    pub waveform: Vec<Vec<u8>>,
+    /// 矢量示波器:UV 散点 (u8, u8) 0-255。
+    pub vectorscope: Vec<(u8, u8)>,
+}
+
+/// 分析媒体在 t 秒处的一帧,生成示波器数据。
+/// 用 ffmpeg 输出缩小的 yuv420p 原始帧后直接采样。
+pub fn analyze_frame_scopes(path: &Path, t_secs: f64) -> Result<ScopeData> {
+    let out = Command::new("ffmpeg")
+        .args([
+            "-ss",
+            &format!("{t_secs:.3}"),
+            "-i",
+            path.to_str().context("路径含非法 UTF-8 字符")?,
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=64:64",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "yuv420p",
+            "pipe:1",
+        ])
+        .output()
+        .context("启动 ffmpeg 失败")?;
+    ensure!(
+        out.status.success(),
+        "示波器取帧失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let data = out.stdout;
+    let w = 64usize;
+    let h = 64usize;
+    let y_plane = &data[..w * h];
+    let u_plane = &data[w * h..w * h + (w / 2) * (h / 2)];
+    let v_plane = &data[w * h + (w / 2) * (h / 2)..];
+    // 波形图:64 列,每列收集该列 64 行的 Y
+    let mut waveform = Vec::with_capacity(w);
+    for x in 0..w {
+        let col: Vec<u8> = (0..h).map(|y| y_plane[y * w + x]).collect();
+        waveform.push(col);
+    }
+    // 矢量:UV 平面散点(32x32 = 1024 点)
+    let mut vectorscope = Vec::with_capacity(u_plane.len());
+    for i in 0..u_plane.len() {
+        vectorscope.push((u_plane[i], v_plane[i]));
+    }
+    Ok(ScopeData {
+        waveform,
+        vectorscope,
+    })
+}
+
 /// 生成低码率 H.264 代理文件(快速 seek,关键帧密集)。
 pub fn make_proxy(spec: &ProxySpec) -> Result<PathBuf> {
     if let Some(parent) = spec.out_path.parent() {
@@ -365,5 +423,16 @@ mod tests {
         let v = info.video().unwrap();
         assert!(v.height.unwrap() <= 180, "height = {:?}", v.height);
         assert!(p.exists());
+    }
+
+    #[test]
+    fn scope_analysis_returns_grids() {
+        let s = analyze_frame_scopes(&fixture(), 0.5).unwrap();
+        assert_eq!(s.waveform.len(), 64);
+        assert!(s.waveform.iter().all(|c| c.len() == 64));
+        assert_eq!(s.vectorscope.len(), 32 * 32);
+        // testsrc 亮度丰富:至少存在非零与非 255 值
+        let flat: Vec<u8> = s.waveform.iter().flatten().copied().collect();
+        assert!(flat.iter().any(|v| *v > 32));
     }
 }

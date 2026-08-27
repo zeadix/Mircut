@@ -8,6 +8,7 @@ import Timeline from "./Timeline";
 import Preview from "./Preview";
 import Inspector from "./Inspector";
 import SubtitlePanel from "./SubtitlePanel";
+import Scopes from "./Scopes";
 import {
   FilmSlate,
   FolderOpen,
@@ -335,6 +336,7 @@ export default function App() {
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <Preview playheadTicks={playhead} fps={fps} />
+          <Scopes playheadTicks={playhead} fps={fps} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}
           </div>

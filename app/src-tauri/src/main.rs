@@ -504,6 +504,47 @@ fn set_chroma_key(
     true
 }
 
+/// 示波器:当前播放头处最上层片段的波形/矢量数据。
+#[tauri::command(async)]
+fn analyze_scopes(
+    t: Ticks,
+    state: State<'_, AppState>,
+) -> Result<veditor_media::ScopeData, String> {
+    let (path, clip_start) = {
+        let inner = state.inner.lock().unwrap();
+        let clip = inner
+            .doc
+            .clips
+            .iter()
+            .filter(|c| c.start <= t && t < c.start + c.duration)
+            .filter(|c| {
+                inner
+                    .doc
+                    .track(&c.track_id)
+                    .is_some_and(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+            })
+            .max_by_key(|c| {
+                inner
+                    .doc
+                    .tracks
+                    .iter()
+                    .position(|tr| tr.id == c.track_id)
+                    .unwrap_or(0)
+            });
+        let Some(clip) = clip else {
+            return Err("该位置无视频片段".into());
+        };
+        let asset = inner.doc.asset(&clip.asset.asset_id).ok_or("素材缺失")?;
+        (asset.path.clone(), clip.start)
+    };
+    let tb = {
+        let inner = state.inner.lock().unwrap();
+        inner.doc.timebase
+    };
+    let t_secs = tb.secs(t - clip_start);
+    veditor_media::analyze_frame_scopes(&PathBuf::from(path), t_secs).map_err(|e| e.to_string())
+}
+
 // ---------- M3:字幕/ASR/TTS ----------
 
 #[derive(Serialize)]
@@ -856,6 +897,7 @@ fn main() {
             cancel_export,
             list_export_presets,
             set_chroma_key,
+            analyze_scopes,
             seek_frame,
             export_video,
             preview_export_cmd
