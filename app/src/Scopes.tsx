@@ -14,7 +14,7 @@ interface ScopeData {
 }
 
 /// 调色示波器:亮度波形图 + UV 矢量示波器(规格 P1)。
-export default function Scopes({ playheadTicks, fps }: Props) {
+export default function Scopes({ playheadTicks, fps, playing, dragging }: Props) {
   const [data, setData] = useState<ScopeData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const waveRef = useRef<HTMLCanvasElement>(null);
