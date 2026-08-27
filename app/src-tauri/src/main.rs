@@ -29,6 +29,8 @@ struct Inner {
     realtime: Option<veditor_render::RealtimeRenderer>,
     /// 当前渲染模式。
     render_mode: RenderMode,
+    /// 首次 get_document 后 realtime 已同步。
+    rt_synced: bool,
     /// 项目文件路径(保存后有效)。
     project_path: Option<std::path::PathBuf>,
 }
@@ -109,7 +111,9 @@ impl Inner {
                 self.doc.clone(),
                 std::env::temp_dir().join("veditor-render-cache"),
             );
-            let rt = veditor_render::RealtimeRenderer::new();
+            // 实时引擎必须持有同一份文档(恢复 autosave 后否则永远黑屏)
+            let mut rt = veditor_render::RealtimeRenderer::new();
+            rt.invalidate(&self.doc);
             self.renderer = Some(r);
             self.realtime = Some(rt);
         }
@@ -277,6 +281,15 @@ fn probe_media(path: String) -> Result<MediaInfo, String> {
 fn get_document(state: State<'_, AppState>) -> Document {
     let mut inner = state.inner.lock().unwrap();
     inner.ensure();
+    // 双保险:恢复 autosave 后确保实时引擎文档一致(仅首启一次,renderer
+    // 刚创建时 realtime 可能仍持旧文档)
+    if !inner.rt_synced {
+        let snapshot = inner.doc.clone();
+        if let Some(rt) = inner.realtime.as_mut() {
+            rt.invalidate(&snapshot);
+        }
+        inner.rt_synced = true;
+    }
     inner.doc.clone()
 }
 
