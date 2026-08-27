@@ -174,7 +174,7 @@ fn read_media_base64(path: String) -> Result<String, String> {
 /// 零依赖 base64 编码(标准字母表,含 padding)。
 fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b = [
             chunk[0],
@@ -1405,7 +1405,6 @@ mod tests {
 
         // 2. 上轨(add_clip 核心逻辑)
         let clip = {
-            let mut inner = st.inner.lock().unwrap();
             let dur = (asset.duration_secs * 30.0).round() as i64;
             Clip {
                 id: "c1".into(),
