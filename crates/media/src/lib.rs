@@ -259,45 +259,52 @@ pub fn make_proxy(spec: &ProxySpec) -> Result<PathBuf> {
     Ok(spec.out_path.clone())
 }
 
+/// 测试夹具:2 秒 320x240 测试视频(含正弦音轨),缓存于临时目录。
+/// 公开导出供其他 crate 测试复用(避免各处重复实现)。
+pub fn tests_fixture() -> std::path::PathBuf {
+    test_fixture_impl()
+}
+
+fn test_fixture_impl() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("veditor-media-tests");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("fixture.mp4");
+    if !f.exists() {
+        let out = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+            ])
+            .arg(&f)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "fixture 生成失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    f
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 用 lavfi 生成 2 秒 320x240 测试视频(含正弦音轨),缓存于临时目录。
-    pub fn fixture() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("veditor-media-tests");
-        std::fs::create_dir_all(&dir).unwrap();
-        let f = dir.join("fixture.mp4");
-        if !f.exists() {
-            let out = Command::new("ffmpeg")
-                .args([
-                    "-y",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "testsrc=duration=2:size=320x240:rate=10",
-                    "-f",
-                    "lavfi",
-                    "-i",
-                    "sine=frequency=440:duration=2",
-                    "-c:v",
-                    "libx264",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-c:a",
-                    "aac",
-                ])
-                .arg(&f)
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "fixture 生成失败: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-        }
-        f
-    }
+    use super::tests_fixture as fixture;
 
     #[test]
     fn probe_reports_video_dimensions() {

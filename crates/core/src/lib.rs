@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 pub mod commands_m2;
 pub mod fx;
+pub mod subtitle;
+
+pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
 
 pub use commands_m2::{
     AddTrack, DetachAudio, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio, SetFx,
@@ -126,6 +129,9 @@ pub struct Document {
     /// 片段间转场。
     #[serde(default)]
     pub transitions: Vec<Transition>,
+    /// 字幕轨(M3)。
+    #[serde(default)]
+    pub subtitles: SubtitleTrack,
 }
 
 impl Default for Document {
@@ -136,6 +142,7 @@ impl Default for Document {
             clips: Vec::new(),
             assets: Vec::new(),
             transitions: Vec::new(),
+            subtitles: SubtitleTrack::default(),
         }
     }
 }

@@ -3714,7 +3714,11 @@ dependencies = [
 name = "veditor-ai"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
  "veditor-core",
+ "veditor-media",
 ]
 
 [[package]]
