@@ -4,6 +4,7 @@ import * as api from "./api";
 import type { Document } from "./types";
 import Timeline from "./Timeline";
 import Preview from "./Preview";
+import Inspector from "./Inspector";
 import {
   FilmSlate,
   FolderOpen,
@@ -12,6 +13,11 @@ import {
   ArrowCounterClockwise,
   ArrowClockwise,
   Export,
+  Waveform as WaveformIcon,
+  Plus,
+  VideoCamera,
+  SpeakerHigh,
+  Waves,
 } from "@phosphor-icons/react";
 
 export default function App() {
@@ -141,6 +147,29 @@ export default function App() {
     await refresh();
   }
 
+  async function onRippleDelete() {
+    if (!selected) return;
+    await api.rippleDelete(selected);
+    setSelected(null);
+    await refresh();
+  }
+
+  async function onAddTrack(kind: "video" | "audio") {
+    await api.addTrack(kind, kind === "video" ? `V${doc!.tracks.filter(t => t.kind === "Video").length + 1}` : `A${doc!.tracks.filter(t => t.kind === "Audio").length + 1}`);
+    await refresh();
+  }
+
+  async function onToggleTrack(trackId: string, flag: "hidden" | "muted" | "locked") {
+    const track = doc!.tracks.find(t => t.id === trackId)!;
+    await api.setTrackFlags(
+      trackId,
+      flag === "locked" ? !track.locked : null,
+      flag === "hidden" ? !track.hidden : null,
+      flag === "muted" ? !track.muted : null
+    );
+    await refresh();
+  }
+
   // 键盘快捷键
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -168,6 +197,9 @@ export default function App() {
         <button className="btn" onClick={onRedo} title="重做 (Ctrl+Shift+Z)"><ArrowClockwise size={16} /></button>
         <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
         <button className="btn" onClick={onRemove} disabled={!selected} title="删除 (Del)"><Trash size={16} /></button>
+        <button className="btn" onClick={onRippleDelete} disabled={!selected} title="波纹删除"><Waves size={16} /></button>
+        <button className="btn" onClick={() => onAddTrack("video")} title="添加视频轨"><VideoCamera size={16} /></button>
+        <button className="btn" onClick={() => onAddTrack("audio")} title="添加音频轨"><SpeakerHigh size={16} /></button>
         <button className="btn primary" onClick={onExport}><Export size={16} /> 导出</button>
       </header>
 
@@ -221,9 +253,20 @@ export default function App() {
               onClipClick={setSelected}
               selectedClipId={selected}
               onClipMove={onClipMove}
+              onToggleTrack={onToggleTrack}
             />
           </div>
         </main>
+
+        {/* 属性检查器 */}
+        <aside style={{ width: 240, background: "#17181c", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
+          <Inspector
+            doc={doc}
+            clip={doc.clips.find((c) => c.id === selected) ?? null}
+            onRefresh={refresh}
+            playheadTicks={playhead}
+          />
+        </aside>
       </div>
 
       {/* 导出设置(底部抽屉式简化) */}

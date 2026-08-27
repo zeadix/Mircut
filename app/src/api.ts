@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Document, Asset, Clip, Waveform } from "./types";
+import type { Document, Asset, Clip, Waveform, Track as TrackT } from "./types";
 
 export async function getDocument(): Promise<Document> {
   return invoke("get_document");
@@ -40,6 +40,73 @@ export async function splitClip(clipId: string, pos: number): Promise<boolean> {
 
 export async function moveClip(clipId: string, newStart: number, newTrackId: string): Promise<boolean> {
   return invoke("move_clip", { clipId, newStart, newTrackId });
+}
+
+// ---------- M2 ----------
+
+export async function addTrack(kind: "video" | "audio", name: string): Promise<TrackT> {
+  return invoke("add_track", { kind, name });
+}
+
+export async function removeTrack(trackId: string): Promise<boolean> {
+  return invoke("remove_track", { trackId });
+}
+
+export async function setTrackFlags(
+  trackId: string,
+  locked: boolean | null,
+  hidden: boolean | null,
+  muted: boolean | null
+): Promise<boolean> {
+  return invoke("set_track_flags", { trackId, locked, hidden, muted });
+}
+
+export async function rippleDelete(clipId: string): Promise<boolean> {
+  return invoke("ripple_delete", { clipId });
+}
+
+export async function setSpeed(clipId: string, speed: number): Promise<boolean> {
+  return invoke("set_speed", { clipId, speed });
+}
+
+export async function setClipAudio(
+  clipId: string,
+  volume: number | null,
+  muted: boolean | null
+): Promise<boolean> {
+  return invoke("set_clip_audio", { clipId, volume, muted });
+}
+
+export async function detachAudio(clipId: string): Promise<boolean> {
+  return invoke("detach_audio", { clipId });
+}
+
+export async function setKeyframe(
+  clipId: string,
+  prop: "opacity" | "scale" | "volume",
+  t: number,
+  value: number,
+  interp: "linear" | "hold" | "smooth"
+): Promise<boolean> {
+  return invoke("set_keyframe", { clipId, prop, t, value, interp });
+}
+
+export async function setTransition(
+  leftClipId: string,
+  rightClipId: string,
+  kind: string,
+  durationSecs: number
+): Promise<boolean> {
+  return invoke("set_transition", {
+    leftClipId,
+    rightClipId,
+    kind,
+    durationSecs,
+  });
+}
+
+export async function removeTransition(leftClipId: string): Promise<boolean> {
+  return invoke("remove_transition", { leftClipId });
 }
 
 export async function undo(): Promise<boolean> {

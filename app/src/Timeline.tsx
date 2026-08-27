@@ -8,6 +8,7 @@ interface Props {
   onClipClick: (clipId: string) => void;
   selectedClipId: string | null;
   onClipMove?: (clipId: string, newStart: number, trackId: string) => void;
+  onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
 }
 
 const PX_PER_TICK = 0.5;
@@ -21,6 +22,7 @@ export default function Timeline({
   onClipClick,
   selectedClipId,
   onClipMove,
+  onToggleTrack,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -153,14 +155,56 @@ export default function Timeline({
   }
 
   return (
-    <div ref={wrapRef} style={{ background: "#17181c", userSelect: "none" }}>
-      <canvas
-        ref={canvasRef}
-        onMouseDown={onPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
-        style={{ cursor: "crosshair", display: "block" }}
-      />
+    <div style={{ background: "#17181c", userSelect: "none" }}>
+      <div style={{ display: "flex" }}>
+        {/* 轨道头 */}
+        <div style={{ width: 120, flexShrink: 0 }}>
+          {doc.tracks.map((track) => (
+            <div
+              key={track.id}
+              style={{
+                height: TRACK_H,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "0 6px",
+                borderBottom: "1px solid #2e3038",
+                background: track.kind === "Video" ? "#1b1d26" : "#1a211d",
+              }}
+            >
+              <span style={{ color: track.kind === "Video" ? "#8ea2d8" : "#7fb8a2", fontSize: 12, flex: 1 }}>
+                {track.name}
+              </span>
+              {(["locked", "hidden", "muted"] as const).map((f) => (
+                <button
+                  key={f}
+                  className="btn"
+                  style={{
+                    padding: "2px 4px",
+                    fontSize: 10,
+                    opacity: track[f] ? 1 : 0.35,
+                    borderColor: track[f] ? "#ffd75e" : undefined,
+                  }}
+                  onClick={() => onToggleTrack?.(track.id, f)}
+                  title={f}
+                >
+                  {f === "locked" ? "锁" : f === "hidden" ? "眼" : "音"}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+        {/* 轨道画布 */}
+        <div ref={wrapRef} style={{ flex: 1, overflow: "hidden" }}>
+          <canvas
+            ref={canvasRef}
+            onMouseDown={onPointerDown}
+            onMouseMove={onPointerMove}
+            onMouseUp={onPointerUp}
+            style={{ cursor: "crosshair", display: "block" }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

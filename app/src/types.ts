@@ -13,6 +13,33 @@ export interface AssetRef {
   source_out: number;
 }
 
+export interface Keyframe {
+  t: number;
+  value: number;
+  interp: "Linear" | "Hold" | "Smooth";
+}
+
+export interface Animatable {
+  keyframes: Keyframe[];
+}
+
+export interface ColorGrade {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  temperature: number;
+}
+
+export interface ClipFx {
+  opacity: Animatable;
+  scale: Animatable;
+  rotate: Animatable;
+  x_offset: Animatable;
+  y_offset: Animatable;
+  grade: ColorGrade;
+  volume: Animatable;
+}
+
 export interface Clip {
   id: string;
   track_id: string;
@@ -22,6 +49,15 @@ export interface Clip {
   speed: number;
   volume: number;
   muted: boolean;
+  fx?: ClipFx;
+}
+
+export interface Transition {
+  id: string;
+  left_clip_id: string;
+  right_clip_id: string;
+  kind: "Fade" | "Dissolve" | "SlideLeft" | "SlideRight" | "Zoom";
+  duration_secs: number;
 }
 
 export interface Asset {
@@ -39,6 +75,7 @@ export interface Document {
   tracks: Track[];
   clips: Clip[];
   assets: Asset[];
+  transitions?: Transition[];
 }
 
 export interface Waveform {
