@@ -24,11 +24,55 @@ struct Inner {
     doc: Document,
     stack: CommandStack,
     renderer: Option<ProxyRenderer>,
+    /// 项目文件路径(保存后有效)。
+    project_path: Option<std::path::PathBuf>,
+}
+
+/// 自动快照路径(崩溃恢复)。
+fn autosave_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join(".veditor/autosave.json")
 }
 
 impl Inner {
+    /// 崩溃恢复:启动时若存在自动快照则载入。
+    fn try_restore(&mut self) -> bool {
+        let p = autosave_path();
+        if !p.exists() {
+            return false;
+        }
+        match std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Document>(&s).ok())
+        {
+            Some(doc) => {
+                self.doc = doc;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 写自动快照(覆盖写,失败静默——不能因快照失败阻塞编辑)。
+    fn autosave(&self) {
+        let path = autosave_path();
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        if let Ok(json) = serde_json::to_string(&self.doc) {
+            let tmp = path.with_extension("json.tmp");
+            if std::fs::write(&tmp, json).is_ok() {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        }
+    }
+
     fn ensure(&mut self) {
         if self.renderer.is_none() {
+            self.try_restore();
             let mut doc = Document::default();
             doc.tracks.push(Track {
                 id: "v1".into(),
@@ -57,7 +101,7 @@ impl Inner {
         }
     }
 
-    /// 执行命令后同步渲染器文档(失效缓存)。
+    /// 执行命令后同步渲染器文档(失效缓存)并自动快照。
     fn exec(&mut self, cmd: Box<dyn Command>) {
         {
             let Inner { doc, stack, .. } = self;
@@ -67,6 +111,7 @@ impl Inner {
         if let Some(r) = self.renderer.as_mut() {
             r.invalidate(&snapshot);
         }
+        self.autosave();
     }
 }
 
@@ -573,6 +618,43 @@ fn env_has(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
+// ---------- M4:项目持久化/剪映导入 ----------
+
+#[tauri::command]
+fn save_project(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.project_path = Some(PathBuf::from(&path));
+    let json = serde_json::to_string_pretty(&inner.doc).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_project(path: String, state: State<'_, AppState>) -> Result<Document, String> {
+    let mut inner = state.inner.lock().unwrap();
+    let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let doc: Document = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    inner.doc = doc.clone();
+    inner.project_path = Some(PathBuf::from(&path));
+    if let Some(r) = inner.renderer.as_mut() {
+        r.invalidate(&doc);
+    }
+    Ok(doc)
+}
+
+/// 导入剪映草稿目录(替换当前文档)。
+#[tauri::command(async)]
+fn import_jianying(draft_dir: String, state: State<'_, AppState>) -> Result<Document, String> {
+    let doc = veditor_media::import_jianying_draft(&PathBuf::from(&draft_dir))
+        .map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap();
+    inner.doc = doc.clone();
+    if let Some(r) = inner.renderer.as_mut() {
+        r.invalidate(&doc);
+    }
+    inner.autosave();
+    Ok(doc)
+}
+
 // ---------- 预览 ----------
 
 #[derive(Serialize)]
@@ -680,6 +762,9 @@ fn main() {
             import_srt,
             export_srt,
             tts_synthesize,
+            save_project,
+            open_project,
+            import_jianying,
             seek_frame,
             export_video,
             preview_export_cmd

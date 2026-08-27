@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import * as api from "./api";
 import type { Document } from "./types";
 import Timeline from "./Timeline";
@@ -132,6 +132,42 @@ export default function App() {
     }
   }
 
+  async function onSaveProject() {
+    const path = window.prompt("保存到:", "/tmp/veditor-project.json");
+    if (!path) return;
+    try {
+      await invoke("save_project", { path });
+      setStatus("项目已保存");
+    } catch (e) {
+      setStatus(`保存失败: ${e}`);
+    }
+  }
+
+  async function onOpenProject() {
+    const path = window.prompt("项目文件路径:");
+    if (!path) return;
+    try {
+      await invoke("open_project", { path });
+      await refresh();
+      setStatus("项目已打开");
+    } catch (e) {
+      setStatus(`打开失败: ${e}`);
+    }
+  }
+
+  async function onImportJianying() {
+    const dir = window.prompt("剪映草稿目录(含 draft_content.json):");
+    if (!dir) return;
+    setStatus("导入剪映草稿...");
+    try {
+      await invoke("import_jianying", { draftDir: dir });
+      await refresh();
+      setStatus("剪映草稿已导入");
+    } catch (e) {
+      setStatus(`导入失败: ${e}`);
+    }
+  }
+
   async function onPreviewCmd() {
     if (!doc) return;
     const cmd = await api.previewExportCmd({
@@ -202,6 +238,9 @@ export default function App() {
         <button className="btn" onClick={onRippleDelete} disabled={!selected} title="波纹删除"><Waves size={16} /></button>
         <button className="btn" onClick={() => onAddTrack("video")} title="添加视频轨"><VideoCamera size={16} /></button>
         <button className="btn" onClick={() => onAddTrack("audio")} title="添加音频轨"><SpeakerHigh size={16} /></button>
+        <button className="btn" onClick={onSaveProject} title="保存项目">保存</button>
+        <button className="btn" onClick={onOpenProject} title="打开项目">打开</button>
+        <button className="btn" onClick={onImportJianying} title="导入剪映草稿">剪映导入</button>
         <button className="btn primary" onClick={onExport}><Export size={16} /> 导出</button>
       </header>
 

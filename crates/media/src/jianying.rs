@@ -11,8 +11,8 @@ use veditor_core::{Asset, AssetRef, Clip, Document, Timebase, Track, TrackKind};
 /// 剪映 draft_content.json 的最小化镜像(只取我们关心的字段,其余忽略)。
 #[derive(Debug, Deserialize)]
 struct JianyingDraft {
-    #[serde(default)]
-    duration: i64, // 微秒
+    #[serde(default, rename = "duration")]
+    _duration_us: i64,
     #[serde(default, rename = "tracks")]
     tracks: Vec<JyTrack>,
     #[serde(default, rename = "materials")]
@@ -131,7 +131,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
             muted: false,
         });
         for seg in &t.segments {
-            let Some((mat_id, path, dur_us)) = mats.iter().find(|m| m.0 == seg.material_id) else {
+            let Some((_mat_id, path, dur_us)) = mats.iter().find(|m| m.0 == seg.material_id) else {
                 continue; // 素材缺失,跳过
             };
             let Some(target) = &seg.target_timerange else {
