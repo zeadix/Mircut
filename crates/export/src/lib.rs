@@ -132,8 +132,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let mut prev_label = "[v0]".to_string();
                 let mut acc = doc.timebase.secs(clips[0].duration);
                 let mut last_label = String::new();
-                for i in 1..clips.len() {
-                    let c = &clips[i];
+                for (i, c) in clips.iter().enumerate().skip(1) {
                     let trans = doc.transitions.iter().find(|t| t.right_clip_id == c.id);
                     let (kind_str, dur) = match trans {
                         Some(t) => (
