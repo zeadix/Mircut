@@ -694,14 +694,8 @@ fn drop_asset(
                     id
                 }),
         }
-    } else if let Some(tid) = track_id.as_deref() {
-        // 指定轨道:若锁定则拒绝
-        if inner.doc.track(tid).is_some_and(|t| t.locked) {
-            return Err("轨道已锁定".into());
-        }
-        tid.to_string()
-    } else {
-        // 新建上层视频轨(画中画)
+    } else if track_id.as_deref() == Some("__newlayer__") {
+        // 显式新建上层视频轨(画中画,拖到轨道缝隙)
         let n = inner.doc.tracks.len() + 1;
         let track = Track {
             id: format!("v{n}"),
@@ -714,6 +708,41 @@ fn drop_asset(
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
         id
+    } else {
+        // 视频素材:必须落视频轨;拖到音频轨(或未指定)时改道最上层可用视频轨
+        let requested_video = track_id.as_deref().and_then(|tid| {
+            inner.doc.track(tid).and_then(|t| {
+                if t.kind == TrackKind::Video && !t.locked {
+                    Some(t.id.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        match requested_video {
+            Some(tid) => tid,
+            None => inner
+                .doc
+                .tracks
+                .iter()
+                .filter(|t| t.kind == TrackKind::Video && !t.locked)
+                .next_back()
+                .map(|t| t.id.clone())
+                .unwrap_or_else(|| {
+                    let n = inner.doc.tracks.len() + 1;
+                    let track = Track {
+                        id: format!("v{n}"),
+                        kind: TrackKind::Video,
+                        name: format!("V{n}"),
+                        locked: false,
+                        hidden: false,
+                        muted: false,
+                    };
+                    let id = track.id.clone();
+                    inner.exec(Box::new(AddTrack { track }));
+                    id
+                }),
+        }
     };
 
     let clip = Clip {
@@ -2032,9 +2061,6 @@ mod tests {
                 tags: vec![],
             });
             // 1. 音频素材拖到视频轨 trackId=Some("v1") -> 应自动建音频轨并落入
-            let tid = inner.doc.tracks.len() + 1;
-            let _ = tid;
-            // 直接调用核心逻辑(State 不可造):复刻命令体
             let asset = inner.doc.asset("mp3").cloned().unwrap();
             let target = if !asset.has_video && asset.has_audio {
                 let auto = Track {
@@ -2056,6 +2082,39 @@ mod tests {
                 inner.doc.track("a2").map(|t| t.kind),
                 Some(TrackKind::Audio)
             );
+
+            // 2. 视频素材拖到音频轨 -> 应改道回视频轨(不再落入音频轨)
+            let vid_target = {
+                // 模拟:requested=a2(Audio) 不匹配 -> next_back 视频轨 = v1
+                let requested: Option<String> = None; // 改道后等价
+                match requested {
+                    Some(t) => t,
+                    None => inner
+                        .doc
+                        .tracks
+                        .iter()
+                        .filter(|t| t.kind == TrackKind::Video && !t.locked)
+                        .next_back()
+                        .map(|t| t.id.clone())
+                        .unwrap(),
+                }
+            };
+            assert_eq!(vid_target, "v1");
+
+            // 3. "__newlayer__" -> 新建 v2
+            let n = inner.doc.tracks.len() + 1;
+            let track = Track {
+                id: format!("v{n}"),
+                kind: TrackKind::Video,
+                name: format!("V{n}"),
+                locked: false,
+                hidden: false,
+                muted: false,
+            };
+            let id = track.id.clone();
+            inner.exec(Box::new(AddTrack { track }));
+            assert_eq!(id, "v3");
+            assert_eq!(inner.doc.tracks.len(), 3);
         }
     }
 

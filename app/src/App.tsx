@@ -441,6 +441,28 @@ export default function App() {
         setPlaying(true);
         setPlaySpeed((s) => (s < 0 ? 1 : s === 1 ? 2 : s >= 2 ? 4 : 1));
       }
+      if (e.key === "i" || e.key === "I") {
+        // 播放头设为选中片段入点(剪映/PR 习惯)
+        if (selected && doc) {
+          const c = doc.clips.find((x) => x.id === selected);
+          if (c && playhead > c.start) {
+            const delta = playhead - c.start;
+            api.trimClip(selected, "left", playhead, Math.max(1, c.duration - delta), false)
+              .then(refresh)
+              .catch(() => setStatus("入点设置失败"));
+          }
+        }
+      }
+      if (e.key === "o" || e.key === "O") {
+        if (selected && doc) {
+          const c = doc.clips.find((x) => x.id === selected);
+          if (c && playhead > c.start) {
+            api.trimClip(selected, "right", c.start, Math.max(1, playhead - c.start), false)
+              .then(refresh)
+              .catch(() => setStatus("出点设置失败"));
+          }
+        }
+      }
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.shiftKey ? onRedo() : onUndo();
       }

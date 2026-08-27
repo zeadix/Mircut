@@ -21,6 +21,9 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   // 曾因早退后还有 hooks 导致 "Rendered more hooks" 致命错误,点击片段即崩)
   const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0 });
   const [lutPath, setLutPath] = useState("");
+  // 入/出点数字编辑(秒)
+  const [inSecs, setInSecs] = useState("0.00");
+  const [outSecs, setOutSecs] = useState("0.00");
 
   useEffect(() => {
     if (clip) {
@@ -56,6 +59,42 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
     }
     if (clip?.fx?.lut) setLutPath(clip.fx.lut.path);
   }, [clip?.id]);
+
+  useEffect(() => {
+    if (clip) {
+      setInSecs(clip.asset.source_in.toFixed(2));
+      setOutSecs(clip.asset.source_out.toFixed(2));
+    }
+  }, [clip?.id, clip?.asset.source_in, clip?.asset.source_out]);
+
+  /// 数字入/出点提交:换算 ticks 走 trim_clip(项目 30fps 基准)。
+  async function applyTrimByNumbers(edge: "left" | "right", secsStr: string) {
+    const secs = parseFloat(secsStr);
+    if (!Number.isFinite(secs) || secs < 0 || !clip) return;
+    const tps = 30;
+    const { invoke } = await import("@tauri-apps/api/core");
+    try {
+      if (edge === "left") {
+        const deltaSrc = secs - clip.asset.source_in;
+        const newStart = Math.max(0, clip.start + Math.round(deltaSrc * tps / clip.speed));
+        const newDuration = Math.max(1, clip.duration - (newStart - clip.start));
+        await invoke("trim_clip", {
+          clipId: clip.id, edge: "left",
+          newStart, newDuration, ripple: false,
+        });
+      } else {
+        const newDuration = Math.max(1, Math.round((secs - clip.asset.source_in) * tps / clip.speed));
+        await invoke("trim_clip", {
+          clipId: clip.id, edge: "right",
+          newStart: clip.start, newDuration, ripple: false,
+        });
+      }
+      await onRefresh();
+    } catch {
+      setInSecs(clip.asset.source_in.toFixed(2));
+      setOutSecs(clip.asset.source_out.toFixed(2));
+    }
+  }
 
   if (!clip) {
     return (
@@ -181,6 +220,39 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <h3 style={{ margin: 0, fontSize: 13 }}>{clip.id}</h3>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>截取范围(素材内,秒)</legend>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <label>
+            入点
+            <input
+              className="ti"
+              style={{ width: 64 }}
+              value={inSecs}
+              onChange={(e) => setInSecs(e.target.value)}
+              onBlur={() => applyTrimByNumbers("left", inSecs)}
+              onKeyDown={(e) => e.key === "Enter" && applyTrimByNumbers("left", inSecs)}
+              title="素材内的入点位置(秒)"
+            />
+          </label>
+          <label>
+            出点
+            <input
+              className="ti"
+              style={{ width: 64 }}
+              value={outSecs}
+              onChange={(e) => setOutSecs(e.target.value)}
+              onBlur={() => applyTrimByNumbers("right", outSecs)}
+              onKeyDown={(e) => e.key === "Enter" && applyTrimByNumbers("right", outSecs)}
+              title="素材内的出点位置(秒)"
+            />
+          </label>
+        </div>
+        <div style={{ color: "#667", marginTop: 4 }}>
+          时长 {((clip.asset.source_out - clip.asset.source_in) / clip.speed).toFixed(2)}s · 快捷键 I/O 用播放头设置
+        </div>
+      </fieldset>
 
       <label>
         变速:{" "}

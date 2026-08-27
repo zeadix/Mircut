@@ -370,7 +370,8 @@ export default function Timeline({
     }
   }
 
-  /// 拖放落点计算:Y 命中轨道行 -> 该轨;轨道间缝隙/底部 -> null(新建层)。
+  /// 拖放落点计算:Y 命中轨道行 -> 该轨(类型不符后端会改道);
+  /// 轨道间缝隙/底部 -> "__newlayer__"(新建上层视频轨)。
   function dropTargetFromEvent(e: React.DragEvent): { trackId: string | null; start: number } | null {
     if (!onDropAsset) return null;
     const wrap = wrapRef.current;
@@ -381,9 +382,9 @@ export default function Timeline({
     const row = Math.floor(yIn / trackH);
     const inGap = yIn - row * trackH > trackH - 6; // 行底 6px 视为缝隙
     if (row < 0) return null;
-    if (row >= doc.tracks.length || (inGap && row < doc.tracks.length)) {
+    if (row >= doc.tracks.length || inGap) {
       // 底部或缝隙:新建层
-      return { trackId: null, start: t };
+      return { trackId: "__newlayer__", start: t };
     }
     const track = doc.tracks[row];
     if (track.locked) return null;
@@ -407,8 +408,8 @@ export default function Timeline({
     const t = Math.max(0, Math.round((e.clientX - rect.left) / PX_PER_TICK));
     setDropHint({
       x: t * PX_PER_TICK,
-      trackIdx: target.trackId ? row : doc.tracks.length,
-      newLayer: target.trackId === null,
+      trackIdx: target.trackId && target.trackId !== "__newlayer__" ? row : doc.tracks.length,
+      newLayer: target.trackId === "__newlayer__",
     });
   }
 
