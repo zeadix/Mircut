@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 
 pub mod commands_m2;
 pub mod fx;
+pub mod fx_ext;
 pub mod subtitle;
 
+pub use fx_ext::{AudioFx, LutApply, TextOverlay};
 pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
 
 pub use commands_m2::{
-    AddTrack, DetachAudio, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio, SetFx,
-    SetSpeed, SetTrackFlags, SetTransition,
+    AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio,
+    SetFx, SetSpeed, SetTrackFlags, SetTransition, TagAsset,
 };
 pub use fx::{
     Animatable, ChromaKey, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind,
@@ -119,6 +121,9 @@ pub struct Asset {
     pub has_audio: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// 用户标签(媒体库筛选)。
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// 项目文档:编辑的唯一真源。
@@ -134,6 +139,9 @@ pub struct Document {
     /// 字幕轨(M3)。
     #[serde(default)]
     pub subtitles: SubtitleTrack,
+    /// 文字叠层(M4 富文本标题)。
+    #[serde(default)]
+    pub text_overlays: Vec<TextOverlay>,
 }
 
 impl Default for Document {
@@ -145,6 +153,7 @@ impl Default for Document {
             assets: Vec::new(),
             transitions: Vec::new(),
             subtitles: SubtitleTrack::default(),
+            text_overlays: Vec::new(),
         }
     }
 }
@@ -564,6 +573,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            tags: vec![],
         });
         let json = serde_json::to_string(&doc).unwrap();
         let back: Document = serde_json::from_str(&json).unwrap();

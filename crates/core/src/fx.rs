@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::fx_ext::{AudioFx, LutApply};
+
 /// 关键帧插值方式。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Interpolation {
@@ -154,6 +156,12 @@ pub struct ClipFx {
     /// 色度抠像(默认关闭)。
     #[serde(default)]
     pub chroma_key: ChromaKey,
+    /// 音频滤镜(淡入淡出/降噪/变声/EQ)。
+    #[serde(default)]
+    pub audio_fx: AudioFx,
+    /// LUT(.cube)。
+    #[serde(default)]
+    pub lut: LutApply,
 }
 
 #[cfg(test)]

@@ -148,6 +148,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 has_audio: true,
                 width: None,
                 height: None,
+                tags: vec![],
             });
             doc.clips.push(Clip {
                 id: format!("jc{clip_idx}"),

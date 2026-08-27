@@ -208,6 +208,7 @@ fn import_media(path: String, state: State<'_, AppState>) -> Result<ImportResult
         has_audio: info.audio().is_some(),
         width: info.video().and_then(|v| v.width),
         height: info.video().and_then(|v| v.height),
+        tags: vec![],
     };
     {
         let mut inner = state.inner.lock().unwrap();
@@ -1034,6 +1035,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                tags: vec![],
             });
             let clip = Clip {
                 id: "c1".into(),

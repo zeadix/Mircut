@@ -394,6 +394,159 @@ impl Command for RemoveTransition {
     }
 }
 
+/// 定格帧(P1):在 pos 处把片段一分为二,中间插入 freeze_ticks 的冻结画面。
+/// 冻结片段以 `speed == 0.0` 标记,导出层用 tpad=stop_mode 克隆首帧。
+pub struct FreezeFrame {
+    pub clip_id: String,
+    pub pos: Ticks,
+    pub freeze_ticks: Ticks,
+    left_id: Option<String>,
+    freeze_id: Option<String>,
+    right_id: Option<String>,
+    orig: Option<Clip>,
+}
+
+impl FreezeFrame {
+    pub fn new(clip_id: impl Into<String>, pos: Ticks, freeze_ticks: Ticks) -> Self {
+        Self {
+            clip_id: clip_id.into(),
+            pos,
+            freeze_ticks,
+            left_id: None,
+            freeze_id: None,
+            right_id: None,
+            orig: None,
+        }
+    }
+}
+
+impl Command for FreezeFrame {
+    fn label(&self) -> &str {
+        "定格帧"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        let Some(orig) = doc.clips.iter().find(|c| c.id == self.clip_id).cloned() else {
+            return;
+        };
+        if self.orig.is_none() {
+            self.orig = Some(orig.clone());
+        }
+        if self.pos <= orig.start
+            || self.pos >= orig.start + orig.duration
+            || self.freeze_ticks <= 0
+        {
+            return;
+        }
+        let left_id = format!("{}-fz-l", self.clip_id);
+        let freeze_id = format!("{}-fz", self.clip_id);
+        let right_id = format!("{}-fz-r", self.clip_id);
+        let cut_secs = doc.timebase.secs(self.pos - orig.start) * orig.speed;
+        let mk = |id: String, start: Ticks, duration: Ticks, si: f64, so: f64, speed: f64| Clip {
+            id,
+            track_id: orig.track_id.clone(),
+            start,
+            duration,
+            asset: crate::AssetRef {
+                asset_id: orig.asset.asset_id.clone(),
+                source_in: si,
+                source_out: so,
+            },
+            speed,
+            volume: orig.volume,
+            muted: orig.muted,
+            fx: orig.fx.clone(),
+        };
+        doc.clips.retain(|c| c.id != self.clip_id);
+        doc.clips.push(mk(
+            left_id.clone(),
+            orig.start,
+            self.pos - orig.start,
+            orig.asset.source_in,
+            orig.asset.source_in + cut_secs,
+            orig.speed,
+        ));
+        doc.clips.push(mk(
+            freeze_id.clone(),
+            self.pos,
+            self.freeze_ticks,
+            orig.asset.source_in + cut_secs,
+            orig.asset.source_in + cut_secs,
+            0.0,
+        ));
+        doc.clips.push(mk(
+            right_id.clone(),
+            self.pos + self.freeze_ticks,
+            orig.duration - (self.pos - orig.start),
+            orig.asset.source_in + cut_secs,
+            orig.asset.source_out,
+            orig.speed,
+        ));
+        self.left_id = Some(left_id);
+        self.freeze_id = Some(freeze_id);
+        self.right_id = Some(right_id);
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        for id in [&self.freeze_id, &self.right_id, &self.left_id] {
+            if let Some(id) = id {
+                doc.clips.retain(|c| c.id != *id);
+            }
+        }
+        if let Some(orig) = self.orig.clone() {
+            doc.clips.push(orig);
+        }
+        self.left_id = None;
+        self.freeze_id = None;
+        self.right_id = None;
+    }
+}
+
+/// 素材打标签(媒体库)。
+pub struct TagAsset {
+    pub asset_id: String,
+    pub tag: String,
+    remove: bool,
+    known: Option<bool>,
+}
+
+impl TagAsset {
+    pub fn add(asset_id: impl Into<String>, tag: impl Into<String>) -> Self {
+        Self {
+            asset_id: asset_id.into(),
+            tag: tag.into(),
+            remove: false,
+            known: None,
+        }
+    }
+}
+
+impl Command for TagAsset {
+    fn label(&self) -> &str {
+        "素材标签"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let Some(a) = doc.assets.iter_mut().find(|a| a.id == self.asset_id) {
+            let has = a.tags.iter().any(|t| *t == self.tag);
+            self.known = Some(has);
+            if self.remove {
+                a.tags.retain(|t| *t != self.tag);
+            } else if !has {
+                a.tags.push(self.tag.clone());
+            }
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some(a) = doc.assets.iter_mut().find(|a| a.id == self.asset_id) {
+            if self.remove {
+                if self.known == Some(true) {
+                    a.tags.push(self.tag.clone());
+                }
+            } else {
+                a.tags.retain(|t| *t != self.tag);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +568,56 @@ mod tests {
             muted: false,
             fx: Default::default(),
         }
+    }
+
+    #[test]
+    fn freeze_frame_splits_into_three_and_undo() {
+        let mut doc = Document::default();
+        doc.timebase = crate::Timebase { num: 30, den: 1 };
+        let mut stack = CommandStack::new();
+        stack.execute(
+            &mut doc,
+            Box::new(crate::AddClip {
+                clip: clip("c1", "v1", 0, 90),
+            }),
+        );
+        stack.execute(&mut doc, Box::new(FreezeFrame::new("c1", 30, 15)));
+        assert_eq!(doc.clips.len(), 3);
+        let freeze = doc.clips.iter().find(|c| c.id == "c1-fz").unwrap();
+        assert_eq!(freeze.speed, 0.0);
+        assert_eq!(freeze.start, 30);
+        assert_eq!(freeze.duration, 15);
+        // 三段连续
+        let mut sorted: Vec<&Clip> = doc.clips.iter().collect();
+        sorted.sort_by_key(|c| c.start);
+        for w in sorted.windows(2) {
+            assert_eq!(w[0].start + w[0].duration, w[1].start);
+        }
+        assert_eq!(sorted[2].end(), 105);
+        stack.undo(&mut doc);
+        assert_eq!(doc.clips.len(), 1);
+        assert_eq!(doc.clip("c1").unwrap().duration, 90);
+        assert_eq!(doc.clip("c1").unwrap().asset.source_out, 100.0);
+    }
+
+    #[test]
+    fn tag_asset_add_undo() {
+        let mut doc = Document::default();
+        doc.assets.push(crate::Asset {
+            id: "a1".into(),
+            path: "/tmp/x.mp4".into(),
+            duration_secs: 1.0,
+            has_video: true,
+            has_audio: false,
+            width: None,
+            height: None,
+            tags: vec![],
+        });
+        let mut stack = CommandStack::new();
+        stack.execute(&mut doc, Box::new(TagAsset::add("a1", "精华")));
+        assert_eq!(doc.asset("a1").unwrap().tags, vec!["精华"]);
+        stack.undo(&mut doc);
+        assert!(doc.asset("a1").unwrap().tags.is_empty());
     }
 
     #[test]
