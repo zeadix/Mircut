@@ -1,8 +1,11 @@
 //! VEditor 导出层:文档模型到 FFmpeg 滤镜图/命令行的编译器、导出队列。M2 实现队列。
 
 use anyhow::{ensure, Context, Result};
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use veditor_core::{Document, TrackKind};
 
 /// 导出参数。
@@ -284,6 +287,96 @@ pub fn run_export(args: &[String]) -> Result<PathBuf> {
     Ok(PathBuf::from(out_path))
 }
 
+/// 导出进度事件。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExportProgress {
+    Running(f64),
+    Done,
+}
+
+/// 带进度与取消的导出:流式读 ffmpeg stderr,解析 `time=HH:MM:SS.xx` 与总时长比对。
+/// `cancel` 置 true 时杀掉 ffmpeg 进程并返回错误("已取消")。
+pub fn run_export_tracked(
+    args: &[String],
+    total_secs: f64,
+    progress: &dyn Fn(ExportProgress),
+    cancel: Arc<AtomicBool>,
+) -> Result<PathBuf> {
+    let out_path = args.last().cloned().unwrap_or_default();
+    let mut child = Command::new("ffmpeg")
+        .args(["-progress", "pipe:2", "-nostats"])
+        .args(args)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .context("启动 ffmpeg 失败")?;
+    let mut stderr = child.stderr.take().context("无法读取 ffmpeg stderr")?;
+    let mut buf = [0u8; 4096];
+    let mut tail = String::new();
+    let mut cancelled = false;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            cancelled = true;
+        }
+        match stderr.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                // 只保留末尾若干行,防膨胀
+                if tail.len() > 16_384 {
+                    let keep = tail.len() - 8192;
+                    tail = tail[keep..].to_string();
+                }
+                // -progress 输出行: out_time_us=1234567 或 out_time=00:00:01.23
+                for line in tail.lines().rev() {
+                    if let Some(us) = line.strip_prefix("out_time_us=") {
+                        if let Ok(v) = us.trim().parse::<f64>() {
+                            if total_secs > 0.0 {
+                                let pct = (v / 1_000_000.0 / total_secs * 100.0).clamp(0.0, 100.0);
+                                progress(ExportProgress::Running(pct));
+                            }
+                            break;
+                        }
+                    } else if let Some(t) = line.strip_prefix("out_time=") {
+                        if let Some(secs) = parse_hms(t.trim()) {
+                            if total_secs > 0.0 {
+                                let pct = (secs / total_secs * 100.0).clamp(0.0, 100.0);
+                                progress(ExportProgress::Running(pct));
+                            }
+                            break;
+                        }
+                    }
+                    if line.trim() == "progress=end" {
+                        progress(ExportProgress::Running(100.0));
+                    }
+                }
+            }
+            Err(e) => return Err(anyhow::anyhow!("读取 ffmpeg 输出失败: {e}")),
+        }
+    }
+    let status = child.wait().context("等待 ffmpeg 失败")?;
+    if cancelled {
+        let _ = std::fs::remove_file(&out_path);
+        anyhow::bail!("已取消");
+    }
+    ensure!(status.success(), "导出失败(ffmpeg 退出码非零)");
+    progress(ExportProgress::Done);
+    Ok(PathBuf::from(out_path))
+}
+
+fn parse_hms(s: &str) -> Option<f64> {
+    // HH:MM:SS.xx
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let h: f64 = parts[0].parse().ok()?;
+    let m: f64 = parts[1].parse().ok()?;
+    let sec: f64 = parts[2].parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + sec)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,6 +567,56 @@ mod tests {
         let args = compile_ffmpeg_cmd(&d, &params);
         run_export(&args).unwrap();
         ensure_exported_valid(&out);
+    }
+
+    #[test]
+    fn tracked_export_reports_progress_and_finishes() {
+        let mut d = doc();
+        d.assets[0].path = "/tmp/veditor-media-tests/fixture.mp4".into();
+        let out = std::env::temp_dir().join("veditor-media-tests/export-tracked.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        let args = compile_ffmpeg_cmd(&d, &params);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let seen = std::sync::Mutex::new(Vec::new());
+        let r = run_export_tracked(&args, 1.0, &|p| seen.lock().unwrap().push(p), cancel).unwrap();
+        assert!(r.exists());
+        let seen = seen.into_inner().unwrap();
+        assert!(
+            seen.contains(&ExportProgress::Done),
+            "应报告 Done, got {seen:?}"
+        );
+        ensure_exported_valid(&out);
+    }
+
+    #[test]
+    fn tracked_export_can_cancel() {
+        let mut d = doc();
+        d.assets[0].path = "/tmp/veditor-media-tests/fixture.mp4".into();
+        let out = std::env::temp_dir().join("veditor-media-tests/export-cancel.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            vcodec: "libx264".into(),
+            crf: 18,
+            fps: 30,
+            acodec: "aac".into(),
+            audio_bitrate: "192k".into(),
+        };
+        let args = compile_ffmpeg_cmd(&d, &params);
+        let cancel = Arc::new(AtomicBool::new(false));
+        // 立即取消
+        cancel.store(true, Ordering::Relaxed);
+        let r = run_export_tracked(&args, 3600.0, &|_| {}, cancel);
+        assert!(r.is_err(), "应返回取消错误");
+        assert!(r.unwrap_err().to_string().contains("取消"));
     }
 
     fn ensure_exported_valid(path: &Path) {
