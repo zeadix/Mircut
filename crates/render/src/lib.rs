@@ -1,1 +1,225 @@
-//! VEditor 渲染层:`Renderer` trait 定义与 MVP `ProxyRenderer` 实现。M1 实现。
+//! VEditor 渲染层:`Renderer` trait 定义与 MVP `ProxyRenderer` 实现。
+//!
+//! M1 预览模型:为时间轴位置定位「当前片段 + 素材代理文件」,用 ffmpeg 单帧
+//! 解码为 JPEG 提供给前端;连续播放由前端对代理文件使用 `<video>` 元素完成,
+//! 拖动/跳转时逐帧 seek 走本 trait。
+
+use anyhow::{ensure, Context, Result};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use veditor_core::{Document, Ticks, TrackKind};
+
+/// 一次 seek 的产物:可发给前端的单帧图像。
+#[derive(Debug, Clone)]
+pub struct FrameHandle {
+    /// JPEG 文件路径。
+    pub jpeg_path: PathBuf,
+    /// 帧对应的素材 id。
+    pub asset_id: String,
+}
+
+/// 渲染器抽象(MVP: 代理;v1.1: wgpu 实时合成,同接口)。
+pub trait Renderer: Send {
+    /// 定位时间轴位置 t 处的画面,返回可显示的帧。
+    fn seek(&mut self, t: Ticks) -> Result<FrameHandle>;
+    /// 文档变更后精准失效缓存。
+    fn invalidate(&mut self, doc: &Document);
+}
+
+/// 基于代理文件的逐帧渲染器。
+pub struct ProxyRenderer {
+    doc: Document,
+    /// asset_id -> 代理文件路径。
+    proxies: std::collections::HashMap<String, PathBuf>,
+    /// 帧缓存目录。
+    cache_dir: PathBuf,
+    /// (asset_id, source_secs) -> jpeg 路径。
+    cache: std::collections::HashMap<(String, i64), PathBuf>,
+}
+
+impl ProxyRenderer {
+    pub fn new(doc: Document, cache_dir: PathBuf) -> Self {
+        Self {
+            doc,
+            proxies: std::collections::HashMap::new(),
+            cache_dir,
+            cache: std::collections::HashMap::new(),
+        }
+    }
+
+    /// 注册某素材的代理文件(由 app 层在代理生成完成后注入)。
+    pub fn set_proxy(&mut self, asset_id: impl Into<String>, path: PathBuf) {
+        self.proxies.insert(asset_id.into(), path);
+    }
+
+    /// 找 t 时刻最上层可见视频片段。
+    fn clip_at(&self, t: Ticks) -> Option<&veditor_core::Clip> {
+        let visible: Vec<&str> = self
+            .doc
+            .tracks
+            .iter()
+            .filter(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+            .map(|tr| tr.id.as_str())
+            .collect();
+        self.doc
+            .clips
+            .iter()
+            .filter(|c| visible.contains(&c.track_id.as_str()) && c.start <= t && t < c.end())
+            .max_by_key(|c| {
+                self.doc
+                    .tracks
+                    .iter()
+                    .position(|tr| tr.id == c.track_id)
+                    .unwrap_or(0)
+            })
+    }
+}
+
+impl Renderer for ProxyRenderer {
+    fn seek(&mut self, t: Ticks) -> Result<FrameHandle> {
+        let (asset_id, media_path, source_secs) = {
+            let clip = self.clip_at(t).context("该时间点没有视频片段(黑场)")?;
+            let asset = self
+                .doc
+                .asset(&clip.asset.asset_id)
+                .context("片段引用的素材不存在")?;
+            let media_path = self
+                .proxies
+                .get(&clip.asset.asset_id)
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from(&asset.path));
+            let offset_secs = self.doc.timebase.secs(t - clip.start);
+            let source_secs = clip.asset.source_in + offset_secs * clip.speed;
+            (clip.asset.asset_id.clone(), media_path, source_secs)
+        };
+        let key = (asset_id.clone(), (source_secs * 1000.0) as i64);
+        if let Some(p) = self.cache.get(&key) {
+            if p.exists() {
+                return Ok(FrameHandle {
+                    jpeg_path: p.clone(),
+                    asset_id,
+                });
+            }
+        }
+        std::fs::create_dir_all(&self.cache_dir)?;
+        let jpeg = self.cache_dir.join(format!("{}_{}.jpg", key.0, key.1));
+        let out = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-ss",
+                &format!("{source_secs:.3}"),
+                "-i",
+                media_path.to_str().context("路径含非法 UTF-8 字符")?,
+                "-frames:v",
+                "1",
+                "-q:v",
+                "3",
+            ])
+            .arg(&jpeg)
+            .output()
+            .context("启动 ffmpeg 失败")?;
+        ensure!(
+            out.status.success(),
+            "预览帧解码失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        self.cache.insert(key, jpeg.clone());
+        Ok(FrameHandle {
+            jpeg_path: jpeg,
+            asset_id,
+        })
+    }
+
+    fn invalidate(&mut self, doc: &Document) {
+        self.doc = doc.clone();
+        // M1 简化:整体清空帧缓存(文件保留在磁盘,由上限策略清理)。
+        self.cache.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use veditor_core::{Asset, AssetRef, Clip, Timebase, Track};
+
+    fn doc_with_clip(path: &str) -> Document {
+        let mut doc = Document {
+            timebase: Timebase { num: 10, den: 1 },
+            ..Default::default()
+        };
+        doc.tracks.push(Track {
+            id: "t1".into(),
+            kind: TrackKind::Video,
+            name: "V1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        doc.assets.push(Asset {
+            id: "a1".into(),
+            path: path.into(),
+            duration_secs: 2.0,
+            has_video: true,
+            has_audio: true,
+            width: Some(320),
+            height: Some(240),
+        });
+        doc.clips.push(Clip {
+            id: "c1".into(),
+            start: 0,
+            duration: 10,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            track_id: "t1".into(),
+        });
+        doc
+    }
+
+    #[test]
+    fn seek_empty_timeline_errors() {
+        let mut r = ProxyRenderer::new(
+            Document::default(),
+            PathBuf::from("/tmp/veditor-render-tests"),
+        );
+        assert!(r.seek(0).is_err());
+    }
+
+    #[test]
+    fn seek_returns_frame_and_uses_cache() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过(先跑 media 测试)");
+            return;
+        }
+        let cache = std::env::temp_dir().join("veditor-render-tests");
+        let _ = std::fs::remove_dir_all(&cache);
+        let mut r = ProxyRenderer::new(doc_with_clip(fixture), cache);
+        let f = r.seek(3).unwrap();
+        assert!(f.jpeg_path.exists());
+        assert_eq!(f.asset_id, "a1");
+        assert_eq!(r.cache.len(), 1);
+        // 二次 seek 同帧 -> 命中缓存,不新增
+        r.seek(3).unwrap();
+        assert_eq!(r.cache.len(), 1);
+    }
+
+    #[test]
+    fn invalidate_clears_cache() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !Path::new(fixture).exists() {
+            return;
+        }
+        let cache = std::env::temp_dir().join("veditor-render-tests");
+        let mut r = ProxyRenderer::new(doc_with_clip(fixture), cache);
+        r.seek(1).unwrap();
+        assert!(!r.cache.is_empty());
+        r.invalidate(&doc_with_clip(fixture));
+        assert!(r.cache.is_empty());
+    }
+}
