@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use veditor_core::{
-    AddClip, Asset, AssetRef, Clip, Command, CommandStack, Document, RemoveClip, SplitClip, Ticks,
-    Track, TrackKind,
+    AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, ColorGrade, Command, CommandStack,
+    DetachAudio, Document, Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio,
+    SetFx, SetSpeed, SetTrackFlags, SetTransition, SplitClip, Ticks, Track, TrackKind, Transition,
+    TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
@@ -273,6 +275,167 @@ fn move_clip(
     true
 }
 
+// ---------- M2:轨道/波纹/变速/特效/转场 ----------
+
+#[tauri::command]
+fn add_track(kind: String, name: String, state: State<'_, AppState>) -> Result<Track, String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.ensure();
+    let id = format!(
+        "{}{}",
+        if kind == "video" { "v" } else { "a" },
+        inner.doc.tracks.len() + 1
+    );
+    let track = Track {
+        id: id.clone(),
+        kind: if kind == "video" {
+            TrackKind::Video
+        } else {
+            TrackKind::Audio
+        },
+        name,
+        locked: false,
+        hidden: false,
+        muted: false,
+    };
+    inner.exec(Box::new(AddTrack {
+        track: track.clone(),
+    }));
+    Ok(track)
+}
+
+#[tauri::command]
+fn remove_track(track_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(RemoveTrack::new(track_id)));
+    true
+}
+
+#[tauri::command]
+fn set_track_flags(
+    track_id: String,
+    locked: Option<bool>,
+    hidden: Option<bool>,
+    muted: Option<bool>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(SetTrackFlags::new(
+        track_id, locked, hidden, muted,
+    )));
+    true
+}
+
+#[tauri::command]
+fn ripple_delete(clip_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(RippleDelete::new(clip_id)));
+    true
+}
+
+#[tauri::command]
+fn set_speed(clip_id: String, speed: f64, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(SetSpeed::new(clip_id, speed)));
+    true
+}
+
+#[tauri::command]
+fn set_clip_audio(
+    clip_id: String,
+    volume: Option<f64>,
+    muted: Option<bool>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(SetClipAudio::new(clip_id, volume, muted)));
+    true
+}
+
+#[tauri::command]
+fn detach_audio(clip_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let audio_track = inner
+        .doc
+        .tracks
+        .iter()
+        .find(|t| t.kind == TrackKind::Audio)
+        .map(|t| t.id.clone())
+        .unwrap_or_else(|| "a1".into());
+    inner.exec(Box::new(DetachAudio::new(clip_id, audio_track)));
+    true
+}
+
+#[tauri::command]
+fn set_clip_fx(clip_id: String, fx: ClipFx, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    true
+}
+
+#[tauri::command]
+fn set_keyframe(
+    clip_id: String,
+    prop: String,
+    t: Ticks,
+    value: f64,
+    interp: String,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return false;
+    };
+    let mut fx = clip.fx;
+    let interp = match interp.as_str() {
+        "hold" => Interpolation::Hold,
+        "smooth" => Interpolation::Smooth,
+        _ => Interpolation::Linear,
+    };
+    match prop.as_str() {
+        "opacity" => fx.opacity.set(t, value, interp),
+        "scale" => fx.scale.set(t, value, interp),
+        "volume" => fx.volume.set(t, value, interp),
+        _ => return false,
+    }
+    inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    true
+}
+
+#[tauri::command]
+fn set_transition(
+    left_clip_id: String,
+    right_clip_id: String,
+    kind: String,
+    duration_secs: f64,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let kind = match kind.as_str() {
+        "dissolve" => TransitionKind::Dissolve,
+        "slideleft" => TransitionKind::SlideLeft,
+        "slideright" => TransitionKind::SlideRight,
+        "zoom" => TransitionKind::Zoom,
+        _ => TransitionKind::Fade,
+    };
+    let trans = Transition {
+        id: format!("tr-{left_clip_id}"),
+        left_clip_id,
+        right_clip_id,
+        kind,
+        duration_secs,
+    };
+    inner.exec(Box::new(SetTransition { transition: trans }));
+    true
+}
+
+#[tauri::command]
+fn remove_transition(left_clip_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(veditor_core::RemoveTransition::new(left_clip_id)));
+    true
+}
+
 // ---------- 预览 ----------
 
 #[derive(Serialize)]
@@ -360,6 +523,17 @@ fn main() {
             remove_clip,
             split_clip,
             move_clip,
+            add_track,
+            remove_track,
+            set_track_flags,
+            ripple_delete,
+            set_speed,
+            set_clip_audio,
+            detach_audio,
+            set_clip_fx,
+            set_keyframe,
+            set_transition,
+            remove_transition,
             seek_frame,
             export_video,
             preview_export_cmd
