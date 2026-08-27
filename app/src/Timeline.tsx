@@ -30,6 +30,8 @@ export default function Timeline({
   const dragRef = useRef<{ clipId: string; startX: number; origStart: number } | null>(null);
   const [trackH, setTrackH] = useState(56);
   const [snap, setSnap] = useState(true);
+  /// 拖拽虚影:拖动中的目标位置(ticks),绘制幽灵片段。
+  const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -124,6 +126,26 @@ export default function Timeline({
       ctx.fillRect(x, doc.tracks.length * trackH + 10, Math.max(cw, 2), 6);
     });
 
+    // 拖拽虚影:目标位置半透明 + 落点竖线
+    if (ghost) {
+      const gy = ghost.trackIdx * trackH + 5;
+      const gx = ghost.start * PX_PER_TICK;
+      const gw = ghost.duration * PX_PER_TICK;
+      ctx.fillStyle = "rgba(126, 168, 255, 0.35)";
+      ctx.fillRect(gx, gy, Math.max(gw, 2), trackH - 10);
+      ctx.strokeStyle = "#7ea8ff";
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(gx, gy, Math.max(gw, 2), trackH - 10);
+      ctx.setLineDash([]);
+      // 被拖片段原位置淡化
+      const orig = doc.clips.find((c) => c.id === ghost.clipId);
+      if (orig) {
+        const oy = doc.tracks.findIndex((t) => t.id === orig.track_id) * trackH + 5;
+        ctx.fillStyle = "rgba(255,255,255,0.06)";
+        ctx.fillRect(orig.start * PX_PER_TICK, oy, Math.max(orig.duration * PX_PER_TICK, 2), trackH - 10);
+      }
+    }
+
     // 播放头
     const px = playheadTicks * PX_PER_TICK;
     ctx.strokeStyle = "#ff5f5f";
@@ -131,7 +153,7 @@ export default function Timeline({
     ctx.moveTo(px, 0);
     ctx.lineTo(px, doc.tracks.length * trackH);
     ctx.stroke();
-  }, [doc, playheadTicks, selectedClipId, trackH]);
+  }, [doc, playheadTicks, selectedClipId, trackH, ghost]);
 
   function ticksFromEvent(e: React.MouseEvent): number {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -152,13 +174,28 @@ export default function Timeline({
       onSeek(Math.min(Math.max(t, hit.start), hit.start + hit.duration - 1));
       dragRef.current = { clipId: hit.id, startX: e.clientX, origStart: hit.start };
     } else {
+      setGhost(null);
       onSeek(snapTicks(t));
     }
+  }
+
+  function onPointerMove(e: React.MouseEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    const clip = doc.clips.find((c) => c.id === d.clipId);
+    if (!clip) return;
+    const dx = e.clientX - d.startX;
+    const deltaTicks = Math.round(dx / PX_PER_TICK);
+    const raw = Math.max(0, d.origStart + deltaTicks);
+    const snapped = snapTicks(raw, d.clipId);
+    const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
+    setGhost({ clipId: d.clipId, start: snapped, duration: clip.duration, trackIdx: ti });
   }
 
   function onPointerUp(e: React.MouseEvent) {
     const d = dragRef.current;
     dragRef.current = null;
+    setGhost(null);
     if (!d) return;
     const dx = e.clientX - d.startX;
     if (Math.abs(dx) > 3) {
@@ -232,7 +269,7 @@ export default function Timeline({
           <canvas
             ref={canvasRef}
             onMouseDown={onPointerDown}
-            onMouseMove={() => {}}
+            onMouseMove={onPointerMove}
             onMouseUp={onPointerUp}
             style={{ cursor: "crosshair", display: "block" }}
           />

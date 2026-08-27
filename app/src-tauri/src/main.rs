@@ -51,6 +51,88 @@ fn autosave_path() -> std::path::PathBuf {
 }
 
 impl Inner {
+    /// 磁吸推挤:对指定轨道消重叠(moved 保位),生成追加 MoveClip 命令。
+    /// 返回是否有变更。
+    fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {
+        let on_track: Vec<&Clip> = self
+            .doc
+            .clips
+            .iter()
+            .filter(|c| c.track_id == track_id)
+            .collect();
+        if on_track.is_empty() {
+            return false;
+        }
+        let sched: Vec<veditor_core::SchedClip> = on_track
+            .iter()
+            .map(|c| veditor_core::SchedClip {
+                idx: 0, // 占位,下面重填
+                start: c.start,
+                duration: c.duration,
+            })
+            .collect();
+        // 用 doc.clips 全量索引映射 idx -> clip_id
+        let id_of: Vec<(String, i64, i64)> = on_track
+            .iter()
+            .map(|c| (c.id.clone(), c.start, c.duration))
+            .collect();
+        let sched: Vec<veditor_core::SchedClip> = sched
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut s)| {
+                s.idx = i;
+                s
+            })
+            .collect();
+        let moved_idx = moved_id.and_then(|id| id_of.iter().position(|(cid, ..)| cid == id));
+        let changes = veditor_core::resolve_overlaps(&sched, moved_idx);
+        if changes.is_empty() {
+            return false;
+        }
+        for (i, new_start) in changes {
+            let cid = id_of[i].0.clone();
+            self.exec(Box::new(veditor_core::MoveClip::new(
+                cid,
+                new_start,
+                track_id.to_string(),
+            )));
+        }
+        true
+    }
+
+    /// 全轨道整理(启动恢复脏数据用,不进撤销栈)。
+    fn schedule_all_tracks_silent(&mut self) {
+        let track_ids: Vec<String> = self.doc.tracks.iter().map(|t| t.id.clone()).collect();
+        for tid in track_ids {
+            let on_track: Vec<(String, i64, i64)> = self
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.track_id == tid)
+                .map(|c| (c.id.clone(), c.start, c.duration))
+                .collect();
+            if on_track.is_empty() {
+                continue;
+            }
+            let sched: Vec<veditor_core::SchedClip> = on_track
+                .iter()
+                .enumerate()
+                .map(|(i, (_, s, d))| veditor_core::SchedClip {
+                    idx: i,
+                    start: *s,
+                    duration: *d,
+                })
+                .collect();
+            let changes = veditor_core::resolve_overlaps(&sched, None);
+            for (i, new_start) in changes {
+                let cid = &on_track[i].0;
+                if let Some(c) = self.doc.clips.iter_mut().find(|c| c.id == *cid) {
+                    c.start = new_start;
+                }
+            }
+        }
+    }
+
     /// 崩溃恢复:启动时若存在自动快照则载入。
     fn try_restore(&mut self) -> bool {
         let p = autosave_path();
@@ -70,25 +152,37 @@ impl Inner {
     }
 
     /// 写自动快照(覆盖写,失败静默——不能因快照失败阻塞编辑)。
+    /// 测试环境跳过:防止单测污染用户真实 ~/.veditor/autosave.json。
     fn autosave(&self) {
-        let path = autosave_path();
-        let Some(parent) = path.parent() else {
-            return;
-        };
-        if std::fs::create_dir_all(parent).is_err() {
+        #[cfg(test)]
+        {
             return;
         }
-        if let Ok(json) = serde_json::to_string(&self.doc) {
-            let tmp = path.with_extension("json.tmp");
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
+        #[cfg(not(test))]
+        {
+            let path = autosave_path();
+            let Some(parent) = path.parent() else {
+                return;
+            };
+            if std::fs::create_dir_all(parent).is_err() {
+                return;
+            }
+            if let Ok(json) = serde_json::to_string(&self.doc) {
+                let tmp = path.with_extension("json.tmp");
+                if std::fs::write(&tmp, json).is_ok() {
+                    let _ = std::fs::rename(&tmp, path);
+                }
             }
         }
     }
 
     fn ensure(&mut self) {
         if self.renderer.is_none() {
-            self.try_restore();
+            let restored = self.try_restore();
+            if restored {
+                // 历史脏数据整理:消除旧版本产生的同轨重叠(不进撤销栈)
+                self.schedule_all_tracks_silent();
+            }
             let mut doc = Document::default();
             doc.tracks.push(Track {
                 id: "v1".into(),
@@ -497,7 +591,7 @@ fn add_clip(
     };
     let clip = Clip {
         id: format!("c{}", inner.doc.clips.len() + 1),
-        track_id,
+        track_id: track_id.clone(),
         start: effective_start,
         duration,
         asset: AssetRef {
@@ -511,9 +605,10 @@ fn add_clip(
         fx: Default::default(),
     };
     inner.exec(Box::new(AddClip { clip: clip.clone() }));
+    // 磁吸推挤:显式落点可能与已有片段重叠,新片段保位
+    inner.schedule_track(&track_id, Some(&clip.id));
     Ok(clip)
 }
-
 #[tauri::command]
 fn remove_clip(clip_id: String, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
@@ -537,10 +632,12 @@ fn move_clip(
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
     inner.exec(Box::new(veditor_core::MoveClip::new(
-        clip_id,
+        clip_id.clone(),
         new_start,
-        new_track_id,
+        new_track_id.clone(),
     )));
+    // 磁吸推挤:消除落点重叠(moved 保位)
+    inner.schedule_track(&new_track_id, Some(&clip_id));
     true
 }
 
@@ -1571,6 +1668,107 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 磁吸推挤集成:拖拽重叠时被挡片段让位,moved 保位。
+    #[test]
+    fn magnetic_push_on_move() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 5.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            for id in ["c1", "c2"] {
+                inner.doc.clips.push(Clip {
+                    id: id.into(),
+                    track_id: "v1".into(),
+                    start: 0,
+                    duration: 60,
+                    asset: AssetRef {
+                        asset_id: "a1".into(),
+                        source_in: 0.0,
+                        source_out: 2.0,
+                    },
+                    speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fx: Default::default(),
+                });
+            }
+            // c2 落到 30(与 c1 重叠):推挤后 c1 应被挤到 c2 之后
+            let tid = "v1".to_string();
+            inner.schedule_track(&tid, Some("c2"));
+            let c1 = inner.doc.clip("c1").unwrap();
+            let c2 = inner.doc.clip("c2").unwrap();
+            assert_eq!(c2.start, 0); // moved 保位
+            assert_eq!(c1.start, 60); // 被挤到后方
+        }
+    }
+
+    /// 历史脏数据:autosave 重叠在恢复时被静默整理。
+    #[test]
+    fn legacy_overlap_cleanup_on_restore() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            // 模拟用户当前 autosave 的重叠:c1=[1890,3356], c2=[0,1922] 重叠 32
+            for (id, start) in [("c1", 1890i64), ("c2", 0i64)] {
+                inner.doc.clips.push(Clip {
+                    id: id.into(),
+                    track_id: "v1".into(),
+                    start,
+                    duration: 1466,
+                    asset: AssetRef {
+                        asset_id: "a".into(),
+                        source_in: 0.0,
+                        source_out: 2.0,
+                    },
+                    speed: 1.0,
+                    volume: 1.0,
+                    muted: false,
+                    fx: Default::default(),
+                });
+            }
+            inner.schedule_all_tracks_silent();
+            let c1 = inner.doc.clip("c1").unwrap();
+            let c2 = inner.doc.clip("c2").unwrap();
+            assert!(
+                c2.start + c2.duration <= c1.start,
+                "整理后无重叠: c2=[{},{}] c1=[{},{}]",
+                c2.start,
+                c2.start + c2.duration,
+                c1.start,
+                c1.start + c1.duration
+            );
+        }
+    }
 
     #[test]
     fn ping_returns_pong() {

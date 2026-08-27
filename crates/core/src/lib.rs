@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 pub mod commands_m2;
 pub mod fx;
 pub mod fx_ext;
+pub mod scheduler;
 pub mod subtitle;
+
+pub use scheduler::{resolve_overlaps, Placement, SchedClip};
 
 pub use fx_ext::{AudioFx, LutApply, TextOverlay};
 pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
