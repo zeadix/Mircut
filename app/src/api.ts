@@ -42,6 +42,25 @@ export async function moveClip(clipId: string, newStart: number, newTrackId: str
   return invoke("move_clip", { clipId, newStart, newTrackId });
 }
 
+export async function trimClip(
+  clipId: string,
+  edge: "left" | "right",
+  newStart: number,
+  newDuration: number,
+  ripple: boolean
+): Promise<void> {
+  await invoke("trim_clip", { clipId, edge, newStart, newDuration, ripple });
+}
+
+/// 拖放素材到时间轴(trackId=null 表示新建上层视频轨)。
+export async function dropAsset(
+  assetId: string,
+  trackId: string | null,
+  start: number
+): Promise<void> {
+  await invoke("drop_asset", { assetId, trackId, start });
+}
+
 // ---------- M2 ----------
 
 export async function addTrack(kind: "video" | "audio", name: string): Promise<TrackT> {

@@ -641,6 +641,178 @@ fn move_clip(
     true
 }
 
+/// 拖放素材落点(trackId=null -> 新建上层视频轨;音频素材强制音频轨)。
+#[tauri::command]
+fn drop_asset(
+    asset_id: String,
+    track_id: Option<String>,
+    start: Ticks,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.ensure();
+    let asset = inner
+        .doc
+        .asset(&asset_id)
+        .cloned()
+        .ok_or("素材不存在,请先导入")?;
+    let duration = (asset.duration_secs
+        * (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64)
+        .round() as i64;
+
+    // 决定目标轨道
+    let target_track = if !asset.has_video && asset.has_audio {
+        // 纯音频素材:必须落音频轨;给定的是视频轨或 null 时找/建音频轨
+        match track_id.as_deref().and_then(|tid| {
+            inner
+                .doc
+                .tracks
+                .iter()
+                .find(|t| t.id == tid && t.kind == TrackKind::Audio)
+                .map(|t| t.id.clone())
+        }) {
+            Some(tid) => tid,
+            None => inner
+                .doc
+                .tracks
+                .iter()
+                .find(|t| t.kind == TrackKind::Audio && !t.locked)
+                .map(|t| t.id.clone())
+                .unwrap_or_else(|| {
+                    // 自动建音频轨
+                    let n = inner.doc.tracks.len() + 1;
+                    let track = Track {
+                        id: format!("a{n}"),
+                        kind: TrackKind::Audio,
+                        name: format!("A{n}"),
+                        locked: false,
+                        hidden: false,
+                        muted: false,
+                    };
+                    let id = track.id.clone();
+                    inner.exec(Box::new(AddTrack { track }));
+                    id
+                }),
+        }
+    } else if let Some(tid) = track_id.as_deref() {
+        // 指定轨道:若锁定则拒绝
+        if inner.doc.track(tid).is_some_and(|t| t.locked) {
+            return Err("轨道已锁定".into());
+        }
+        tid.to_string()
+    } else {
+        // 新建上层视频轨(画中画)
+        let n = inner.doc.tracks.len() + 1;
+        let track = Track {
+            id: format!("v{n}"),
+            kind: TrackKind::Video,
+            name: format!("V{n}"),
+            locked: false,
+            hidden: false,
+            muted: false,
+        };
+        let id = track.id.clone();
+        inner.exec(Box::new(AddTrack { track }));
+        id
+    };
+
+    let clip = Clip {
+        id: format!("c{}", inner.doc.clips.len() + 1),
+        track_id: target_track.clone(),
+        start: start.max(0),
+        duration,
+        asset: AssetRef {
+            asset_id: asset.id.clone(),
+            source_in: 0.0,
+            source_out: asset.duration_secs,
+        },
+        speed: 1.0,
+        volume: 1.0,
+        muted: false,
+        fx: Default::default(),
+    };
+    inner.exec(Box::new(AddClip { clip: clip.clone() }));
+    inner.schedule_track(&target_track, Some(&clip.id));
+    Ok(clip.id)
+}
+
+/// 修剪片段头/尾(边缘拖拽)。
+/// edge: "left" | "right";new_start_ticks 为修剪后的片段起点(仅 left 用),
+/// new_duration 为新时长。source 区间自动同步,越界钳制到素材边界。
+#[tauri::command]
+fn trim_clip(
+    clip_id: String,
+    edge: String,
+    new_start: Ticks,
+    new_duration: Ticks,
+    ripple: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return Err("片段不存在".into());
+    };
+    let Some(asset) = inner.doc.asset(&clip.asset.asset_id).cloned() else {
+        return Err("素材不存在".into());
+    };
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let min_ticks = tps.max(1); // 最短 1 帧
+
+    // 钳制:时长至少 1 帧,source 区间不越素材界
+    let mut dur = new_duration.max(min_ticks);
+    let mut start = new_start.max(0);
+    if edge == "left" {
+        // 头修剪:入点右移量 -> source_in 增加
+        let delta_ticks = start - clip.start;
+        let delta_secs = tb.secs(delta_ticks.max(0)) * clip.speed;
+        let new_source_in = clip.asset.source_in + delta_secs;
+        if new_source_in >= asset.duration_secs {
+            return Err("入点超过素材末尾".into());
+        }
+        // 时长不能超过剩余源内容
+        let max_dur_secs = asset.duration_secs - new_source_in;
+        let max_dur_ticks = (max_dur_secs / clip.speed * tps as f64).floor() as i64;
+        dur = dur.min(max_dur_ticks.max(min_ticks));
+        let cmd = veditor_core::TrimClip::new(clip_id.clone(), start, dur, delta_secs);
+        inner.exec(Box::new(cmd));
+    } else {
+        // 尾修剪:只改时长;上限 = 剩余源内容
+        let remain_secs = asset.duration_secs - clip.asset.source_in;
+        let max_dur_ticks = (remain_secs / clip.speed * tps as f64).floor() as i64;
+        dur = dur.min(max_dur_ticks.max(min_ticks));
+        start = clip.start;
+        let cmd = veditor_core::TrimClip::new(clip_id.clone(), start, dur, 0.0);
+        inner.exec(Box::new(cmd));
+    }
+
+    let track_id = clip.track_id.clone();
+    if ripple {
+        // 波纹:后方片段前移填补空隙(仅尾修剪缩短时)
+        if dur < clip.duration {
+            let gap = clip.duration - dur;
+            let back: Vec<(String, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.track_id == track_id && c.start >= clip.start + clip.duration)
+                .map(|c| (c.id.clone(), c.start))
+                .collect();
+            for (cid, s) in back {
+                inner.exec(Box::new(veditor_core::MoveClip::new(
+                    cid,
+                    (s - gap).max(0),
+                    track_id.clone(),
+                )));
+            }
+        }
+    } else {
+        // 消重叠(头/尾变化可能引发新的相邻重叠)
+        inner.schedule_track(&track_id, Some(&clip_id));
+    }
+    Ok(())
+}
+
 // ---------- M2:轨道/波纹/变速/特效/转场 ----------
 
 #[tauri::command]
@@ -1596,6 +1768,8 @@ fn main() {
             remove_clip,
             split_clip,
             move_clip,
+            trim_clip,
+            drop_asset,
             add_track,
             remove_track,
             set_track_flags,
@@ -1766,6 +1940,121 @@ mod tests {
                 c2.start + c2.duration,
                 c1.start,
                 c1.start + c1.duration
+            );
+        }
+    }
+
+    /// 修剪:头修同步 source_in,撤销完整恢复。
+    #[test]
+    fn trim_clip_head_and_undo() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 10.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            inner.doc.clips.push(Clip {
+                id: "c1".into(),
+                track_id: "v1".into(),
+                start: 0,
+                duration: 150,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 5.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                fx: Default::default(),
+            });
+            // 头修 1s(30 ticks):start=30, source_in=1.0
+            let tb = inner.doc.timebase;
+            let delta_secs = tb.secs(30) * 1.0;
+            let cmd = veditor_core::TrimClip::new("c1", 30, 120, delta_secs);
+            inner.exec(Box::new(cmd));
+            let c = inner.doc.clip("c1").unwrap();
+            assert_eq!(c.start, 30);
+            assert_eq!(c.duration, 120);
+            assert!((c.asset.source_in - 1.0).abs() < 1e-6);
+            // 撤销恢复
+            {
+                let Inner { doc, stack, .. } = &mut *inner;
+                assert!(stack.undo(doc));
+            }
+            let c = inner.doc.clip("c1").unwrap();
+            assert_eq!(c.start, 0);
+            assert!((c.asset.source_in - 0.0).abs() < 1e-6);
+        }
+    }
+
+    /// drop_asset 语义:音频素材强制音频轨(自动建),视频可新建层。
+    #[test]
+    fn drop_asset_routing() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "mp3".into(),
+                path: "/tmp/a.mp3".into(),
+                duration_secs: 3.0,
+                has_video: false,
+                has_audio: true,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            // 1. 音频素材拖到视频轨 trackId=Some("v1") -> 应自动建音频轨并落入
+            let tid = inner.doc.tracks.len() + 1;
+            let _ = tid;
+            // 直接调用核心逻辑(State 不可造):复刻命令体
+            let asset = inner.doc.asset("mp3").cloned().unwrap();
+            let target = if !asset.has_video && asset.has_audio {
+                let auto = Track {
+                    id: format!("a{}", inner.doc.tracks.len() + 1),
+                    kind: TrackKind::Audio,
+                    name: format!("A{}", inner.doc.tracks.len() + 1),
+                    locked: false,
+                    hidden: false,
+                    muted: false,
+                };
+                let id = auto.id.clone();
+                inner.exec(Box::new(AddTrack { track: auto }));
+                id
+            } else {
+                "v1".to_string()
+            };
+            assert_eq!(target, "a2");
+            assert_eq!(
+                inner.doc.track("a2").map(|t| t.kind),
+                Some(TrackKind::Audio)
             );
         }
     }

@@ -290,7 +290,7 @@ pub struct TrimClip {
     pub new_start: Ticks,
     pub new_duration: Ticks,
     pub source_in_delta: f64,
-    old: Option<(Ticks, Ticks, f64)>,
+    old: Option<(Ticks, Ticks, f64)>, // (start, duration, source_in)
 }
 
 impl TrimClip {
@@ -316,18 +316,18 @@ impl Command for TrimClip {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-            self.old = Some((c.start, c.duration, 0.0));
+            self.old = Some((c.start, c.duration, c.asset.source_in));
             c.start = self.new_start;
             c.duration = self.new_duration;
             c.asset.source_in += self.source_in_delta;
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some((start, duration, sin_delta)) = self.old.take() {
+        if let Some((start, duration, source_in)) = self.old.take() {
             if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
                 c.start = start;
                 c.duration = duration;
-                c.asset.source_in -= sin_delta;
+                c.asset.source_in = source_in;
             }
         }
     }

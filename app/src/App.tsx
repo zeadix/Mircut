@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -30,6 +30,7 @@ export default function App() {
   const [playhead, setPlayhead] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
   const [status, setStatus] = useState("");
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
@@ -170,6 +171,11 @@ export default function App() {
           })
           .catch(() => {});
         api.makeProxy(path, asset.id).catch(() => {});
+        if (asset.has_audio) {
+          api.genWaveform(path)
+            .then((w) => setWaveforms((prev) => ({ ...prev, [asset.id]: w.peaks })))
+            .catch(() => {});
+        }
         setStatus(`已导入 ${path.split("/").pop()}`);
       } catch (e) {
         setStatus(`导入失败: ${e}`);
@@ -308,6 +314,40 @@ export default function App() {
     await api.moveClip(clipId, newStart, trackId);
     await refresh();
   }
+
+  async function onClipTrim(
+    clipId: string,
+    edge: "left" | "right",
+    newStart: number,
+    newDuration: number,
+    ripple: boolean
+  ) {
+    try {
+      await api.trimClip(clipId, edge, newStart, newDuration, ripple);
+    } catch (e) {
+      setStatus(`修剪失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
+  async function onDropAsset(assetId: string, trackId: string | null, start: number) {
+    try {
+      await api.dropAsset(assetId, trackId, start);
+    } catch (e) {
+      setStatus(`放置失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
+  /// 跨轨对齐边缘:非当前操作轨道的片段头尾(供吸附)。
+  const alignEdges = useMemo(() => {
+    if (!doc) return [];
+    const edges: number[] = [];
+    for (const c of doc.clips) {
+      edges.push(c.start, c.start + c.duration);
+    }
+    return edges;
+  }, [doc]);
 
   async function onRippleDelete() {
     if (!selected) return;
@@ -456,10 +496,15 @@ export default function App() {
             <div
               key={a.id}
               className="asset-card"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("application/x-veditor-asset", a.id);
+                e.dataTransfer.effectAllowed = "copy";
+              }}
               onDoubleClick={() => addToTimeline(a.id)}
               onClick={() => setAssetPreview({ path: a.path, secs: a.duration_secs / 2 })}
-              title="单击预览,双击加入时间轴"
-              style={{ cursor: "pointer" }}
+              title="拖到时间轴放置;双击追加到末尾;单击预览"
+              style={{ cursor: "grab" }}
             >
               {thumbs[a.id] ? (
                 <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
@@ -521,7 +566,11 @@ export default function App() {
               onClipClick={setSelected}
               selectedClipId={selected}
               onClipMove={onClipMove}
+              onClipTrim={onClipTrim}
               onToggleTrack={onToggleTrack}
+              waveforms={waveforms}
+              alignEdges={alignEdges}
+              onDropAsset={onDropAsset}
             />
           </div>
         </main>
