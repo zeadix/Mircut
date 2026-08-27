@@ -42,6 +42,8 @@ export default function App() {
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
+  // 拖拽中的素材类型(缝隙建轨提示用)
+  const [dragKind, setDragKind] = useState<"video" | "audio">("video");
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts">("inspector");
@@ -531,6 +533,7 @@ export default function App() {
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/x-veditor-asset", a.id);
+                setDragKind(a.has_video ? "video" : "audio");
                 e.dataTransfer.effectAllowed = "copy";
               }}
               onDoubleClick={() => addToTimeline(a.id)}
@@ -603,6 +606,7 @@ export default function App() {
               waveforms={waveforms}
               alignEdges={alignEdges}
               onDropAsset={onDropAsset}
+              dragKind={dragKind}
             />
           </div>
         </main>

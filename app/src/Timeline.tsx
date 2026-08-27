@@ -14,6 +14,8 @@ interface Props {
   waveforms?: Record<string, number[]>;
   alignEdges?: number[];
   onDropAsset?: (assetId: string, trackId: string | null, startTicks: number) => void;
+  /// 拖拽中的素材类型(App 在 dragstart 时置位)。
+  dragKind?: "video" | "audio";
 }
 
 const MIN_TRACK_H = 36;
@@ -46,6 +48,7 @@ export default function Timeline({
   waveforms,
   alignEdges,
   onDropAsset,
+  dragKind = "video",
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -64,7 +67,7 @@ export default function Timeline({
   /// 悬停光标:边缘显示双向箭头。
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   /// 拖放置预览(绿色插入线/新层提示)。
-  const [dropHint, setDropHint] = useState<{ x: number; trackIdx: number; newLayer: boolean } | null>(null);
+  const [dropHint, setDropHint] = useState<{ x: number; trackIdx: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
 
   /// 内容总宽 = max(最末片段末尾, 播放头, 视口) + 10s 余量。
   const contentTicks = Math.max(
@@ -262,9 +265,13 @@ export default function Timeline({
       ctx.stroke();
       ctx.lineWidth = 1;
       if (dropHint.newLayer) {
-        ctx.fillStyle = "#7ec8ff";
+        ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
         ctx.font = "11px sans-serif";
-        ctx.fillText("+ 新建上层轨道", scrollX + 8, gy + 16);
+        ctx.fillText(
+          dropHint.kind === "audio" ? "+ 新建音频轨道" : "+ 新建上层视频轨道(覆盖叠加)",
+          scrollX + 8,
+          gy + 16
+        );
       }
     }
 
@@ -426,6 +433,7 @@ export default function Timeline({
       x: t * pxPerTick,
       trackIdx: target.trackId && target.trackId !== "__newlayer__" ? row : doc.tracks.length,
       newLayer: target.trackId === "__newlayer__",
+      kind: dragKind,
     });
   }
 

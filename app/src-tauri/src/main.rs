@@ -695,15 +695,27 @@ fn drop_asset(
                 }),
         }
     } else if track_id.as_deref() == Some("__newlayer__") {
-        // 显式新建上层视频轨(画中画,拖到轨道缝隙)
+        // 显式新建上层轨道(拖到轨道缝隙):按素材类型建视频轨(覆盖叠加)或音频轨
+        let want_audio = !asset.has_video && asset.has_audio;
         let n = inner.doc.tracks.len() + 1;
-        let track = Track {
-            id: format!("v{n}"),
-            kind: TrackKind::Video,
-            name: format!("V{n}"),
-            locked: false,
-            hidden: false,
-            muted: false,
+        let track = if want_audio {
+            Track {
+                id: format!("a{n}"),
+                kind: TrackKind::Audio,
+                name: format!("A{n}"),
+                locked: false,
+                hidden: false,
+                muted: false,
+            }
+        } else {
+            Track {
+                id: format!("v{n}"),
+                kind: TrackKind::Video,
+                name: format!("V{n}"),
+                locked: false,
+                hidden: false,
+                muted: false,
+            }
         };
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
