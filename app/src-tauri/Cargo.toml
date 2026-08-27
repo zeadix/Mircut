@@ -12,4 +12,7 @@ tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+veditor-core = { path = "../../crates/core" }
 veditor-media = { path = "../../crates/media" }
+veditor-render = { path = "../../crates/render" }
+veditor-export = { path = "../../crates/export" }

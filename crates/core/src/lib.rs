@@ -150,7 +150,7 @@ impl Document {
 }
 
 /// 一次可撤销的编辑操作:正向 apply + 逆向 undo。
-pub trait Command {
+pub trait Command: Send {
     fn label(&self) -> &str;
     fn apply(&mut self, doc: &mut Document);
     fn undo(&mut self, doc: &mut Document);

@@ -3719,7 +3719,10 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "veditor-core",
+ "veditor-export",
  "veditor-media",
+ "veditor-render",
 ]
 
 [[package]]
