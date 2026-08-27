@@ -1,0 +1,8 @@
+[package]
+name = "veditor-render"
+description = "Renderer trait 与代理渲染引擎(M1 实现)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+veditor-core = { path = "../core" }

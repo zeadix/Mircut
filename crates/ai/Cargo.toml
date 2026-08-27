@@ -1,0 +1,8 @@
+[package]
+name = "veditor-ai"
+description = "本地 ASR/TTS 任务队列(M3 实现)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+veditor-core = { path = "../core" }

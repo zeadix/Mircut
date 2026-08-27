@@ -1,0 +1,8 @@
+[package]
+name = "veditor-export"
+description = "FFmpeg 滤镜图编译器与导出管线(M2 实现)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+veditor-core = { path = "../core" }

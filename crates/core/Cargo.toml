@@ -1,0 +1,8 @@
+[package]
+name = "veditor-core"
+description = "文档数据模型与命令栈(M1 实现)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }

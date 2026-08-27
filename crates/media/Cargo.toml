@@ -1,0 +1,10 @@
+[package]
+name = "veditor-media"
+description = "媒体探测/缩略图/波形/惰性代理"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
