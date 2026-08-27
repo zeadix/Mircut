@@ -215,37 +215,53 @@ pub struct ScopeData {
 }
 
 /// 分析媒体在 t 秒处的一帧,生成示波器数据。
-/// 用 ffmpeg 输出缩小的 yuv420p 原始帧后直接采样。
+/// 用 ffmpeg 输出缩小的 yuv420p 原始帧后直接采样;末帧边界回退。
 pub fn analyze_frame_scopes(path: &Path, t_secs: f64) -> Result<ScopeData> {
-    let out = Command::new("ffmpeg")
-        .args([
-            "-ss",
-            &format!("{t_secs:.3}"),
-            "-i",
-            path.to_str().context("路径含非法 UTF-8 字符")?,
-            "-frames:v",
-            "1",
-            "-vf",
-            "scale=64:64",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "yuv420p",
-            "pipe:1",
-        ])
-        .output()
-        .context("启动 ffmpeg 失败")?;
-    ensure!(
-        out.status.success(),
-        "示波器取帧失败: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let data = out.stdout;
     let w = 64usize;
     let h = 64usize;
-    let y_plane = &data[..w * h];
-    let u_plane = &data[w * h..w * h + (w / 2) * (h / 2)];
-    let v_plane = &data[w * h + (w / 2) * (h / 2)..];
+    let y_len = w * h;
+    let uv_len = (w / 2) * (h / 2);
+    let need = y_len + uv_len * 2;
+    let mut data: Vec<u8> = Vec::new();
+    let mut source = t_secs.max(0.0);
+    for _ in 0..4 {
+        let out = Command::new("ffmpeg")
+            .args([
+                "-ss",
+                &format!("{source:.3}"),
+                "-i",
+                path.to_str().context("路径含非法 UTF-8 字符")?,
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=64:64",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv420p",
+                "pipe:1",
+            ])
+            .output()
+            .context("启动 ffmpeg 失败")?;
+        if out.status.success() && out.stdout.len() >= need {
+            data = out.stdout;
+            break;
+        }
+        if source <= 0.0 {
+            anyhow::bail!(
+                "示波器取帧失败: got {} bytes, need {}",
+                out.stdout.len(),
+                need
+            );
+        }
+        source = (source - 0.5).max(0.0);
+    }
+    if data.len() < need {
+        anyhow::bail!("示波器帧数据不足: got {} bytes, need {}", data.len(), need);
+    }
+    let y_plane = &data[..y_len];
+    let u_plane = &data[y_len..y_len + uv_len];
+    let v_plane = &data[y_len + uv_len..y_len + uv_len * 2];
     // 波形图:64 列,每列收集该列 64 行的 Y
     let mut waveform = Vec::with_capacity(w);
     for x in 0..w {

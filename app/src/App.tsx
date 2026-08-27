@@ -40,6 +40,7 @@ export default function App() {
   const [playSpeed, setPlaySpeed] = useState(1);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
+  const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
@@ -414,7 +415,8 @@ export default function App() {
               key={a.id}
               className="asset-card"
               onDoubleClick={() => addToTimeline(a.id)}
-              title="双击加入时间轴"
+              onClick={() => setAssetPreview({ path: a.path, secs: a.duration_secs / 2 })}
+              title="单击预览,双击加入时间轴"
               style={{ cursor: "pointer" }}
             >
               {thumbs[a.id] ? (
@@ -457,7 +459,14 @@ export default function App() {
               <option value="realtime">实时引擎(管道)</option>
             </select>
           </div>
-          <Preview playheadTicks={playhead} fps={fps} playing={playing} renderMode={renderMode} />
+          <Preview
+            playheadTicks={playhead}
+            fps={fps}
+            playing={playing}
+            renderMode={renderMode}
+            assetPreview={assetPreview}
+            onAssetPreviewDone={() => setAssetPreview(null)}
+          />
           <Scopes playheadTicks={playhead} fps={fps} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}

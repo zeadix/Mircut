@@ -104,31 +104,44 @@ impl Renderer for ProxyRenderer {
         }
         std::fs::create_dir_all(&self.cache_dir)?;
         let jpeg = self.cache_dir.join(format!("{}_{}.jpg", key.0, key.1));
-        let out = Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-ss",
-                &format!("{source_secs:.3}"),
-                "-i",
-                media_path.to_str().context("路径含非法 UTF-8 字符")?,
-                "-frames:v",
-                "1",
-                "-q:v",
-                "3",
-            ])
-            .arg(&jpeg)
-            .output()
-            .context("启动 ffmpeg 失败")?;
-        ensure!(
-            out.status.success(),
-            "预览帧解码失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        self.cache.insert(key, jpeg.clone());
-        Ok(FrameHandle {
-            jpeg_path: jpeg,
-            asset_id,
-        })
+        // 末帧边界防御:ffmpeg 对越界 -ss 可能退出码 0 但不产出文件,
+        // 逐级回退(0.5s 步进,最多 4 次)保证一定有帧。
+        let mut source = source_secs;
+        let mut last_err = String::new();
+        for _ in 0..4 {
+            let out = Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-ss",
+                    &format!("{source:.3}"),
+                    "-i",
+                    media_path.to_str().context("路径含非法 UTF-8 字符")?,
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "3",
+                ])
+                .arg(&jpeg)
+                .output()
+                .context("启动 ffmpeg 失败")?;
+            let produced = jpeg.exists() && jpeg.metadata().map(|m| m.len() > 0).unwrap_or(false);
+            if out.status.success() && produced {
+                self.cache.insert(key, jpeg.clone());
+                return Ok(FrameHandle {
+                    jpeg_path: jpeg,
+                    asset_id,
+                });
+            }
+            last_err = String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(160)
+                .collect();
+            if source <= 0.0 {
+                break;
+            }
+            source = (source - 0.5).max(0.0);
+        }
+        anyhow::bail!("预览帧解码失败: {last_err}")
     }
 
     fn invalidate(&mut self, doc: &Document) {
@@ -326,30 +339,42 @@ impl Renderer for RealtimeRenderer {
             clip.asset.asset_id,
             (source_secs * 1000.0) as i64
         ));
-        let out = Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-ss",
-                &format!("{source_secs:.3}"),
-                "-i",
-                media.to_str().context("路径含非法 UTF-8 字符")?,
-                "-frames:v",
-                "1",
-                "-q:v",
-                "3",
-            ])
-            .arg(&jpeg)
-            .output()
-            .context("启动 ffmpeg 失败")?;
-        ensure!(
-            out.status.success(),
-            "预览帧解码失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        Ok(FrameHandle {
-            jpeg_path: jpeg,
-            asset_id: clip.asset.asset_id.clone(),
-        })
+        // 与 ProxyRenderer 相同的末帧回退防御
+        let mut source = source_secs;
+        let mut last_err = String::new();
+        for _ in 0..4 {
+            let out = Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-ss",
+                    &format!("{source:.3}"),
+                    "-i",
+                    media.to_str().context("路径含非法 UTF-8 字符")?,
+                    "-frames:v",
+                    "1",
+                    "-q:v",
+                    "3",
+                ])
+                .arg(&jpeg)
+                .output()
+                .context("启动 ffmpeg 失败")?;
+            let produced = jpeg.exists() && jpeg.metadata().map(|m| m.len() > 0).unwrap_or(false);
+            if out.status.success() && produced {
+                return Ok(FrameHandle {
+                    jpeg_path: jpeg,
+                    asset_id: clip.asset.asset_id.clone(),
+                });
+            }
+            last_err = String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(160)
+                .collect();
+            if source <= 0.0 {
+                break;
+            }
+            source = (source - 0.5).max(0.0);
+        }
+        anyhow::bail!("预览帧解码失败: {last_err}")
     }
 
     fn invalidate(&mut self, doc: &Document) {

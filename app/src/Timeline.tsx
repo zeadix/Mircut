@@ -149,6 +149,7 @@ export default function Timeline({
     const hit = doc.clips.find((c) => t >= c.start && t < c.start + c.duration);
     if (hit) {
       onClipClick(hit.id);
+      onSeek(Math.min(Math.max(t, hit.start), hit.start + hit.duration - 1));
       dragRef.current = { clipId: hit.id, startX: e.clientX, origStart: hit.start };
     } else {
       onSeek(snapTicks(t));

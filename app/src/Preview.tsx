@@ -6,6 +6,9 @@ interface Props {
   fps: number;
   playing: boolean;
   renderMode: "proxy" | "realtime";
+  /// 素材直读预览(媒体库单击):非空时优先于时间轴取帧。
+  assetPreview: { path: string; secs: number } | null;
+  onAssetPreviewDone?: () => void;
 }
 
 type SeekResp = { jpeg_path: string | null; error: string | null };
@@ -16,11 +19,18 @@ type SeekResp = { jpeg_path: string | null; error: string | null };
  * 高频 playhead 变化下任何 setTimeout 都会被 cleanup 反复取消,
  * 导致永远取不到帧(两轮修复教训)。
  */
-export default function Preview({ playheadTicks, fps, playing, renderMode }: Props) {
+export default function Preview({
+  playheadTicks,
+  fps,
+  playing,
+  renderMode,
+  assetPreview,
+  onAssetPreviewDone,
+}: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const latest = useRef({ t: playheadTicks, playing, mode: renderMode });
-  latest.current = { t: playheadTicks, playing, mode: renderMode };
+  const latest = useRef({ t: playheadTicks, playing, mode: renderMode, asset: assetPreview });
+  latest.current = { t: playheadTicks, playing, mode: renderMode, asset: assetPreview };
 
   useEffect(() => {
     let stopped = false;
@@ -28,13 +38,17 @@ export default function Preview({ playheadTicks, fps, playing, renderMode }: Pro
 
     async function pull() {
       if (stopped) return;
-      const { t, mode } = latest.current;
-      const cmd = mode === "realtime" ? "realtime_frame" : "seek_frame";
+      const { t, mode, asset } = latest.current;
       try {
-        const r = await invoke<SeekResp>(cmd, { t });
+        // 素材直读模式优先(一次性,显示后回调清除)
+        const r: SeekResp = asset
+          ? await invoke<SeekResp>("preview_asset_frame", {
+              path: asset.path,
+              secs: asset.secs,
+            })
+          : await invoke<SeekResp>(mode === "realtime" ? "realtime_frame" : "seek_frame", { t });
         if (stopped) return;
         if (r.jpeg_path) {
-          // 文件路径 -> base64 data URL(绕过 asset protocol)
           try {
             const url = await invoke<string>("read_media_base64", { path: r.jpeg_path });
             if (!stopped) {
@@ -50,8 +64,10 @@ export default function Preview({ playheadTicks, fps, playing, renderMode }: Pro
             setErr(r.error ? String(r.error).slice(0, 160) : "无画面");
           }
         }
+        if (asset && !stopped) onAssetPreviewDone?.();
       } catch (e) {
         if (!stopped) setErr(String(e).slice(0, 160));
+        if (asset && !stopped) onAssetPreviewDone?.();
       }
       if (!stopped) {
         const wait = latest.current.playing ? 90 : 60;
@@ -64,7 +80,7 @@ export default function Preview({ playheadTicks, fps, playing, renderMode }: Pro
       stopped = true;
       clearTimeout(timer);
     };
-  }, [renderMode]);
+  }, [renderMode, assetPreview, onAssetPreviewDone]);
 
   return (
     <div
@@ -94,7 +110,9 @@ export default function Preview({ playheadTicks, fps, playing, renderMode }: Pro
           color: "#666",
         }}
       >
-        {(playheadTicks / fps).toFixed(2)}s [{renderMode}]
+        {assetPreview
+          ? "素材预览"
+          : `${(playheadTicks / fps).toFixed(2)}s [${renderMode}]`}
       </span>
     </div>
   );

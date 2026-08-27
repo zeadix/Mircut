@@ -143,6 +143,16 @@ impl Inner {
     }
 }
 
+/// 简易时间戳(不引 chrono)。
+fn chrono_like_now() -> String {
+    std::process::Command::new("date")
+        .arg("+%Y-%m-%d %H:%M:%S")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown-time".into())
+}
+
 /// 读取媒体缓存文件为 base64 data URL(预览帧/缩略图显示用,
 /// 绕过 asset protocol 在部分 WebKitGTK 环境的不可用问题)。
 #[tauri::command(async)]
@@ -186,6 +196,69 @@ fn base64_encode(data: &[u8]) -> String {
         });
     }
     out
+}
+
+/// 素材直读预览:不经时间轴,按素材路径 + 秒取帧(媒体库单击预览用)。
+/// 越界秒回退取最近可用帧。
+#[tauri::command(async)]
+fn preview_asset_frame(path: String, secs: f64) -> SeekResult {
+    let dir = std::env::temp_dir().join("veditor-render-cache/asset");
+    let _ = std::fs::create_dir_all(&dir);
+    let jpeg = dir.join(format!("{}.jpg", (secs * 1000.0) as i64));
+    let mut source = secs;
+    for _ in 0..4 {
+        let out = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-ss",
+                &format!("{source:.3}"),
+                "-i",
+                &path,
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-2",
+                "-q:v",
+                "3",
+            ])
+            .arg(&jpeg)
+            .output();
+        match out {
+            Ok(o)
+                if o.status.success() && jpeg.metadata().map(|m| m.len() > 0).unwrap_or(false) =>
+            {
+                return SeekResult {
+                    jpeg_path: Some(jpeg.to_string_lossy().to_string()),
+                    error: None,
+                };
+            }
+            Ok(o) => {
+                if source <= 0.0 {
+                    return SeekResult {
+                        jpeg_path: None,
+                        error: Some(format!(
+                            "取帧失败: {}",
+                            String::from_utf8_lossy(&o.stderr)
+                                .chars()
+                                .take(160)
+                                .collect::<String>()
+                        )),
+                    };
+                }
+                source = (source - 0.5).max(0.0);
+            }
+            Err(e) => {
+                return SeekResult {
+                    jpeg_path: None,
+                    error: Some(format!("启动 ffmpeg 失败: {e}")),
+                };
+            }
+        }
+    }
+    SeekResult {
+        jpeg_path: None,
+        error: Some("取帧失败: 多次回退后仍无帧".into()),
+    }
 }
 
 #[tauri::command]
@@ -1169,6 +1242,27 @@ fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>) -> String 
 }
 
 fn main() {
+    // panic 落盘:窗口静默退出时可查 ~/.veditor/panic.log
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!(
+            "[{}]\npanic: {info}\n--- backtrace ---\n{}\n==================\n",
+            chrono_like_now(),
+            std::backtrace::Backtrace::force_capture()
+        );
+        eprintln!("{msg}");
+        let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".veditor");
+        let _ = std::fs::create_dir_all(&dir);
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("panic.log"))
+        {
+            let _ = f.write_all(msg.as_bytes());
+        }
+    }));
+
     // Linux WebKitGTK 规避:NVIDIA 等驱动上 DMABUF 渲染器会导致 WebView
     // 黑屏/静默崩溃(Tauri 已知问题),禁用后走软件路径。
     #[cfg(target_os = "linux")]
@@ -1183,6 +1277,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ping,
             read_media_base64,
+            preview_asset_frame,
             probe_media,
             get_document,
             undo,
@@ -1272,6 +1367,104 @@ mod tests {
         assert!(url.starts_with("data:image/png;base64,"));
         let err = read_media_base64("/nonexistent/x.png".into());
         assert!(err.is_err());
+    }
+
+    /// 模拟用户全链路:导入 → 上轨 → 点击时间轴 → 取帧 → base64 → 示波器。
+    /// 任何一步 panic 都会在此暴露(用户报告"点击时间轴报错"的复现路径)。
+    #[test]
+    fn full_user_flow_import_click_preview_scopes() {
+        let fixture = veditor_media::tests_fixture();
+        let st = AppState::default();
+
+        // 1. 导入(import_media 的核心逻辑,不经 dialog)
+        let info = veditor_media::probe(std::path::Path::new(&fixture)).unwrap();
+        let asset = Asset {
+            id: format!("a{}", uuid_of(fixture.to_str().unwrap())),
+            path: fixture.to_string_lossy().to_string(),
+            duration_secs: info.duration_secs().unwrap_or(2.0),
+            has_video: true,
+            has_audio: true,
+            width: info.video().and_then(|v| v.width),
+            height: info.video().and_then(|v| v.height),
+            tags: vec![],
+        };
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(asset.clone());
+        }
+
+        // 2. 上轨(add_clip 核心逻辑)
+        let clip = {
+            let mut inner = st.inner.lock().unwrap();
+            let dur = (asset.duration_secs * 30.0).round() as i64;
+            Clip {
+                id: "c1".into(),
+                track_id: "v1".into(),
+                start: 0,
+                duration: dur,
+                asset: AssetRef {
+                    asset_id: asset.id.clone(),
+                    source_in: 0.0,
+                    source_out: asset.duration_secs,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                fx: Default::default(),
+            }
+        };
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.exec(Box::new(AddClip { clip }));
+        }
+
+        // 3. 点击时间轴各位置取帧(含片段头/中/尾/黑场区)
+        for t in [0i64, 15, 30, 59, 999] {
+            let r = {
+                let mut inner = st.inner.lock().unwrap();
+                inner.ensure();
+                let renderer = inner.renderer.as_mut().unwrap();
+                let res = renderer.seek(t);
+                match res {
+                    Ok(f) => SeekResult {
+                        jpeg_path: Some(f.jpeg_path.to_string_lossy().to_string()),
+                        error: None,
+                    },
+                    Err(e) => SeekResult {
+                        jpeg_path: None,
+                        error: Some(e.to_string()),
+                    },
+                }
+            };
+            if t < 60 {
+                assert!(r.jpeg_path.is_some(), "t={t} 应有帧, err={:?}", r.error);
+                // 4. base64 读取
+                let url = read_media_base64(r.jpeg_path.unwrap()).unwrap();
+                assert!(url.starts_with("data:image/jpeg;base64,"));
+            } else {
+                assert!(r.error.is_some(), "t={t} 黑场应有错误信息");
+            }
+        }
+
+        // 5. 示波器(各种位置,含边界)
+        for secs in [0.0f64, 0.5, 1.0, 1.999] {
+            let s = veditor_media::analyze_frame_scopes(std::path::Path::new(&fixture), secs);
+            assert!(s.is_ok(), "scopes @ {secs} 失败: {:?}", s.err());
+        }
+
+        // 6. 素材直读预览
+        let r = preview_asset_frame(fixture.to_string_lossy().to_string(), 1.0);
+        assert!(r.jpeg_path.is_some(), "asset preview 失败: {:?}", r.error);
     }
 
     #[test]
