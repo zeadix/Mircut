@@ -36,6 +36,21 @@ export interface ChromaKey {
   blend: number;
 }
 
+export interface AudioFx {
+  fade_in: number;
+  fade_out: number;
+  denoise: number;
+  pitch_semitones: number;
+  eq_low: number;
+  eq_mid: number;
+  eq_high: number;
+}
+
+export interface LutApply {
+  path: string;
+  strength: number;
+}
+
 export interface ClipFx {
   opacity: Animatable;
   scale: Animatable;
@@ -45,6 +60,8 @@ export interface ClipFx {
   grade: ColorGrade;
   volume: Animatable;
   chroma_key?: ChromaKey;
+  audio_fx?: AudioFx;
+  lut?: LutApply;
 }
 
 export interface Clip {
@@ -93,6 +110,20 @@ export interface Asset {
   has_audio: boolean;
   width: number | null;
   height: number | null;
+  tags?: string[];
+}
+
+export interface TextOverlay {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+  font_size: number;
+  color: string;
+  outline: string | null;
+  bold: boolean;
+  x: number;
+  y: number;
 }
 
 export interface Document {
@@ -101,6 +132,8 @@ export interface Document {
   clips: Clip[];
   assets: Asset[];
   transitions?: Transition[];
+  subtitles?: SubtitleTrack;
+  text_overlays?: TextOverlay[];
 }
 
 export interface Waveform {

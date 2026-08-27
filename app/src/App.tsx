@@ -36,26 +36,31 @@ export default function App() {
   const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
   const [presetIdx, setPresetIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [playSpeed, setPlaySpeed] = useState(1);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
+  const [mediaQuery, setMediaQuery] = useState("");
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
   const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
 
-  // 播放循环:推进播放头
+  // 播放循环:推进播放头(JKL 变速)
   useEffect(() => {
     if (!playing || !doc) return;
     lastTsRef.current = performance.now();
     const step = (ts: number) => {
       const dt = (ts - lastTsRef.current) / 1000;
       lastTsRef.current = ts;
-      setPlayhead((p) => p + Math.max(1, Math.round(dt * fps)));
+      setPlayhead((p) => {
+        const next = p + Math.round(dt * fps * playSpeed);
+        return next < 0 ? 0 : next;
+      });
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [playing, doc, fps]);
+  }, [playing, doc, fps, playSpeed]);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -283,15 +288,28 @@ export default function App() {
     await invoke("set_render_mode", { mode: m });
   }
 
-  // 键盘快捷键
+  // 键盘快捷键(含 JKL 变速播放)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       if (e.key === "s") onSplit();
       if (e.key === "Delete") onRemove();
       if (e.key === " ") {
         e.preventDefault();
+        setPlaySpeed(1);
         setPlaying((p) => !p);
+      }
+      if (e.key === "j") {
+        setPlaying(true);
+        setPlaySpeed((s) => (s > 0 ? -1 : s === -1 ? -2 : -1));
+      }
+      if (e.key === "k") {
+        setPlaying(false);
+        setPlaySpeed(1);
+      }
+      if (e.key === "l") {
+        setPlaying(true);
+        setPlaySpeed((s) => (s < 0 ? 1 : s === 1 ? 2 : s >= 2 ? 4 : 1));
       }
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.shiftKey ? onRedo() : onUndo();
@@ -336,7 +354,23 @@ export default function App() {
               onChange={(e) => onImportFiles(e.target.files)}
             />
           </div>
-          {doc.assets.map((a) => (
+          <input
+            className="ti"
+            placeholder="搜索/标签过滤..."
+            value={mediaQuery}
+            onChange={(e) => setMediaQuery(e.target.value)}
+            style={{ width: "100%", marginBottom: 8 }}
+          />
+          {doc.assets
+            .filter((a) => {
+              if (!mediaQuery.trim()) return true;
+              const q = mediaQuery.trim().toLowerCase();
+              return (
+                a.path.toLowerCase().includes(q) ||
+                (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
+              );
+            })
+            .map((a) => (
             <div
               key={a.id}
               className="asset-card"
@@ -354,6 +388,15 @@ export default function App() {
               <div style={{ fontSize: 11, marginTop: 4, color: "#aab" }}>
                 {a.path.split("/").pop()}
                 <div style={{ color: "#667" }}>{a.duration_secs.toFixed(1)}s</div>
+                {(a.tags ?? []).length > 0 && (
+                  <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {a.tags!.map((t) => (
+                      <span key={t} style={{ background: "#2c3a55", borderRadius: 3, padding: "1px 4px", fontSize: 10, color: "#9db4d8" }}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -362,8 +405,8 @@ export default function App() {
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
-            <button className="btn" onClick={() => setPlaying(p => !p)} title="播放/暂停 (空格)">
-              {playing ? "暂停" : "播放"}
+            <button className="btn" onClick={() => { setPlaySpeed(1); setPlaying(p => !p); }} title="播放/暂停 (空格)">
+              {playing ? `暂停 ${playSpeed}x` : "播放"}
             </button>
             <select
               className="ti"

@@ -40,7 +40,7 @@ jobs:
 
       - name: 前端构建(先生成 dist 供 tauri 编译)
         working-directory: app
-        run: pnpm install --frozen-lockfile && pnpm build
+        run: pnpm install --frozen-lockfile && pnpm build && pnpm test
 
       - name: Rust 格式检查
         run: cargo fmt --all -- --check
