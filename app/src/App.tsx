@@ -35,8 +35,27 @@ export default function App() {
   const [exportPct, setExportPct] = useState<number | null>(null);
   const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
   const [presetIdx, setPresetIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
+  const rafRef = useRef<number>(0);
+  const lastTsRef = useRef<number>(0);
+  const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
+
+  // 播放循环:推进播放头
+  useEffect(() => {
+    if (!playing || !doc) return;
+    lastTsRef.current = performance.now();
+    const step = (ts: number) => {
+      const dt = (ts - lastTsRef.current) / 1000;
+      lastTsRef.current = ts;
+      setPlayhead((p) => p + Math.max(1, Math.round(dt * fps)));
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [playing, doc, fps]);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -60,8 +79,6 @@ export default function App() {
   useEffect(() => {
     refresh();
   }, []);
-
-  const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
 
   async function onImportFiles(files: FileList | null) {
     if (!files) return;
@@ -261,12 +278,21 @@ export default function App() {
     await refresh();
   }
 
+  async function onSwitchRenderMode(m: "proxy" | "realtime") {
+    setRenderMode(m);
+    await invoke("set_render_mode", { mode: m });
+  }
+
   // 键盘快捷键
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
       if (e.key === "s") onSplit();
       if (e.key === "Delete") onRemove();
+      if (e.key === " ") {
+        e.preventDefault();
+        setPlaying((p) => !p);
+      }
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.shiftKey ? onRedo() : onUndo();
       }
@@ -335,7 +361,21 @@ export default function App() {
 
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <Preview playheadTicks={playhead} fps={fps} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
+            <button className="btn" onClick={() => setPlaying(p => !p)} title="播放/暂停 (空格)">
+              {playing ? "暂停" : "播放"}
+            </button>
+            <select
+              className="ti"
+              value={renderMode}
+              onChange={(e) => onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
+              title="渲染引擎"
+            >
+              <option value="proxy">代理引擎</option>
+              <option value="realtime">实时引擎(管道)</option>
+            </select>
+          </div>
+          <Preview playheadTicks={playhead} fps={fps} playing={playing} renderMode={renderMode} />
           <Scopes playheadTicks={playhead} fps={fps} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}

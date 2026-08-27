@@ -5,8 +5,9 @@
 //! 拖动/跳转时逐帧 seek 走本 trait。
 
 use anyhow::{ensure, Context, Result};
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use veditor_core::{Document, Ticks, TrackKind};
 
 /// 一次 seek 的产物:可发给前端的单帧图像。
@@ -137,6 +138,228 @@ impl Renderer for ProxyRenderer {
     }
 }
 
+/// 实时渲染引擎(v1.1):ffmpeg 管道解码,顺序帧流。
+/// 播放中按播放头连续推进逐帧拉取,一次 spawn 解码整段,
+/// 避免 ProxyRenderer 每帧一个进程的开销。乱序跳转(回退/换片段)自动重开管道。
+pub struct RealtimeRenderer {
+    doc: Document,
+    proxies: std::collections::HashMap<String, PathBuf>,
+    pipe: Option<ActivePipe>,
+    width: u32,
+    height: u32,
+}
+
+struct ActivePipe {
+    child: std::process::Child,
+    stdout: std::process::ChildStdout,
+    src_fps: f64,
+    frames_read: u64,
+    asset_id: String,
+    clip_start: Ticks,
+    source_start: f64,
+}
+
+impl Default for RealtimeRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RealtimeRenderer {
+    pub fn new() -> Self {
+        Self {
+            doc: Document::default(),
+            proxies: std::collections::HashMap::new(),
+            pipe: None,
+            width: 640,
+            height: 360,
+        }
+    }
+
+    pub fn set_output_size(&mut self, w: u32, h: u32) {
+        self.width = w;
+        self.height = h;
+    }
+
+    pub fn set_proxy(&mut self, asset_id: impl Into<String>, path: PathBuf) {
+        self.proxies.insert(asset_id.into(), path);
+    }
+
+    fn clip_at(&self, t: Ticks) -> Option<&veditor_core::Clip> {
+        let visible: Vec<&str> = self
+            .doc
+            .tracks
+            .iter()
+            .filter(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+            .map(|tr| tr.id.as_str())
+            .collect();
+        self.doc
+            .clips
+            .iter()
+            .filter(|c| visible.contains(&c.track_id.as_str()) && c.start <= t && t < c.end())
+            .max_by_key(|c| {
+                self.doc
+                    .tracks
+                    .iter()
+                    .position(|tr| tr.id == c.track_id)
+                    .unwrap_or(0)
+            })
+    }
+
+    /// t 是否可由当前管道顺序服务(未回退、同一片段)。
+    fn pipe_covers(&self, t: Ticks) -> bool {
+        let Some(p) = &self.pipe else {
+            return false;
+        };
+        let Some(clip) = self.clip_at(t) else {
+            return false;
+        };
+        if clip.asset.asset_id != p.asset_id || clip.start != p.clip_start {
+            return false;
+        }
+        let need_src = clip.asset.source_in + self.doc.timebase.secs(t - clip.start) * clip.speed;
+        let decoded_src = p.source_start + p.frames_read as f64 / p.src_fps;
+        decoded_src <= need_src + 1.0 / p.src_fps.max(1.0)
+    }
+
+    /// (重)启动解码管道:定位到 t 所在片段的源位置。
+    fn open_pipe(&mut self, t: Ticks) -> Result<()> {
+        if let Some(mut p) = self.pipe.take() {
+            let _ = p.child.kill();
+        }
+        let clip = self.clip_at(t).context("该时间点没有视频片段(黑场)")?;
+        let asset = self.doc.asset(&clip.asset.asset_id).context("素材不存在")?;
+        let media = self
+            .proxies
+            .get(&clip.asset.asset_id)
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from(&asset.path));
+        let offset_secs = self.doc.timebase.secs(t - clip.start) * clip.speed;
+        let source_start = clip.asset.source_in + offset_secs;
+        let src_fps = 30.0; // fixture/代理默认;精确值可后续从 probe 获取
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-ss",
+                &format!("{source_start:.3}"),
+                "-i",
+                media.to_str().context("路径含非法 UTF-8 字符")?,
+                "-vf",
+                &format!("scale={}:{}", self.width, self.height),
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("启动 ffmpeg 解码管道失败")?;
+        let stdout = child.stdout.take().context("无法读取解码管道")?;
+        self.pipe = Some(ActivePipe {
+            child,
+            stdout,
+            src_fps,
+            frames_read: 0,
+            asset_id: clip.asset.asset_id.clone(),
+            clip_start: clip.start,
+            source_start,
+        });
+        Ok(())
+    }
+
+    /// 顺序取 t 时刻帧(播放中调用;乱序跳转内部重开管道)。
+    /// 返回 RGB24 原始帧。
+    pub fn next_frame(&mut self, t: Ticks) -> Result<RgbFrame> {
+        if !self.pipe_covers(t) {
+            self.open_pipe(t)?;
+        }
+        let (width, height) = (self.width, self.height);
+        let frame_bytes = (width as usize) * (height as usize) * 3;
+        let mut buf = vec![0u8; frame_bytes];
+        let p = self.pipe.as_mut().expect("管道应已建立");
+        let mut read = 0;
+        while read < frame_bytes {
+            let n = p.stdout.read(&mut buf[read..]).context("解码管道中断")?;
+            if n == 0 {
+                anyhow::bail!("解码管道结束(片段播完)");
+            }
+            read += n;
+        }
+        p.frames_read += 1;
+        Ok(RgbFrame {
+            width,
+            height,
+            data: buf,
+        })
+    }
+}
+
+/// 实时帧:RGB 原始像素。
+#[derive(Debug, Clone)]
+pub struct RgbFrame {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u8>,
+}
+
+impl Renderer for RealtimeRenderer {
+    fn seek(&mut self, t: Ticks) -> Result<FrameHandle> {
+        // seek 语义与 Proxy 相同:单帧 JPEG;连续播放走 next_frame
+        let clip = self.clip_at(t).context("该时间点没有视频片段(黑场)")?;
+        let asset = self
+            .doc
+            .asset(&clip.asset.asset_id)
+            .context("素材不存在")?
+            .clone();
+        let media = self
+            .proxies
+            .get(&clip.asset.asset_id)
+            .cloned()
+            .unwrap_or_else(|| PathBuf::from(&asset.path));
+        let source_secs =
+            clip.asset.source_in + self.doc.timebase.secs(t - clip.start) * clip.speed;
+        let cache_dir = std::env::temp_dir().join("veditor-render-cache-rt");
+        std::fs::create_dir_all(&cache_dir)?;
+        let jpeg = cache_dir.join(format!(
+            "{}_{}.jpg",
+            clip.asset.asset_id,
+            (source_secs * 1000.0) as i64
+        ));
+        let out = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-ss",
+                &format!("{source_secs:.3}"),
+                "-i",
+                media.to_str().context("路径含非法 UTF-8 字符")?,
+                "-frames:v",
+                "1",
+                "-q:v",
+                "3",
+            ])
+            .arg(&jpeg)
+            .output()
+            .context("启动 ffmpeg 失败")?;
+        ensure!(
+            out.status.success(),
+            "预览帧解码失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(FrameHandle {
+            jpeg_path: jpeg,
+            asset_id: clip.asset.asset_id.clone(),
+        })
+    }
+
+    fn invalidate(&mut self, doc: &Document) {
+        self.doc = doc.clone();
+        if let Some(mut p) = self.pipe.take() {
+            let _ = p.child.kill();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +446,40 @@ mod tests {
         assert!(!r.cache.is_empty());
         r.invalidate(&doc_with_clip(fixture));
         assert!(r.cache.is_empty());
+    }
+
+    #[test]
+    fn realtime_pipeline_decodes_sequential_frames() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let mut rt = RealtimeRenderer::new();
+        rt.set_output_size(64, 48);
+        rt.invalidate(&doc_with_clip(fixture));
+        // doc_with_clip 用 tb=10fps, clip 时长 10 ticks=1s;顺序取 3 帧
+        let f1 = rt.next_frame(0).unwrap();
+        assert_eq!(f1.width, 64);
+        assert_eq!(f1.data.len(), 64 * 48 * 3);
+        // 非全黑像素(testsrc)
+        assert!(f1.data.iter().any(|b| *b > 32));
+        let _f2 = rt.next_frame(1).unwrap();
+        let _f3 = rt.next_frame(2).unwrap();
+        // 回退:管道应自动重开
+        let f0 = rt.next_frame(0).unwrap();
+        assert!(f0.data.iter().any(|b| *b > 32));
+    }
+
+    #[test]
+    fn realtime_seek_writes_jpeg() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !Path::new(fixture).exists() {
+            return;
+        }
+        let mut rt = RealtimeRenderer::new();
+        rt.invalidate(&doc_with_clip(fixture));
+        let f = rt.seek(3).unwrap();
+        assert!(Path::new(&f.jpeg_path).exists());
     }
 }

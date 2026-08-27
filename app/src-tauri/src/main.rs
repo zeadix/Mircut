@@ -24,8 +24,19 @@ struct Inner {
     doc: Document,
     stack: CommandStack,
     renderer: Option<ProxyRenderer>,
+    /// 实时引擎(v1.1):播放时用,管道帧流。
+    realtime: Option<veditor_render::RealtimeRenderer>,
+    /// 当前渲染模式。
+    render_mode: RenderMode,
     /// 项目文件路径(保存后有效)。
     project_path: Option<std::path::PathBuf>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq)]
+enum RenderMode {
+    #[default]
+    Proxy,
+    Realtime,
 }
 
 /// 自动快照路径(崩溃恢复)。
@@ -97,7 +108,9 @@ impl Inner {
                 self.doc.clone(),
                 std::env::temp_dir().join("veditor-render-cache"),
             );
+            let rt = veditor_render::RealtimeRenderer::new();
             self.renderer = Some(r);
+            self.realtime = Some(rt);
         }
     }
 
@@ -111,7 +124,21 @@ impl Inner {
         if let Some(r) = self.renderer.as_mut() {
             r.invalidate(&snapshot);
         }
+        if let Some(rt) = self.realtime.as_mut() {
+            rt.invalidate(&snapshot);
+        }
         self.autosave();
+    }
+
+    /// 同步双引擎文档。
+    fn sync_renderers(&mut self) {
+        let snapshot = self.doc.clone();
+        if let Some(r) = self.renderer.as_mut() {
+            r.invalidate(&snapshot);
+        }
+        if let Some(rt) = self.realtime.as_mut() {
+            rt.invalidate(&snapshot);
+        }
     }
 }
 
@@ -143,10 +170,7 @@ fn undo(state: State<'_, AppState>) -> bool {
         stack.undo(doc)
     };
     if ok {
-        let snapshot = inner.doc.clone();
-        if let Some(r) = inner.renderer.as_mut() {
-            r.invalidate(&snapshot);
-        }
+        inner.sync_renderers();
     }
     ok
 }
@@ -160,10 +184,7 @@ fn redo(state: State<'_, AppState>) -> bool {
         stack.redo(doc)
     };
     if ok {
-        let snapshot = inner.doc.clone();
-        if let Some(r) = inner.renderer.as_mut() {
-            r.invalidate(&snapshot);
-        }
+        inner.sync_renderers();
     }
     ok
 }
@@ -248,7 +269,10 @@ fn make_proxy(
     {
         let mut inner = state.inner.lock().unwrap();
         if let Some(r) = inner.renderer.as_mut() {
-            r.set_proxy(asset_id, p.clone());
+            r.set_proxy(&asset_id, p.clone());
+        }
+        if let Some(rt) = inner.realtime.as_mut() {
+            rt.set_proxy(&asset_id, p.clone());
         }
     }
     Ok(p.to_string_lossy().to_string())
@@ -743,6 +767,79 @@ fn seek_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
     }
 }
 
+/// 实时引擎:顺序取一帧并编码 PNG 写盘(播放模式用,前端 rAF 轮询)。
+#[tauri::command(async)]
+fn realtime_frame(t: Ticks, state: State<'_, AppState>) -> SeekResult {
+    let mut inner = state.inner.lock().unwrap();
+    inner.ensure();
+    let Some(rt) = inner.realtime.as_mut() else {
+        return SeekResult {
+            jpeg_path: None,
+            error: Some("实时引擎未初始化".into()),
+        };
+    };
+    match rt.next_frame(t) {
+        Ok(frame) => {
+            // RGB24 -> PNG 用 ffmpeg 管道写盘(避免引 png 编码库)
+            let dir = std::env::temp_dir().join("veditor-render-cache-rt");
+            let _ = std::fs::create_dir_all(&dir);
+            let png = dir.join("latest.png");
+            use std::io::Write;
+            let child = std::process::Command::new("ffmpeg")
+                .args([
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-s",
+                    &format!("{}x{}", frame.width, frame.height),
+                    "-i",
+                    "pipe:0",
+                    "-frames:v",
+                    "1",
+                    "-y",
+                ])
+                .arg(&png)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            match child {
+                Ok(mut c) => {
+                    if let Some(stdin) = c.stdin.as_mut() {
+                        let _ = stdin.write_all(&frame.data);
+                    }
+                    let _ = c.wait();
+                    SeekResult {
+                        jpeg_path: Some(png.to_string_lossy().to_string()),
+                        error: None,
+                    }
+                }
+                Err(e) => SeekResult {
+                    jpeg_path: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        }
+        Err(e) => SeekResult {
+            jpeg_path: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// 切换渲染模式:"proxy" | "realtime"。
+#[tauri::command]
+fn set_render_mode(mode: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.render_mode = if mode == "realtime" {
+        RenderMode::Realtime
+    } else {
+        RenderMode::Proxy
+    };
+    true
+}
+
 // ---------- 导出 ----------
 
 #[derive(Deserialize)]
@@ -898,6 +995,8 @@ fn main() {
             list_export_presets,
             set_chroma_key,
             analyze_scopes,
+            realtime_frame,
+            set_render_mode,
             seek_frame,
             export_video,
             preview_export_cmd
