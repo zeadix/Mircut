@@ -172,11 +172,22 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     c.asset.source_in,
                     c.source_span_secs(&doc.timebase)
                 );
+                // 定格片段(speed == 0):单帧后 tpad 克隆
+                if c.speed.abs() < 1e-3 {
+                    let freeze_secs = doc.timebase.secs(c.duration);
+                    chain.push_str(&format!(
+                        ",tpad=stop_mode=clone:stop_duration={freeze_secs:.3}"
+                    ));
+                }
                 // 变速:时间轴时长 = 源时长 / speed
-                if (c.speed - 1.0).abs() > 1e-3 {
+                if c.speed > 1e-3 && (c.speed - 1.0).abs() > 1e-3 {
                     chain.push_str(&format!(",setpts=PTS/{}", c.speed));
                 }
-                let scale = format!("scale={}:{}", params.width, params.height);
+                // 宽高比保持缩放(黑边填充)
+                let scale = format!(
+                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2",
+                    params.width, params.height, params.width, params.height
+                );
                 chain.push_str(&format!(",{scale},fps={}", params.fps));
                 // 色度抠像(绿幕)
                 if c.fx.chroma_key.enabled() {
@@ -196,6 +207,13 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     chain.push_str(&format!(
                         ",eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
                         g.brightness, g.contrast, g.saturation
+                    ));
+                }
+                // LUT(.cube)
+                if c.fx.lut.enabled() {
+                    chain.push_str(&format!(
+                        ",lut3d=file='{}'",
+                        c.fx.lut.path.replace('\\', "/").replace(':', "\\:")
                     ));
                 }
                 // 不透明度关键帧:
@@ -326,6 +344,14 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let tempo = c.speed.clamp(0.5, 2.0);
                 chain.push_str(&format!(",atempo={tempo:.3}"));
             }
+            // 音频滤镜(淡入淡出/降噪/变声/EQ)
+            if !c.fx.audio_fx.is_noop() {
+                let dur = c.source_span_secs(&doc.timebase);
+                for f in c.fx.audio_fx.to_ffmpeg_chain(dur) {
+                    chain.push(',');
+                    chain.push_str(&f);
+                }
+            }
             chain.push_str(&format!(",volume={vol:.3}{label}"));
             filters.push(chain);
             audio_labels.push(label);
@@ -340,28 +366,57 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         ));
     }
 
-    // 字幕烧录:在 [vcat] 之后逐条 drawtext(enable 时间窗)
+    // 字幕烧录 + 文字叠层:在 [vcat] 之后逐条 drawtext(enable 时间窗)
     let has_video_out = video_track
         .as_ref()
         .is_some_and(|vt| !doc.clips_on_track(vt).is_empty());
-    if has_video_out && !doc.subtitles.cues.is_empty() {
-        let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
+    let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
+    let has_subs = has_video_out && !doc.subtitles.cues.is_empty();
+    let has_texts = has_video_out && !doc.text_overlays.is_empty();
+    if has_subs || has_texts {
         let mut chain = String::from("[vcat]");
-        for cue in &doc.subtitles.cues {
-            let start = cue.start as f64 / fps_tb;
-            let end = cue.end as f64 / fps_tb;
-            let text = cue
+        if has_subs {
+            for cue in &doc.subtitles.cues {
+                let start = cue.start as f64 / fps_tb;
+                let end = cue.end as f64 / fps_tb;
+                let text = cue
+                    .text
+                    .replace('\\', "\\\\")
+                    .replace(':', "\\:")
+                    .replace("'", "\\'");
+                let style = &doc.subtitles.style;
+                let color = &style.color;
+                let border = style.outline.as_deref().unwrap_or("black");
+                chain.push_str(&format!(
+                    ",drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
+                    style.font_size
+                ));
+            }
+        }
+        // 文字叠层(富样式:x/y 归一化 -> 表达式,字号按输出高度缩放)
+        for t in &doc.text_overlays {
+            let start = t.start as f64 / fps_tb;
+            let end = t.end as f64 / fps_tb;
+            let text = t
                 .text
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
                 .replace("'", "\\'");
-            let style = &doc.subtitles.style;
-            let color = &style.color;
-            let border = style.outline.as_deref().unwrap_or("black");
-            chain.push_str(&format!(
-                ",drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
-                style.font_size
-            ));
+            let color = t.color.trim_start_matches('#');
+            let font_px = ((t.font_size as f64) * (params.height as f64 / 1080.0)).round() as u32;
+            let mut dt = format!(
+                ",drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2",
+                t.x, t.y
+            );
+            if let Some(oc) = &t.outline {
+                let oc = oc.trim_start_matches('#');
+                dt.push_str(&format!(":bordercolor=0x{oc}:borderw=3"));
+            }
+            if t.bold {
+                dt.push_str(":box=0");
+            }
+            dt.push_str(&format!(":enable='between(t,{start:.3},{end:.3})'"));
+            chain.push_str(&dt);
         }
         chain.push_str("[vsub]");
         filters.push(chain);
@@ -719,6 +774,100 @@ mod tests {
             .unwrap();
         assert!(
             fc.contains("colorkey=0x00ff00:similarity=0.300:blend=0.100"),
+            "fc = {fc}"
+        );
+    }
+
+    #[test]
+    fn compile_freeze_uses_tpad() {
+        let mut d = doc();
+        d.clips[0].speed = 0.0;
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("tpad=stop_mode=clone:stop_duration=1.000"),
+            "fc = {fc}"
+        );
+    }
+
+    #[test]
+    fn compile_audio_fx_fade_denoise() {
+        let mut d = doc();
+        d.clips[1].fx.audio_fx.fade_in = 0.2;
+        d.clips[1].fx.audio_fx.denoise = 0.5;
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("afade=t=in:st=0:d=0.200"), "fc = {fc}");
+        assert!(fc.contains("afftdn=nr=20"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_lut_uses_lut3d() {
+        let mut d = doc();
+        d.clips[0].fx.lut = veditor_core::LutApply {
+            path: "/tmp/teal.cube".into(),
+            strength: 1.0,
+        };
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("lut3d=file='/tmp/teal.cube'"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_text_overlays_drawtext() {
+        let mut d = doc();
+        d.text_overlays.push(veditor_core::TextOverlay {
+            id: "t1".into(),
+            start: 0,
+            end: 30,
+            text: "开场标题".into(),
+            font_size: 96,
+            color: "#ffdd00".into(),
+            outline: Some("#000000".into()),
+            bold: true,
+            x: 0.5,
+            y: 0.2,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("text='开场标题'"), "fc = {fc}");
+        assert!(fc.contains("fontcolor=0xffdd00"), "fc = {fc}");
+        // 96px @ 1080p 基准 -> 输出 1080 时不变
+        assert!(fc.contains("fontsize=96"), "fc = {fc}");
+        assert!(fc.contains("y=h*0.200"), "fc = {fc}");
+    }
+
+    #[test]
+    fn scale_preserves_aspect_ratio() {
+        let args = compile_ffmpeg_cmd(&doc(), &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("force_original_aspect_ratio=decrease,pad="),
             "fc = {fc}"
         );
     }
