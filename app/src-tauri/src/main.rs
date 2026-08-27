@@ -156,7 +156,7 @@ impl Inner {
     fn autosave(&self) {
         #[cfg(test)]
         {
-            return;
+            // 测试环境跳过:防止单测污染用户真实 ~/.veditor/autosave.json
         }
         #[cfg(not(test))]
         {
