@@ -110,15 +110,60 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         g.brightness, g.contrast, g.saturation
                     ));
                 }
-                // 不透明度(有关键帧时取首帧值;M2 静态近似)
-                if let Some(op) = c.fx.opacity.value_at(c.start) {
+                // 不透明度关键帧:
+                // - 首尾帧 != 1.0 时用 fade in/out(逐帧动画 v1.1 后续用 sendcmd)
+                // - 静态单值用 colorchannelmixer
+                let kfs = &c.fx.opacity.keyframes;
+                if !kfs.is_empty() {
+                    let dur_secs = doc.timebase.secs(c.duration);
+                    let first = c.fx.opacity.value_at(c.start).unwrap_or(1.0);
+                    let last =
+                        c.fx.opacity
+                            .value_at(c.start + c.duration - 1)
+                            .unwrap_or(1.0);
+                    if (first - 1.0).abs() > 1e-3 || (last - 1.0).abs() > 1e-3 {
+                        // fade:颜色 fade=in_st/fade 通用做法是 alpha 通道 fade
+                        let fade_in = if (first - 1.0).abs() > 1e-3 {
+                            let t = kfs
+                                .iter()
+                                .filter(|k| (k.value - 1.0).abs() <= 1e-3)
+                                .map(|k| k.t)
+                                .min()
+                                .unwrap_or(0);
+                            format!(
+                                ",fade=t=in:st=0:d={:.3}:alpha=1",
+                                doc.timebase.secs(t.max(0))
+                            )
+                        } else {
+                            String::new()
+                        };
+                        let fade_out = if (last - 1.0).abs() > 1e-3 {
+                            let t = kfs
+                                .iter()
+                                .filter(|k| (k.value - 1.0).abs() > 1e-3)
+                                .map(|k| k.t)
+                                .max()
+                                .unwrap_or(c.duration);
+                            format!(
+                                ",fade=t=out:st={:.3}:d={:.3}:alpha=1",
+                                doc.timebase.secs(t),
+                                (dur_secs - doc.timebase.secs(t)).max(0.0)
+                            )
+                        } else {
+                            String::new()
+                        };
+                        if !fade_in.is_empty() || !fade_out.is_empty() {
+                            chain.push_str(&format!(",format=yuva420p{fade_in}{fade_out}"));
+                        }
+                    }
+                } else if let Some(op) = c.fx.opacity.value_at(c.start) {
                     if (op - 1.0).abs() > 1e-3 {
                         chain.push_str(&format!(
                             ",format=yuva420p,colorchannelmixer=aa={op:.3},format=yuv420p"
                         ));
                     }
                 }
-                chain.push_str(&label);
+                chain.push_str(&format!(",format=yuv420p{label}"));
                 chain_parts.push(chain);
             }
             let has_transitions = clips.len() > 1 && !doc.transitions.is_empty();
@@ -549,6 +594,23 @@ mod tests {
         // map 应指向 vsub
         let map_idx = args.iter().position(|a| a == "-map").unwrap();
         assert_eq!(args[map_idx + 1], "[vsub]");
+    }
+
+    #[test]
+    fn compile_keyframe_opacity_generates_fade() {
+        let mut d = doc();
+        use veditor_core::Interpolation;
+        // 0-15 帧: 0 -> 1(淡入)
+        d.clips[0].fx.opacity.set(0, 0.0, Interpolation::Linear);
+        d.clips[0].fx.opacity.set(15, 1.0, Interpolation::Linear);
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
     }
 
     #[test]

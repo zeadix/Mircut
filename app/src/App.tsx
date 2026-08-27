@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { Document } from "./types";
 import Timeline from "./Timeline";
@@ -29,8 +31,20 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
+  const [exportPct, setExportPct] = useState<number | null>(null);
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // 导出进度事件
+  useEffect(() => {
+    const un = listen<{ percent: number; done?: boolean }>("export-progress", (e) => {
+      setExportPct(e.payload.percent);
+      if (e.payload.done) setTimeout(() => setExportPct(null), 800);
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   async function refresh() {
     setDoc(await api.getDocument());
@@ -64,22 +78,27 @@ export default function App() {
   }
 
   async function onPickFolder() {
-    // 无对话框插件时退化为文本输入;M2 引入 tauri-plugin-dialog
-    const path = window.prompt("输入媒体文件绝对路径:");
-    if (!path) return;
-    setStatus(`导入 ${path} ...`);
-    try {
-      const { asset } = await api.importMedia(path);
-      api
-        .genThumbnails(path, 4)
-        .then((r) => setThumbs((prev) => ({ ...prev, [asset.id]: r.files[0] ?? "" })))
-        .catch(() => {});
-      api.makeProxy(path, asset.id).catch(() => {});
-      setStatus("已导入");
-      await refresh();
-    } catch (e) {
-      setStatus(`导入失败: ${e}`);
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "媒体", extensions: ["mp4", "mov", "mkv", "webm", "mp3", "wav", "aac", "jpg", "png"] }],
+    });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    if (paths.length === 0) return;
+    for (const path of paths) {
+      setStatus(`导入 ${path} ...`);
+      try {
+        const { asset } = await api.importMedia(path);
+        api
+          .genThumbnails(path, 4)
+          .then((r) => setThumbs((prev) => ({ ...prev, [asset.id]: r.files[0] ?? "" })))
+          .catch(() => {});
+        api.makeProxy(path, asset.id).catch(() => {});
+        setStatus(`已导入 ${path.split("/").pop()}`);
+      } catch (e) {
+        setStatus(`导入失败: ${e}`);
+      }
     }
+    await refresh();
   }
 
   async function addToTimeline(assetId: string) {
@@ -116,27 +135,47 @@ export default function App() {
 
   async function onExport() {
     if (!doc) return;
+    let out = exportPath;
+    const picked = await saveDialog({
+      defaultPath: exportPath,
+      filters: [{ name: "视频", extensions: ["mp4"] }],
+    });
+    if (picked) {
+      out = picked;
+      setExportPath(picked);
+    }
     const req: api.ExportRequest = {
-      outPath: exportPath,
+      outPath: out,
       width: 1280,
       height: 720,
       fps: Math.round(fps),
       crf: 20,
     };
     setStatus("导出中...");
+    setExportPct(0);
     try {
-      const out = await api.exportVideo(req);
-      setStatus(`导出完成: ${out}`);
+      const result = await api.exportVideo(req);
+      setStatus(`导出完成: ${result}`);
     } catch (e) {
       setStatus(`导出失败: ${e}`);
+      setExportPct(null);
     }
   }
 
+  async function onCancelExport() {
+    await api.cancelExport();
+    setStatus("已取消导出");
+    setExportPct(null);
+  }
+
   async function onSaveProject() {
-    const path = window.prompt("保存到:", "/tmp/veditor-project.json");
-    if (!path) return;
+    const picked = await saveDialog({
+      defaultPath: "veditor-project.json",
+      filters: [{ name: "VEditor 项目", extensions: ["json"] }],
+    });
+    if (!picked) return;
     try {
-      await invoke("save_project", { path });
+      await invoke("save_project", { path: picked });
       setStatus("项目已保存");
     } catch (e) {
       setStatus(`保存失败: ${e}`);
@@ -144,7 +183,11 @@ export default function App() {
   }
 
   async function onOpenProject() {
-    const path = window.prompt("项目文件路径:");
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "VEditor 项目", extensions: ["json"] }],
+    });
+    const path = Array.isArray(picked) ? picked[0] : picked;
     if (!path) return;
     try {
       await invoke("open_project", { path });
@@ -156,7 +199,8 @@ export default function App() {
   }
 
   async function onImportJianying() {
-    const dir = window.prompt("剪映草稿目录(含 draft_content.json):");
+    const picked = await openDialog({ multiple: false, directory: true });
+    const dir = Array.isArray(picked) ? picked[0] : picked;
     if (!dir) return;
     setStatus("导入剪映草稿...");
     try {
@@ -344,6 +388,15 @@ export default function App() {
           style={{ width: 280 }}
         />
         <button className="btn" onClick={onPreviewCmd}>FFmpeg 命令预览</button>
+        {exportPct !== null && (
+          <>
+            <div style={{ flex: 1, maxWidth: 220, height: 8, background: "#24262c", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ width: `${exportPct}%`, height: "100%", background: "#3d5a99", transition: "width 0.2s" }} />
+            </div>
+            <span style={{ color: "#8b93a1", width: 44 }}>{Math.round(exportPct)}%</span>
+            <button className="btn" onClick={onCancelExport}>取消</button>
+          </>
+        )}
         {exportCmd && (
           <code style={{ color: "#9aa8b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={exportCmd}>
             {exportCmd.slice(0, 120)}

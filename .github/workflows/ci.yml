@@ -50,3 +50,6 @@ jobs:
 
       - name: Rust 测试
         run: cargo test --workspace
+
+      - name: 性能基准(命令延迟/快照)
+        run: cargo bench -p veditor-core --bench commands

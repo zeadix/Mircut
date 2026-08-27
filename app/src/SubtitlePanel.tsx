@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { SubtitleTrack } from "./types";
 
@@ -46,7 +47,11 @@ export default function SubtitlePanel({ assetPaths, onRefresh, fps }: Props) {
   }
 
   async function onImportSrt() {
-    const path = window.prompt("SRT 文件路径:");
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "SRT 字幕", extensions: ["srt"] }],
+    });
+    const path = Array.isArray(picked) ? picked[0] : picked;
     if (!path) return;
     try {
       const n = await invoke<number>("import_srt", { path });
@@ -59,10 +64,13 @@ export default function SubtitlePanel({ assetPaths, onRefresh, fps }: Props) {
   }
 
   async function onExportSrt() {
-    const path = window.prompt("导出到:", "/tmp/subtitles.srt");
-    if (!path) return;
+    const picked = await saveDialog({
+      defaultPath: "subtitles.srt",
+      filters: [{ name: "SRT 字幕", extensions: ["srt"] }],
+    });
+    if (!picked) return;
     try {
-      await invoke("export_srt", { path });
+      await invoke("export_srt", { path: picked });
       setStatus("已导出");
     } catch (e) {
       setStatus(`导出失败: ${e}`);

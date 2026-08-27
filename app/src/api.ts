@@ -142,6 +142,10 @@ export async function exportVideo(req: ExportRequest): Promise<string> {
   return invoke("export_video", payload);
 }
 
+export async function cancelExport(): Promise<boolean> {
+  return invoke("cancel_export");
+}
+
 export async function previewExportCmd(req: ExportRequest): Promise<string> {
   const payload = {
     req: {

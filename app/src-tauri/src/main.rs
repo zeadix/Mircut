@@ -691,8 +691,13 @@ struct ExportRequest {
 }
 
 #[tauri::command(async)]
-fn export_video(req: ExportRequest, state: State<'_, AppState>) -> Result<String, String> {
-    let args = {
+fn export_video(
+    app: tauri::AppHandle,
+    req: ExportRequest,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    use veditor_export::ExportProgress;
+    let (args, total_secs) = {
         let inner = state.inner.lock().unwrap();
         let params = veditor_export::ExportParams {
             out_path: PathBuf::from(&req.out_path),
@@ -702,11 +707,52 @@ fn export_video(req: ExportRequest, state: State<'_, AppState>) -> Result<String
             crf: req.crf,
             ..Default::default()
         };
-        veditor_export::compile_ffmpeg_cmd(&inner.doc, &params)
+        let total = inner
+            .doc
+            .clips
+            .iter()
+            .map(|c| inner.doc.timebase.secs(c.duration))
+            .fold(0.0_f64, f64::max);
+        (
+            veditor_export::compile_ffmpeg_cmd(&inner.doc, &params),
+            total,
+        )
     };
-    veditor_export::run_export(&args)
+    // 注册取消句柄并后台执行,进度经事件推送
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state_export_cancel()
+        .lock()
+        .unwrap()
+        .replace(cancel.clone());
+    let _ = app; // 事件通过闭包内的 app handle 发送
+    let app2 = app.clone();
+    let progress_cb = move |p: ExportProgress| {
+        let payload = match p {
+            ExportProgress::Running(pct) => serde_json::json!({ "percent": pct }),
+            ExportProgress::Done => serde_json::json!({ "percent": 100.0, "done": true }),
+        };
+        let _ = tauri::Emitter::emit(&app2, "export-progress", payload);
+    };
+    veditor_export::run_export_tracked(&args, total_secs, &progress_cb, cancel)
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| e.to_string())
+}
+
+/// 取消当前导出。
+#[tauri::command]
+fn cancel_export() -> bool {
+    if let Some(c) = state_export_cancel().lock().unwrap().as_ref() {
+        c.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    true
+}
+
+fn state_export_cancel(
+) -> &'static std::sync::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+    static C: std::sync::OnceLock<
+        std::sync::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
+    > = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(None))
 }
 
 /// 导出前预览将生成的 FFmpeg 命令(规格 2.8: FFmpeg 命令预览)。
@@ -727,6 +773,7 @@ fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>) -> String 
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             ping,
@@ -765,6 +812,7 @@ fn main() {
             save_project,
             open_project,
             import_jianying,
+            cancel_export,
             seek_frame,
             export_video,
             preview_export_cmd
