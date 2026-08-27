@@ -100,6 +100,34 @@ export default function App() {
     refresh();
   }, []);
 
+  // 诊断:后端 VEDITOR_AUTO_CLICK=1 时,自动播放+模拟时间轴点击风暴
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    listen("auto-click", () => {
+      // 先进入播放状态(复现"点击正在播放的时间轴")
+      setPlaying(true);
+      const canvas = document.querySelector("canvas");
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      let i = 0;
+      const iv = setInterval(() => {
+        const x = r.left + 40 + Math.random() * 300;
+        const y = r.top + r.height / 2;
+        canvas.dispatchEvent(
+          new MouseEvent("mousedown", { clientX: x, clientY: y, bubbles: true })
+        );
+        canvas.dispatchEvent(
+          new MouseEvent("mouseup", { clientX: x, clientY: y, bubbles: true })
+        );
+        if (++i >= 25) {
+          clearInterval(iv);
+          setPlaying(false);
+        }
+      }, 350);
+    }).then((f) => (un = f));
+    return () => un?.();
+  }, []);
+
   async function onImportFiles(files: FileList | null) {
     if (!files) return;
     for (const f of Array.from(files)) {

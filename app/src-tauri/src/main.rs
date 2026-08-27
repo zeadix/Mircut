@@ -303,6 +303,22 @@ fn preview_asset_frame(path: String, secs: f64) -> SeekResult {
     }
 }
 
+/// 前端 JS 错误落盘(~/.veditor/js.log)。
+#[tauri::command]
+fn log_js_error(kind: String, detail: String) {
+    let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join(".veditor");
+    let _ = std::fs::create_dir_all(&dir);
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("js.log"))
+    {
+        let _ = writeln!(f, "[{}] {} {}", chrono_like_now(), kind, detail);
+    }
+}
+
 #[tauri::command]
 fn ping() -> &'static str {
     "pong"
@@ -1414,18 +1430,21 @@ fn main() {
         }
     }));
 
-    // Linux WebKitGTK 规避:NVIDIA 等驱动上 DMABUF 渲染器会导致 WebView
-    // 黑屏/静默崩溃(Tauri 已知问题),禁用后走软件路径。
+    // Linux WebKitGTK 规避(NVIDIA/混显环境下社区验证的组合):
+    // 1. DMABUF 渲染器在 NVIDIA 驱动上崩溃/黑屏 -> 禁用
+    // 2. 硬件加速下的合成器崩溃 -> 软件渲染兜底
     #[cfg(target_os = "linux")]
     {
+        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
     }
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::default())
-        // 自定义 veditor:// 协议:WebView 直接二进制加载预览帧,
+        .manage(AppState::default()) // 自定义 veditor:// 协议:WebView 直接二进制加载预览帧,
         // 绕过 base64-over-IPC(大字符串高频传输致 WebKit 渲染进程崩溃)。
         .register_uri_scheme_protocol("veditor", |_app, request| {
             use tauri::http::{Response as HttpResponse, StatusCode};
@@ -1466,6 +1485,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ping,
             read_media_base64,
+            log_js_error,
             preview_asset_frame,
             probe_media,
             get_document,
@@ -1522,8 +1542,30 @@ fn main() {
             export_video,
             preview_export_cmd
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .on_window_event(|_window, event| {
+            // 捕获窗口销毁:记录诊断(区分用户关闭与崩溃)。
+            if let tauri::WindowEvent::Destroyed = event {
+                diag::log_cmd("window", "Destroyed");
+            }
+        })
+        .setup(|app| {
+            // 诊断:VEDITOR_AUTO_CLICK=1 时 5 秒后通知前端模拟点击风暴
+            if std::env::var("VEDITOR_AUTO_CLICK").is_ok() {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    diag::log_cmd("auto-click", "emit");
+                    use tauri::Emitter;
+                    let _ = handle.emit("auto-click", ());
+                });
+            }
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // 持续运行:即使 WebView 侧异常也不 panic 退出
+    app.run(|_app_handle, _event| {});
 }
 
 #[cfg(test)]
