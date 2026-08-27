@@ -8,7 +8,7 @@ fn ping() -> &'static str {
     "pong"
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn probe_media(path: String) -> Result<MediaInfo, String> {
     veditor_media::probe(&PathBuf::from(&path)).map_err(|e| e.to_string())
 }
