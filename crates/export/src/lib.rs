@@ -1,7 +1,7 @@
 //! VEditor 导出层:文档模型到 FFmpeg 滤镜图/命令行的编译器、导出队列。M2 实现队列。
 
 use anyhow::{ensure, Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use veditor_core::{Document, TrackKind};
 
@@ -61,8 +61,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let video_track = doc
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Video && !t.hidden)
-        .next_back()
+        .rfind(|t| t.kind == TrackKind::Video && !t.hidden)
         .map(|t| t.id.clone());
     // 音频轨:所有非静音轨
     let audio_tracks: Vec<String> = doc
@@ -75,7 +74,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut filters: Vec<String> = Vec::new();
 
     if let Some(ref vt) = video_track {
-        let clips = doc.clips_on_track(&vt);
+        let clips = doc.clips_on_track(vt);
         if !clips.is_empty() {
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
@@ -189,6 +188,7 @@ pub fn run_export(args: &[String]) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use veditor_core::{Asset, AssetRef, Clip, Timebase, Track};
 
     fn doc() -> Document {

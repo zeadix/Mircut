@@ -5,7 +5,7 @@
 //! 拖动/跳转时逐帧 seek 走本 trait。
 
 use anyhow::{ensure, Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use veditor_core::{Document, Ticks, TrackKind};
 
@@ -140,6 +140,7 @@ impl Renderer for ProxyRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
     use veditor_core::{Asset, AssetRef, Clip, Timebase, Track};
 
     fn doc_with_clip(path: &str) -> Document {

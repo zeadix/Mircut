@@ -492,8 +492,10 @@ mod tests {
 
     #[test]
     fn split_clip_produces_two_adjacent_clips() {
-        let mut doc = Document::default();
-        doc.timebase = tb();
+        let mut doc = Document {
+            timebase: tb(),
+            ..Default::default()
+        };
         let mut stack = CommandStack::new();
         stack.execute(
             &mut doc,
@@ -514,8 +516,10 @@ mod tests {
 
     #[test]
     fn document_serialization_roundtrip() {
-        let mut doc = Document::default();
-        doc.timebase = tb();
+        let mut doc = Document {
+            timebase: tb(),
+            ..Default::default()
+        };
         doc.tracks.push(Track {
             id: "t1".into(),
             kind: TrackKind::Video,

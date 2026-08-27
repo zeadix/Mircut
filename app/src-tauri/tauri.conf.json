@@ -12,7 +12,14 @@
   "app": {
     "windows": [
       { "title": "VEditor", "width": 1280, "height": 800 }
-    ]
+    ],
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/**", "$TMPDIR/**", "/tmp/**"]
+      },
+      "csp": null
+    }
   },
   "bundle": {
     "active": false,

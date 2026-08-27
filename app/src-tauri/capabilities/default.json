@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "VEditor 主窗口能力",
+  "windows": ["main"],
+  "permissions": [
+    "core:default"
+  ]
+}
