@@ -113,6 +113,33 @@ impl Default for ColorGrade {
     }
 }
 
+/// 色度抠像(绿幕/蓝幕去除)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChromaKey {
+    /// 0 = 关闭;相似度阈值(0.01-1.0,ffmpeg colorkey similarity)。
+    pub similarity: f64,
+    /// 目标颜色 hex,如 "#00ff00"。
+    pub color: String,
+    /// 边缘混合(0-1)。
+    pub blend: f64,
+}
+
+impl Default for ChromaKey {
+    fn default() -> Self {
+        Self {
+            similarity: 0.0,
+            color: "#00ff00".into(),
+            blend: 0.1,
+        }
+    }
+}
+
+impl ChromaKey {
+    pub fn enabled(&self) -> bool {
+        self.similarity > 0.01
+    }
+}
+
 /// 片段特效属性(M2 挂在 Clip 的可选扩展)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ClipFx {
@@ -124,6 +151,9 @@ pub struct ClipFx {
     pub grade: ColorGrade,
     /// 音量关键帧(与 Clip.volume 独立:有关键帧时优先)。
     pub volume: Animatable,
+    /// 色度抠像(默认关闭)。
+    #[serde(default)]
+    pub chroma_key: ChromaKey,
 }
 
 #[cfg(test)]

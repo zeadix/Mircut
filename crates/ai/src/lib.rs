@@ -224,6 +224,49 @@ impl Tts {
     }
 }
 
+/// 背景移除引擎(规格 P2):可插拔。
+/// - `BgRemover::binary("rembg" 等)`:调用外部 CLI 输出透明 PNG 序列(逐帧,M4 简化);
+/// - 无可用引擎时 `available()` 返回 false,UI 禁用入口。
+pub struct BgRemover {
+    pub engine: String,
+}
+
+impl BgRemover {
+    pub fn detect_engine() -> Option<Self> {
+        for bin in ["rembg", "backgroundremover", "bria-rm-CLI"] {
+            if which_bin(bin) {
+                return Some(Self { engine: bin.into() });
+            }
+        }
+        None
+    }
+
+    pub fn available(&self) -> bool {
+        which_bin(&self.engine)
+    }
+
+    /// 对单帧图片做背景移除,输出 PNG 路径。
+    pub fn remove_frame(&self, input_png: &Path, out_png: &Path) -> Result<()> {
+        ensure!(
+            self.available(),
+            "背景移除引擎 {} 不可用,请安装 rembg 等工具",
+            self.engine
+        );
+        let out = Command::new(&self.engine)
+            .args(["i", "-o"])
+            .arg(out_png)
+            .arg(input_png)
+            .output()
+            .context("启动背景移除引擎失败")?;
+        ensure!(
+            out.status.success(),
+            "背景移除失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +328,17 @@ mod tests {
         let mut w = WhisperCli::new("/nonexistent/model.bin");
         let err = w.transcribe(Path::new("/tmp/x.wav")).unwrap_err();
         assert!(err.to_string().contains("whisper-cli"));
+    }
+
+    #[test]
+    fn bg_remover_graceful_when_missing() {
+        let r = BgRemover {
+            engine: "definitely-not-installed-xyz".into(),
+        };
+        assert!(!r.available());
+        let err = r
+            .remove_frame(Path::new("/tmp/a.png"), Path::new("/tmp/b.png"))
+            .unwrap_err();
+        assert!(err.to_string().contains("不可用"));
     }
 }

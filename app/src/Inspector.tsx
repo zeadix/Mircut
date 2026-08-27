@@ -16,6 +16,7 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
   const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1 });
   const [transKind, setTransKind] = useState("fade");
   const [transDur, setTransDur] = useState("0.5");
+  const [ck, setCk] = useState({ similarity: 0, color: "#00ff00", blend: 0.1 });
 
   useEffect(() => {
     if (clip) {
@@ -26,6 +27,11 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
           brightness: clip.fx.grade.brightness,
           contrast: clip.fx.grade.contrast,
           saturation: clip.fx.grade.saturation,
+        });
+        setCk({
+          similarity: clip.fx.chroma_key?.similarity ?? 0,
+          color: clip.fx.chroma_key?.color ?? "#00ff00",
+          blend: clip.fx.chroma_key?.blend ?? 0.1,
         });
       }
     }
@@ -80,6 +86,17 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
 
   async function addKeyframe(prop: "opacity" | "volume") {
     await api.setKeyframe(clip!.id, prop, playheadTicks - clip!.start, prop === "opacity" ? 1 : 1, "smooth");
+    await onRefresh();
+  }
+
+  async function applyChromaKey() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_chroma_key", {
+      clipId: clip!.id,
+      similarity: ck.similarity,
+      color: ck.color,
+      blend: ck.blend,
+    });
     await onRefresh();
   }
 
@@ -141,6 +158,49 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
             />
           </label>
         ))}
+      </fieldset>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>智能抠像(绿幕)</legend>
+        <label style={{ display: "block", marginBottom: 4 }}>
+          强度:{" "}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={ck.similarity}
+            onChange={(e) => setCk({ ...ck, similarity: parseFloat(e.target.value) })}
+            onMouseUp={applyChromaKey}
+            onTouchEnd={applyChromaKey}
+          />
+        </label>
+        <label style={{ display: "block", marginBottom: 4 }}>
+          颜色:{" "}
+          <input
+            type="color"
+            value={ck.color}
+            onChange={(e) => setCk({ ...ck, color: e.target.value })}
+            onMouseUp={applyChromaKey}
+            onBlur={applyChromaKey}
+          />
+        </label>
+        <label style={{ display: "block" }}>
+          边缘:{" "}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={ck.blend}
+            onChange={(e) => setCk({ ...ck, blend: parseFloat(e.target.value) })}
+            onMouseUp={applyChromaKey}
+            onTouchEnd={applyChromaKey}
+          />
+        </label>
+        <div style={{ color: "#667", marginTop: 4 }}>
+          {ck.similarity > 0.01 ? `已启用 (similarity=${ck.similarity})` : "拖动强度启用"}
+        </div>
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
@@ -207,5 +267,6 @@ function emptyFx(): NonNullable<Clip["fx"]> {
     y_offset: { keyframes: [] },
     grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 },
     volume: { keyframes: [] },
+    chroma_key: { similarity: 0, color: "#00ff00", blend: 0.1 },
   };
 }

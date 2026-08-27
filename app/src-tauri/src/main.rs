@@ -481,6 +481,29 @@ fn remove_transition(left_clip_id: String, state: State<'_, AppState>) -> bool {
     true
 }
 
+/// 色度抠像设置(整体写入 fx.chroma_key,保留其余 fx)。
+#[tauri::command]
+fn set_chroma_key(
+    clip_id: String,
+    similarity: f64,
+    color: String,
+    blend: f64,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return false;
+    };
+    let mut fx = clip.fx;
+    fx.chroma_key = veditor_core::ChromaKey {
+        similarity,
+        color,
+        blend,
+    };
+    inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    true
+}
+
 // ---------- M3:字幕/ASR/TTS ----------
 
 #[derive(Serialize)]
@@ -832,6 +855,7 @@ fn main() {
             import_jianying,
             cancel_export,
             list_export_presets,
+            set_chroma_key,
             seek_frame,
             export_video,
             preview_export_cmd

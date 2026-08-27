@@ -178,6 +178,15 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 }
                 let scale = format!("scale={}:{}", params.width, params.height);
                 chain.push_str(&format!(",{scale},fps={}", params.fps));
+                // 色度抠像(绿幕)
+                if c.fx.chroma_key.enabled() {
+                    let ck = &c.fx.chroma_key;
+                    let color = ck.color.trim_start_matches('#');
+                    chain.push_str(&format!(
+                        ",format=yuva420p,colorkey=0x{color}:similarity={:.3}:blend={:.3}",
+                        ck.similarity, ck.blend
+                    ));
+                }
                 // 调色(非默认才加)
                 let g = &c.fx.grade;
                 if (g.brightness - 0.0).abs() > 1e-3
@@ -690,6 +699,27 @@ mod tests {
             .map(|(_, b)| b.clone())
             .unwrap();
         assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_chroma_key_uses_colorkey() {
+        let mut d = doc();
+        d.clips[0].fx.chroma_key = veditor_core::ChromaKey {
+            similarity: 0.3,
+            color: "#00ff00".into(),
+            blend: 0.1,
+        };
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("colorkey=0x00ff00:similarity=0.300:blend=0.100"),
+            "fc = {fc}"
+        );
     }
 
     #[test]

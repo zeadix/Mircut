@@ -13,7 +13,9 @@ pub use commands_m2::{
     AddTrack, DetachAudio, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio, SetFx,
     SetSpeed, SetTrackFlags, SetTransition,
 };
-pub use fx::{Animatable, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind};
+pub use fx::{
+    Animatable, ChromaKey, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind,
+};
 
 /// 有理数时间基(如 30fps -> 1/30)。
 pub type Rational = (i64, i64);

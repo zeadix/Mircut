@@ -30,6 +30,12 @@ export interface ColorGrade {
   temperature: number;
 }
 
+export interface ChromaKey {
+  similarity: number;
+  color: string;
+  blend: number;
+}
+
 export interface ClipFx {
   opacity: Animatable;
   scale: Animatable;
@@ -38,6 +44,7 @@ export interface ClipFx {
   y_offset: Animatable;
   grade: ColorGrade;
   volume: Animatable;
+  chroma_key?: ChromaKey;
 }
 
 export interface Clip {
