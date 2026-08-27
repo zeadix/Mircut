@@ -8,6 +8,7 @@ import Timeline from "./Timeline";
 import Preview from "./Preview";
 import Inspector from "./Inspector";
 import SubtitlePanel from "./SubtitlePanel";
+import TextPanel from "./TextPanel";
 import Scopes from "./Scopes";
 import {
   FilmSlate,
@@ -39,7 +40,7 @@ export default function App() {
   const [playSpeed, setPlaySpeed] = useState(1);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
-  const [rightTab, setRightTab] = useState<"inspector" | "subtitles">("inspector");
+  const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
@@ -288,6 +289,37 @@ export default function App() {
     await invoke("set_render_mode", { mode: m });
   }
 
+  async function onDetectBeats() {
+    const asset = doc?.assets.find((a) => a.has_audio);
+    if (!asset) {
+      setStatus("无音频素材");
+      return;
+    }
+    setStatus("节拍检测中...");
+    try {
+      const beats = await invoke<number[]>("detect_beats", { path: asset.path });
+      setStatus(`检测到 ${beats.length} 个节拍点: ${beats.slice(0, 8).map((b) => b.toFixed(1) + "s").join(", ")}${beats.length > 8 ? " ..." : ""}`);
+    } catch (e) {
+      setStatus(`节拍检测失败: ${e}`);
+    }
+  }
+
+  async function onRemoveSilence() {
+    const asset = doc?.assets.find((a) => a.has_audio);
+    if (!asset) {
+      setStatus("无音频素材");
+      return;
+    }
+    setStatus("去静音处理中...");
+    try {
+      const n = await invoke<number>("remove_silence", { path: asset.path });
+      await refresh();
+      setStatus(`已去除静音,重剪为 ${n} 段`);
+    } catch (e) {
+      setStatus(`去静音失败: ${e}`);
+    }
+  }
+
   // 键盘快捷键(含 JKL 变速播放)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -338,6 +370,8 @@ export default function App() {
         <button className="btn" onClick={onSaveProject} title="保存项目">保存</button>
         <button className="btn" onClick={onOpenProject} title="打开项目">打开</button>
         <button className="btn" onClick={onImportJianying} title="导入剪映草稿">剪映导入</button>
+        <button className="btn" onClick={onDetectBeats} title="节拍检测">节拍</button>
+        <button className="btn" onClick={onRemoveSilence} title="AI 去静音">去静音</button>
         <button className="btn primary" onClick={onExport}><Export size={16} /> 导出</button>
       </header>
 
@@ -453,6 +487,13 @@ export default function App() {
             >
               字幕
             </button>
+            <button
+              className="btn"
+              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "texts" ? "#30333c" : "transparent" }}
+              onClick={() => setRightTab("texts")}
+            >
+              文字
+            </button>
           </div>
           {rightTab === "inspector" ? (
             <Inspector
@@ -461,12 +502,14 @@ export default function App() {
               onRefresh={refresh}
               playheadTicks={playhead}
             />
-          ) : (
+          ) : rightTab === "subtitles" ? (
             <SubtitlePanel
               assetPaths={doc.assets.map((a) => a.path)}
               onRefresh={refresh}
               fps={fps}
             />
+          ) : (
+            <TextPanel playheadTicks={playhead} onRefresh={refresh} />
           )}
         </aside>
       </div>

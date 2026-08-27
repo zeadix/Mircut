@@ -644,11 +644,13 @@ fn detect_beats(path: String) -> Result<Vec<f64>, String> {
     let mut beats = Vec::new();
     let mut last = usize::MAX;
     for i in 1..peaks.len().saturating_sub(1) {
-        if peaks[i] > mean * 1.4 && peaks[i] >= peaks[i - 1] && peaks[i] > peaks[i + 1] {
-            if last == usize::MAX || i - last >= min_gap {
-                beats.push(i as f64 / w.samples_per_sec as f64);
-                last = i;
-            }
+        if peaks[i] > mean * 1.4
+            && peaks[i] >= peaks[i - 1]
+            && peaks[i] > peaks[i + 1]
+            && (last == usize::MAX || i - last >= min_gap)
+        {
+            beats.push(i as f64 / w.samples_per_sec as f64);
+            last = i;
         }
     }
     Ok(beats)

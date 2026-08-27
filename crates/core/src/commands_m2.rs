@@ -486,10 +486,15 @@ impl Command for FreezeFrame {
         self.right_id = Some(right_id);
     }
     fn undo(&mut self, doc: &mut Document) {
-        for id in [&self.freeze_id, &self.right_id, &self.left_id] {
-            if let Some(id) = id {
-                doc.clips.retain(|c| c.id != *id);
-            }
+        for id in [
+            self.freeze_id.as_deref(),
+            self.right_id.as_deref(),
+            self.left_id.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            doc.clips.retain(|c| c.id != id);
         }
         if let Some(orig) = self.orig.clone() {
             doc.clips.push(orig);
@@ -525,7 +530,7 @@ impl Command for TagAsset {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(a) = doc.assets.iter_mut().find(|a| a.id == self.asset_id) {
-            let has = a.tags.iter().any(|t| *t == self.tag);
+            let has = a.tags.contains(&self.tag);
             self.known = Some(has);
             if self.remove {
                 a.tags.retain(|t| *t != self.tag);
@@ -572,8 +577,10 @@ mod tests {
 
     #[test]
     fn freeze_frame_splits_into_three_and_undo() {
-        let mut doc = Document::default();
-        doc.timebase = crate::Timebase { num: 30, den: 1 };
+        let mut doc = Document {
+            timebase: crate::Timebase { num: 30, den: 1 },
+            ..Default::default()
+        };
         let mut stack = CommandStack::new();
         stack.execute(
             &mut doc,

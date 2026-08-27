@@ -26,6 +26,7 @@ fn bench_doc(n_clips: usize) -> Document {
         has_audio: true,
         width: Some(1920),
         height: Some(1080),
+        tags: vec![],
     });
     for i in 0..n_clips {
         doc.clips.push(Clip {

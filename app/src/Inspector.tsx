@@ -100,6 +100,73 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
     await onRefresh();
   }
 
+  // ---------- 音频滤镜 / LUT / 特效预设 ----------
+  const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0 });
+  const [lutPath, setLutPath] = useState("");
+
+  useEffect(() => {
+    if (clip?.fx?.audio_fx) {
+      const a = clip.fx.audio_fx;
+      setAfx({
+        fade_in: a.fade_in,
+        fade_out: a.fade_out,
+        denoise: a.denoise,
+        pitch: a.pitch_semitones,
+        eq_low: a.eq_low,
+        eq_mid: a.eq_mid,
+        eq_high: a.eq_high,
+      });
+    }
+    if (clip?.fx?.lut) setLutPath(clip.fx.lut.path);
+  }, [clip?.id]);
+
+  async function applyAudioFx() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_audio_fx", {
+      clipId: clip!.id,
+      fx: {
+        fade_in: afx.fade_in,
+        fade_out: afx.fade_out,
+        denoise: afx.denoise,
+        pitch_semitones: afx.pitch,
+        eq_low: afx.eq_low,
+        eq_mid: afx.eq_mid,
+        eq_high: afx.eq_high,
+      },
+    });
+    await onRefresh();
+  }
+
+  async function applyLut() {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_lut", {
+      clipId: clip!.id,
+      lut: { path: lutPath, strength: lutPath ? 1.0 : 0.0 },
+    });
+    await onRefresh();
+  }
+
+  /// 特效预设(规格 P1):一键写入 fx 组合。
+  async function applyPreset(name: string) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const fx = clip!.fx ?? emptyFx();
+    if (name === "电影感") {
+      fx.grade = { brightness: -0.03, contrast: 1.12, saturation: 1.05, temperature: 0 };
+    } else if (name === "复古") {
+      fx.grade = { brightness: 0.05, contrast: 0.92, saturation: 0.75, temperature: 0.3 };
+    } else if (name === "黑白") {
+      fx.grade = { brightness: 0, contrast: 1.1, saturation: 0.0, temperature: 0 };
+    } else if (name === "音频降噪") {
+      fx.audio_fx = { ...fx.audio_fx!, denoise: 0.6 };
+    } else if (name === "平滑淡入淡出") {
+      fx.audio_fx = { ...fx.audio_fx!, fade_in: 0.5, fade_out: 0.5 };
+    } else {
+      return;
+    }
+    await invoke("set_clip_fx", { clipId: clip!.id, fx });
+    await onRefresh();
+  }
+
   async function applyTransition() {
     if (!rightNeighbor) return;
     await api.setTransition(clip!.id, rightNeighbor.id, transKind, parseFloat(transDur) || 0.5);
@@ -140,6 +207,74 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
       <button className="btn" onClick={() => api.detachAudio(clip.id).then(onRefresh)}>
         分离音频
       </button>
+
+      <button
+        className="btn"
+        onClick={async () => {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("freeze_frame", {
+            clipId: clip.id,
+            pos: clip.start + (playheadTicks > clip.start ? playheadTicks - clip.start : 0),
+            freezeSecs: 1.0,
+          });
+          await onRefresh();
+        }}
+        title="在播放头处定格 1 秒"
+      >
+        定格帧
+      </button>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>特效预设</legend>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {["电影感", "复古", "黑白", "音频降噪", "平滑淡入淡出"].map((n) => (
+            <button key={n} className="btn" onClick={() => applyPreset(n)}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>音频滤镜</legend>
+        {([
+          ["fade_in", "淡入(s)", 0, 3, 0.1],
+          ["fade_out", "淡出(s)", 0, 3, 0.1],
+          ["denoise", "降噪", 0, 1, 0.05],
+          ["pitch", "变声(半音)", -12, 12, 1],
+          ["eq_low", "EQ 低(dB)", -15, 15, 1],
+          ["eq_mid", "EQ 中(dB)", -15, 15, 1],
+          ["eq_high", "EQ 高(dB)", -15, 15, 1],
+        ] as const).map(([key, label, min, max, step]) => (
+          <label key={key} style={{ display: "block", marginBottom: 3 }}>
+            {label}: {afx[key]}
+            <input
+              type="range"
+              min={min}
+              max={max}
+              step={step}
+              value={afx[key]}
+              onChange={(e) => setAfx({ ...afx, [key]: parseFloat(e.target.value) })}
+              onMouseUp={applyAudioFx}
+              onTouchEnd={applyAudioFx}
+              style={{ width: "100%" }}
+            />
+          </label>
+        ))}
+      </fieldset>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>LUT (.cube)</legend>
+        <input
+          className="ti"
+          style={{ width: "100%" }}
+          placeholder="/path/to/lut.cube"
+          value={lutPath}
+          onChange={(e) => setLutPath(e.target.value)}
+          onBlur={applyLut}
+        />
+        {lutPath && <div style={{ color: "#667", marginTop: 4 }}>已应用(强度 100%)</div>}
+      </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
         <legend>调色</legend>
@@ -268,5 +403,15 @@ function emptyFx(): NonNullable<Clip["fx"]> {
     grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 },
     volume: { keyframes: [] },
     chroma_key: { similarity: 0, color: "#00ff00", blend: 0.1 },
+    audio_fx: {
+      fade_in: 0,
+      fade_out: 0,
+      denoise: 0,
+      pitch_semitones: 0,
+      eq_low: 0,
+      eq_mid: 0,
+      eq_high: 0,
+    },
+    lut: { path: "", strength: 0 },
   };
 }
