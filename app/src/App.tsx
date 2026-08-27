@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -41,6 +41,8 @@ export default function App() {
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
+  // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
+  const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
@@ -477,7 +479,7 @@ export default function App() {
             playing={playing}
             renderMode={renderMode}
             assetPreview={assetPreview}
-            onAssetPreviewDone={() => setAssetPreview(null)}
+            onAssetPreviewDone={clearAssetPreview}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
