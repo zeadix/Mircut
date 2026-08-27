@@ -236,7 +236,7 @@ MVP `ProxyRenderer`:代理片段 + 拼接预渲染。v1.1 `RealtimeRenderer`(wgp
 | M0 骨架 | 2 周 | Tauri + React + 5 crate 空壳、CI(Linux)、FFmpeg 进程托管跑通 | `cargo test` + 前端构建通过;ffprobe 集成测试绿 |
 | M1 最小编辑 | 4 周 | 导入/媒体库/单轨时间轴/剪切分割/代理预览/1080p 导出 | 能剪出一条片并导出;导入 <10s |
 | M2 专业核心 | 6 周 | 多轨、波纹编辑、关键帧、变速、转场、调色、混音、撤销栈、导出队列 | 8 轨 1080p 预览不掉帧;10min 导出 <5min |
-| M3 文字+AI | 4 周 | 文本/字幕轨、SRT、whisper.cpp ASR、TTS(P1) | 10min 视频本地出字幕 <3min(精度抽检) |
+| M3 文字+AI | 4 周 | 文本/字幕轨、SRT、whisper.cpp ASR、TTS(P1) | 10min 视频本地出字幕 <3min(普通话 WER <=10%, 内部语料抽检) |
 | M4 打磨发布 | 4 周 | 剪映草稿导入、崩溃恢复、性能回归基准、Linux 打包(AppImage/deb/rpm)、官网文档 | 全部性能指标 CI 基准达标;v1.0 发布 |
 
 总计约 20 周(全职单人;可并行则压缩)。v1.1 起做 `RealtimeRenderer`(wgpu)与智能抠像。
