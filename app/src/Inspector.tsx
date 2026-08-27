@@ -71,10 +71,12 @@ export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props
 
   useEffect(() => {
     if (clip?.fx) {
+      const kf = (a?: { keyframes: { value: number }[] }) =>
+        a?.keyframes?.[0]?.value;
       setPip({
-        scale: clip.fx.scale.value_at(clip.start) ?? 0.35,
-        x: clip.fx.x_offset.value_at(clip.start) ?? 0.72,
-        y: clip.fx.y_offset.value_at(clip.start) ?? 0.72,
+        scale: kf(clip.fx.scale) ?? 0.35,
+        x: kf(clip.fx.x_offset) ?? 0.72,
+        y: kf(clip.fx.y_offset) ?? 0.72,
       });
     }
   }, [clip?.id]);

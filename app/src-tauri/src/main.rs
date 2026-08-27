@@ -725,8 +725,7 @@ fn drop_asset(
                 .doc
                 .tracks
                 .iter()
-                .filter(|t| t.kind == TrackKind::Video && !t.locked)
-                .next_back()
+                .rfind(|t| t.kind == TrackKind::Video && !t.locked)
                 .map(|t| t.id.clone())
                 .unwrap_or_else(|| {
                     let n = inner.doc.tracks.len() + 1;
@@ -2093,8 +2092,7 @@ mod tests {
                         .doc
                         .tracks
                         .iter()
-                        .filter(|t| t.kind == TrackKind::Video && !t.locked)
-                        .next_back()
+                        .rfind(|t| t.kind == TrackKind::Video && !t.locked)
                         .map(|t| t.id.clone())
                         .unwrap(),
                 }
