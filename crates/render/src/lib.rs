@@ -4,7 +4,7 @@
 //! 解码为 JPEG 提供给前端;连续播放由前端对代理文件使用 `<video>` 元素完成,
 //! 拖动/跳转时逐帧 seek 走本 trait。
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
