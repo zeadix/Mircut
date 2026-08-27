@@ -7,8 +7,9 @@ use tauri::State;
 use veditor_ai::Transcriber;
 use veditor_core::{
     AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, DetachAudio, Document,
-    Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed,
-    SetTrackFlags, SetTransition, SplitClip, Ticks, Track, TrackKind, Transition, TransitionKind,
+    FreezeFrame, Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio, SetFx,
+    SetSpeed, SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind,
+    Transition, TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
@@ -529,6 +530,175 @@ fn set_chroma_key(
     true
 }
 
+/// 音频滤镜设置(淡入淡出/降噪/变声/EQ)。
+#[tauri::command]
+fn set_audio_fx(clip_id: String, fx: veditor_core::AudioFx, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return false;
+    };
+    let mut new_fx = clip.fx;
+    new_fx.audio_fx = fx;
+    inner.exec(Box::new(SetFx::new(clip_id, new_fx)));
+    true
+}
+
+/// LUT 应用。
+#[tauri::command]
+fn set_lut(clip_id: String, lut: veditor_core::LutApply, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return false;
+    };
+    let mut new_fx = clip.fx;
+    new_fx.lut = lut;
+    inner.exec(Box::new(SetFx::new(clip_id, new_fx)));
+    true
+}
+
+/// 定格帧:在播放头处冻结 N 秒。
+#[tauri::command]
+fn freeze_frame(clip_id: String, pos: Ticks, freeze_secs: f64, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
+    let ticks = (freeze_secs * tps as f64).round() as i64;
+    inner.exec(Box::new(FreezeFrame::new(clip_id, pos, ticks)));
+    true
+}
+
+/// 素材标签。
+#[tauri::command]
+fn tag_asset(asset_id: String, tag: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(TagAsset::add(asset_id, tag)));
+    true
+}
+
+/// AI 剪辑助手:去静音——按静音切分结果删除静音区间对应的片段部分。
+/// 简化实现:返回静音区间(秒),由前端按需生成修剪命令;此处直接对
+/// 最上层视频轨整体执行"保留有声段"重剪。
+#[tauri::command(async)]
+fn remove_silence(path: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let mut sil = veditor_ai::SilenceSegments::default();
+    let segs = sil
+        .transcribe(&PathBuf::from(&path))
+        .map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap();
+    let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
+    let vt = inner
+        .doc
+        .tracks
+        .iter()
+        .rfind(|t| t.kind == TrackKind::Video && !t.hidden)
+        .map(|t| t.id.clone());
+    let Some(vt) = vt else {
+        return Err("无视频轨".into());
+    };
+    // 有声段 -> 新片段集合(引用同一素材区间,时间轴顺序排布)
+    let asset_id = inner
+        .doc
+        .clips
+        .iter()
+        .find(|c| c.track_id == vt)
+        .map(|c| c.asset.asset_id.clone())
+        .ok_or("视频轨无片段")?;
+    let mut clips = Vec::new();
+    let mut cursor = 0i64;
+    for s in &segs {
+        let start = (s.start_secs * tps as f64).round() as i64;
+        let end = (s.end_secs * tps as f64).round() as i64;
+        clips.push(veditor_core::Clip {
+            id: format!("rs{}", clips.len()),
+            track_id: vt.clone(),
+            start: cursor,
+            duration: end - start,
+            asset: veditor_core::AssetRef {
+                asset_id: asset_id.clone(),
+                source_in: s.start_secs,
+                source_out: s.end_secs,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            fx: Default::default(),
+        });
+        cursor += end - start;
+    }
+    let n = clips.len();
+    // 替换该轨全部片段
+    inner.doc.clips.retain(|c| c.track_id != vt);
+    for c in clips {
+        inner.exec(Box::new(AddClip { clip: c }));
+    }
+    Ok(n)
+}
+
+/// 节拍检测(P1):能量峰值近似节拍点,返回秒列表。
+#[tauri::command(async)]
+fn detect_beats(path: String) -> Result<Vec<f64>, String> {
+    let w = veditor_media::waveform(&PathBuf::from(&path), 50).map_err(|e| e.to_string())?;
+    // 简单峰值拾取:局部极大且高于均值 1.4 倍,最小间隔 0.3s
+    let peaks = &w.peaks;
+    let mean: f32 = peaks.iter().sum::<f32>() / peaks.len().max(1) as f32;
+    let min_gap = (0.3 * w.samples_per_sec as f32) as usize;
+    let mut beats = Vec::new();
+    let mut last = usize::MAX;
+    for i in 1..peaks.len().saturating_sub(1) {
+        if peaks[i] > mean * 1.4 && peaks[i] >= peaks[i - 1] && peaks[i] > peaks[i + 1] {
+            if last == usize::MAX || i - last >= min_gap {
+                beats.push(i as f64 / w.samples_per_sec as f64);
+                last = i;
+            }
+        }
+    }
+    Ok(beats)
+}
+
+// ---------- 文字叠层 ----------
+
+#[tauri::command]
+fn list_text_overlays(state: State<'_, AppState>) -> Vec<veditor_core::TextOverlay> {
+    let inner = state.inner.lock().unwrap();
+    inner.doc.text_overlays.clone()
+}
+
+#[tauri::command]
+fn add_text_overlay(
+    overlay: veditor_core::TextOverlay,
+    state: State<'_, AppState>,
+) -> Result<veditor_core::TextOverlay, String> {
+    let mut inner = state.inner.lock().unwrap();
+    let mut o = overlay;
+    if o.id.is_empty() {
+        o.id = format!("tx{}", inner.doc.text_overlays.len() + 1);
+    }
+    inner.doc.text_overlays.push(o.clone());
+    inner.autosave();
+    Ok(o)
+}
+
+#[tauri::command]
+fn update_text_overlay(
+    index: usize,
+    overlay: veditor_core::TextOverlay,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(o) = inner.doc.text_overlays.get_mut(index) {
+        *o = overlay;
+    }
+    true
+}
+
+#[tauri::command]
+fn remove_text_overlay(index: usize, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if index < inner.doc.text_overlays.len() {
+        inner.doc.text_overlays.remove(index);
+    }
+    true
+}
+
 /// 示波器:当前播放头处最上层片段的波形/矢量数据。
 #[tauri::command(async)]
 fn analyze_scopes(
@@ -998,6 +1168,16 @@ fn main() {
             analyze_scopes,
             realtime_frame,
             set_render_mode,
+            set_audio_fx,
+            set_lut,
+            freeze_frame,
+            tag_asset,
+            remove_silence,
+            detect_beats,
+            list_text_overlays,
+            add_text_overlay,
+            update_text_overlay,
+            remove_text_overlay,
             seek_frame,
             export_video,
             preview_export_cmd
