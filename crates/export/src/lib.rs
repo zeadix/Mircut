@@ -119,25 +119,10 @@ impl ExportPreset {
 }
 
 /// 编译单条 FFmpeg 命令(整条时间轴,顺序 concat 方案)。
-/// M1 简化模型:每轨按时间顺序 concat;视频轨取最上层非隐藏轨;音频轨全部混音。
+/// 输入策略:每个消费片段一个独立 -i(ffmpeg 4.x 同输入拆多路 trim 会
+/// 共享解码状态导致 concat 时长错误,独立输入实测精确)。
 pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> {
     let mut args: Vec<String> = vec!["-y".into()];
-
-    // 输入:所有素材去重
-    let mut asset_paths: Vec<String> = Vec::new();
-    for c in &doc.clips {
-        let path = doc
-            .asset(&c.asset.asset_id)
-            .map(|a| a.path.clone())
-            .unwrap_or_default();
-        if !path.is_empty() && !asset_paths.contains(&path) {
-            asset_paths.push(path);
-        }
-    }
-    for p in &asset_paths {
-        args.push("-i".into());
-        args.push(p.clone());
-    }
 
     // 视频轨:最上层(最后声明)非隐藏视频轨
     let video_track = doc
@@ -145,13 +130,51 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         .iter()
         .rfind(|t| t.kind == TrackKind::Video && !t.hidden)
         .map(|t| t.id.clone());
-    // 音频轨:所有非静音轨
+    // 音频轨:所有轨
     let audio_tracks: Vec<String> = doc
         .tracks
         .iter()
         .filter(|t| t.kind == TrackKind::Audio)
         .map(|t| t.id.clone())
         .collect();
+
+    // 计划消费的片段(视频轨全量 + 音频轨全量),按顺序分配输入索引
+    #[derive(Clone)]
+    struct InputUse {
+        path: String,
+        clip_id: String,
+    }
+    let mut uses: Vec<InputUse> = Vec::new();
+    if let Some(vt) = &video_track {
+        for c in doc.clips_on_track(vt) {
+            if let Some(a) = doc.asset(&c.asset.asset_id) {
+                if !a.path.is_empty() {
+                    uses.push(InputUse {
+                        path: a.path.clone(),
+                        clip_id: c.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+    for at in &audio_tracks {
+        for c in doc.clips_on_track(at) {
+            if let Some(a) = doc.asset(&c.asset.asset_id) {
+                if !a.path.is_empty() {
+                    uses.push(InputUse {
+                        path: a.path.clone(),
+                        clip_id: c.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+    for u in &uses {
+        args.push("-i".into());
+        args.push(u.path.clone());
+    }
+    let input_of =
+        |clip_id: &str| -> usize { uses.iter().position(|u| u.clip_id == clip_id).unwrap_or(0) };
 
     let mut filters: Vec<String> = Vec::new();
 
@@ -160,11 +183,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         if !clips.is_empty() {
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
-                let path = doc
-                    .asset(&c.asset.asset_id)
-                    .map(|a| a.path.clone())
-                    .unwrap_or_default();
-                let input_idx = asset_paths.iter().position(|p| *p == path).unwrap_or(0);
+                let input_idx = input_of(&c.id);
                 let src = format!("[{}:v]", input_idx);
                 let label = format!("[v{i}]");
                 let mut chain = format!(
@@ -326,11 +345,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             continue;
         }
         for (i, c) in clips.iter().enumerate() {
-            let path = doc
-                .asset(&c.asset.asset_id)
-                .map(|a| a.path.clone())
-                .unwrap_or_default();
-            let input_idx = asset_paths.iter().position(|p| *p == path).unwrap_or(0);
+            // 无音频流的素材(图片/无声视频)跳过,避免 [idx:a] 引用失败
+            if !doc.asset(&c.asset.asset_id).is_some_and(|a| a.has_audio) {
+                continue;
+            }
+            let input_idx = input_of(&c.id);
             let src = format!("[{}:a]", input_idx);
             let label = format!("[a{ti}_{i}]");
             let vol = if c.muted { 0.0 } else { c.volume };
@@ -870,6 +889,81 @@ mod tests {
             fc.contains("force_original_aspect_ratio=decrease,pad="),
             "fc = {fc}"
         );
+    }
+
+    /// 端到端:两段视频(一段头修剪)+ 音频轨重叠混合 -> 导出时长正确、含双流。
+    /// 模拟用户完整剪辑拼接工作流。
+    #[test]
+    fn e2e_trim_splice_audio_mix_export() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !std::path::Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        // c1: 头修 1s -> 剩 1s 内容(source_in=1.0)
+        d.clips[0].asset.source_in = 1.0;
+        d.clips[0].asset.source_out = 2.0;
+        d.clips[0].duration = 30; // 1s @30fps
+                                  // c3: 第二段,接在 c1 后
+        d.clips.push(Clip {
+            id: "c3".into(),
+            start: 30,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            track_id: "t1".into(),
+            fx: Default::default(),
+        });
+        // 音频轨片段:0-1s(与视频重叠混音)
+        d.clips[1].duration = 30;
+
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_splice.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        let args = compile_ffmpeg_cmd(&d, &params);
+        run_export(&args).unwrap();
+
+        // ffprobe 校验:时长 ~2s(1s+1s),含视频+音频流
+        let probe2 = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let info: serde_json::Value = serde_json::from_slice(&probe2.stdout).unwrap();
+        let dur: f64 = info["format"]["duration"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0);
+        assert!((dur - 2.0).abs() < 0.3, "导出时长应 ~2s, got {dur}");
+        let kinds: Vec<&str> = info["streams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s["codec_type"].as_str())
+            .collect();
+        assert!(kinds.contains(&"video"), "应含视频流: {kinds:?}");
+        assert!(kinds.contains(&"audio"), "应含音频流: {kinds:?}");
     }
 
     #[test]

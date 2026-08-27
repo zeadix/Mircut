@@ -219,6 +219,16 @@ export default function App() {
 
   async function onExport() {
     if (!doc) return;
+    // 导出前检查:片段数与重叠提示
+    if (doc.clips.length === 0) {
+      setStatus("时间轴为空:请拖入素材后再导出");
+      return;
+    }
+    const hasAudio = doc.clips.some((c) => {
+      const a = doc.assets.find((x) => x.id === c.asset.asset_id);
+      return a?.has_audio && !c.muted;
+    });
+    if (!hasAudio) setStatus("提示:未检测到有效音频,将导出纯视频");
     let out = exportPath;
     const picked = await saveDialog({
       defaultPath: exportPath,

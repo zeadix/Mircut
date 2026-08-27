@@ -7,3 +7,6 @@ edition.workspace = true
 [dependencies]
 veditor-core = { path = "../core" }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true
