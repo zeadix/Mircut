@@ -395,6 +395,16 @@ export default function App() {
     await refresh();
   }
 
+  async function onDuplicateClip(clipId: string, trackId: string, start: number) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("duplicate_clip", { clipId, trackId, start });
+    } catch (e) {
+      setStatus(`复制失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   async function onRenameTrack(trackId: string, name: string) {
     await api.renameTrack(trackId, name);
     await refresh();
@@ -688,6 +698,7 @@ export default function App() {
               onReorderTrack={onReorderTrack}
               onClipRangeSet={onClipRangeSet}
               onRenameTrack={onRenameTrack}
+              onDuplicateClip={onDuplicateClip}
             />
           </div>
         </main>

@@ -22,6 +22,8 @@ interface Props {
   onClipRangeEdit?: (clipId: string) => void;
   /// 轨道重命名。
   onRenameTrack?: (trackId: string, name: string) => void;
+  /// 复制片段块到指定位置(右键拖拽-复制)。
+  onDuplicateClip?: (clipId: string, trackId: string, start: number) => void;
   /// 弹窗提交:精确设置(秒)。
   onClipRangeSet?: (clipId: string, startSecs: number, durSecs: number, srcInSecs: number) => void;
 }
@@ -39,7 +41,7 @@ function trackRowGeom(kind: string, trackH: number) {
 
 /// 拖拽会话:移动 / 左缘修剪 / 右缘修剪。
 type DragSession =
-  | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number }
+  | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean; curX: number; curY: number }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
   | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
 
@@ -69,6 +71,7 @@ export default function Timeline({
   onClipRangeEdit,
   onClipRangeSet,
   onRenameTrack,
+  onDuplicateClip,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -98,6 +101,12 @@ export default function Timeline({
   /// 双击片段 -> 精确时间弹窗。
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
   const [rangeDraft, setRangeDraft] = useState({ start: "", duration: "", sourceIn: "" });
+  /// 右键菜单武装延迟(mouseup 后的 contextmenu 会误关菜单)。
+  const ctxMenuArmedAt = useRef(0);
+  /// 右键拖拽释放菜单(复制块/移动块)。
+  const [dropMenu, setDropMenu] = useState<{
+    x: number; y: number; clipId: string; start: number; trackId: string;
+  } | null>(null);
   /// 轨道改名内联编辑。
   const [renamingTrack, setRenamingTrack] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -439,7 +448,17 @@ export default function Timeline({
         onSeek(Math.min(Math.max(t, clip.start), clip.start + clip.duration - 1));
         const grabTicks = Math.round(t - clip.start); // 按下点相对片段左缘
         const fromRow = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
-        dragRef.current = { kind: "move", clipId: hit.clipId, startX: e.clientX, origStart: clip.start, grabTicks, fromRow };
+        dragRef.current = {
+          kind: "move",
+          clipId: hit.clipId,
+          startX: e.clientX,
+          origStart: clip.start,
+          grabTicks,
+          fromRow,
+          rightBtn: e.button === 2,
+          curX: e.clientX,
+          curY: e.clientY,
+        };
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow };
       }
     } else {
@@ -525,9 +544,24 @@ export default function Timeline({
     setTrimHint(null);
     if (!d) return;
     if (d.kind === "move") {
-      const clip = doc.clips.find((c) => c.id === d.clipId);
       const target = moveTargetRef.current;
       moveTargetRef.current = null;
+      // 右键拖拽:松手弹菜单(复制/移动),位置=当前虚影落点
+      if (d.rightBtn && target) {
+        const grab = "grabTicks" in d ? d.grabTicks : 0;
+        const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
+        ctxMenuArmedAt.current = Date.now();
+        setDropMenu({
+          x: e.clientX,
+          y: e.clientY,
+          clipId: d.clipId,
+          start: Math.max(0, t),
+          trackId: target.trackId,
+        });
+        setGhost(null);
+        return;
+      }
+      const clip = doc.clips.find((c) => c.id === d.clipId);
       if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
@@ -539,6 +573,20 @@ export default function Timeline({
         onClipTrim?.(d.clipId, d.kind === "trimL" ? "left" : "right", hint.newStart, hint.newDuration, ripple);
       }
     }
+  }
+
+  /// 右键拖拽菜单动作。
+  async function onDropMenuCopy() {
+    if (!dropMenu) return;
+    await onDuplicateClip?.(dropMenu.clipId, dropMenu.trackId, dropMenu.start);
+    setDropMenu(null);
+  }
+
+  function onDropMenuMove() {
+    if (!dropMenu) return;
+    onClipMove?.(dropMenu.clipId, dropMenu.start, dropMenu.trackId);
+    setActiveTrackId(dropMenu.trackId);
+    setDropMenu(null);
   }
 
   /// 拖放落点计算:Y 命中轨道行 -> 该轨;缝隙/底部 -> "__newlayer__"。
@@ -825,6 +873,52 @@ export default function Timeline({
           />
         </div>
       </div>
+
+      {/* 右键拖拽释放菜单 */}
+      {dropMenu && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 900 }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setDropMenu(null);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            if (Date.now() - ctxMenuArmedAt.current < 350) return; // 右键拖拽的余波
+            setDropMenu(null);
+          }}
+        >
+          <div
+            style={{
+              position: "fixed",
+              left: dropMenu.x,
+              top: dropMenu.y,
+              background: "#1e2026",
+              border: "1px solid #3a3d46",
+              borderRadius: 8,
+              padding: 6,
+              minWidth: 150,
+              fontSize: 12,
+              color: "#dfe3ea",
+              boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
+            }}
+          >
+            <button
+              className="btn"
+              style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }}
+              onClick={onDropMenuCopy}
+            >
+              ⧉ 复制块到此处
+            </button>
+            <button
+              className="btn"
+              style={{ width: "100%", justifyContent: "flex-start" }}
+              onClick={onDropMenuMove}
+            >
+              ⇢ 移动块到此处
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 双击片段:精确时间设置弹窗 */}
       {rangeEdit && (

@@ -848,6 +848,37 @@ fn drop_asset(
     Ok(first_id)
 }
 
+/// 复制片段块到目标位置(右键拖拽-复制语义):
+/// 原块不动,生成同素材/同 lane/同时长的新块;落点重叠由调度器消解。
+#[tauri::command]
+fn duplicate_clip(
+    clip_id: String,
+    track_id: String,
+    start: Ticks,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(src) = inner.doc.clip(&clip_id).cloned() else {
+        return Err("片段不存在".into());
+    };
+    let new_id = format!("{}-copy{}", clip_id, inner.doc.clips.len() + 1);
+    let dup = Clip {
+        id: new_id.clone(),
+        track_id: track_id.clone(),
+        start: start.max(0),
+        duration: src.duration,
+        asset: src.asset.clone(),
+        speed: src.speed,
+        volume: src.volume,
+        muted: src.muted,
+        lane: src.lane,
+        fx: src.fx.clone(),
+    };
+    inner.exec(Box::new(AddClip { clip: dup }));
+    inner.schedule_track(&track_id, Some(&new_id));
+    Ok(new_id)
+}
+
 /// 手动新建空文件轨道。
 #[tauri::command]
 fn create_file_track(state: State<'_, AppState>) -> Result<Track, String> {
@@ -1956,6 +1987,7 @@ fn main() {
             move_clip,
             trim_clip,
             drop_asset,
+            duplicate_clip,
             create_file_track,
             reorder_track,
             rename_track,
@@ -2368,6 +2400,113 @@ mod tests {
             assert_eq!(b.start, 0);
             assert_eq!(a.start, 60);
             assert_eq!(a.start, b.start + b.duration, "无缝相接");
+        }
+    }
+
+    /// 同轨无重叠回归:插入(拖放)+ 磁吸推挤 + 波纹修剪混合后,任意时刻同轨片段不重叠。
+    #[test]
+    fn no_overlap_invariant_after_mixed_ops() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "v1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 60.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            let mk = |id: &str, start: i64, dur: i64| Clip {
+                id: id.into(),
+                track_id: "v1".into(),
+                start,
+                duration: dur,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 1.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                fx: Default::default(),
+            };
+            // 1. 三个依次放入(模拟拖放插入,后两个触发右移让位)
+            for (id, pos) in [("A", 0i64), ("B", 60), ("C", 120)] {
+                inner.exec(Box::new(AddClip {
+                    clip: mk(id, pos, 60),
+                }));
+                inner.schedule_track("v1", Some(id));
+            }
+            let assert_no_overlap = |inner: &Inner| {
+                let mut v: Vec<(i64, i64)> = inner
+                    .doc
+                    .clips
+                    .iter()
+                    .map(|c| (c.start, c.start + c.duration))
+                    .collect();
+                v.sort();
+                for w in v.windows(2) {
+                    assert!(w[0].1 <= w[1].0, "重叠: {v:?}");
+                }
+            };
+            assert_no_overlap(&inner);
+            // 2. 把 A 拖到中间(60)——B/C 让位
+            inner.exec(Box::new(veditor_core::MoveClip::new("A", 60, "v1")));
+            inner.schedule_track("v1", Some("A"));
+            assert_no_overlap(&inner);
+            // 3. 修剪 B 尾部(120 起,40 ticks)——顺带验证调度后修剪不破坏不变量
+            inner.exec(Box::new(veditor_core::TrimClip::new("B", 120, 40, 0.0)));
+            assert_no_overlap(&inner);
+            // 4. 复制 C 到 0(右键复制语义)
+            let dup = Clip {
+                id: "C-copy".into(),
+                track_id: "v1".into(),
+                start: 0,
+                duration: inner.doc.clip("C").unwrap().duration,
+                asset: inner.doc.clip("C").unwrap().asset.clone(),
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                fx: Default::default(),
+            };
+            inner.exec(Box::new(AddClip { clip: dup }));
+            inner.schedule_track("v1", Some("C-copy"));
+            assert_no_overlap(&inner);
+            // 5. 撤销到底再重做(命令栈一致性)
+            while inner.stack.can_undo() {
+                let Inner { doc, stack, .. } = &mut *inner;
+                stack.undo(doc);
+            }
+            while inner.stack.can_redo() {
+                let Inner { doc, stack, .. } = &mut *inner;
+                stack.redo(doc);
+            }
+            let mut v: Vec<(i64, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .map(|c| (c.start, c.start + c.duration))
+                .collect();
+            v.sort();
+            for w in v.windows(2) {
+                assert!(w[0].1 <= w[1].0, "重做后重叠: {v:?}");
+            }
         }
     }
 
