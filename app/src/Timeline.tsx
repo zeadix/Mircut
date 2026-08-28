@@ -427,7 +427,10 @@ function TimelineInner({
   }
 
   function onPointerDown(e: React.PointerEvent) {
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    // 必须在 static canvas(pointer-events: auto)上捕获;
+    // overlay 是 none,e.target 在 React 合成下指向 overlay 时 setPointerCapture 无效。
+    const target = (e.currentTarget as HTMLElement) ?? (e.target as HTMLElement);
+    target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const rect = canvasRef.current?.getBoundingClientRect();
     if (rect) {
@@ -822,10 +825,15 @@ function TimelineInner({
             </div>
           ))}
         </div>
-        {/* 时间轴视口:静态层 + 动态层(播放头)叠加 */}
+        {/* 时间轴视口:静态层 + 动态层(播放头)分别做 stacking context,各占独立层 */}
         <div
           ref={wrapRef}
-          style={{ flex: 1, overflowX: "auto", overflowY: "hidden", position: "relative" }}
+          style={{
+            flex: 1,
+            overflowX: "auto",
+            overflowY: "hidden",
+            position: "relative",
+          }}
           onScroll={(e) => setScrollX((e.target as HTMLDivElement).scrollLeft)}
           onWheel={(e) => {
             if (e.ctrlKey) {
@@ -835,18 +843,51 @@ function TimelineInner({
           }}
         >
           <div style={{ position: "relative", width: contentW }}>
-            <canvas ref={canvasRef} style={{ display: "block" }} />
             <canvas
-              ref={overlayRef}
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: `${geo.totalH + 24}px`,
-                pointerEvents: "none",
+              ref={canvasRef}
+              style={{ display: "block" }}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerLeave={(e) => {
+                if (!dragRef.current) setHoverEdge(null);
+                e.preventDefault();
+              }}
+              onDoubleClick={(e) => {
+                const t = ticksFromClientX(e.clientX);
+                const hit = hitTest(t, e.clientX, e.clientY);
+                if (hit) {
+                  const clip = doc.clips.find((c) => c.id === hit.clipId)!;
+                  const tpsL = doc.timebase.num / doc.timebase.den;
+                  setRangeEdit({
+                    clipId: clip.id,
+                    start: clip.start,
+                    duration: clip.duration,
+                    sourceIn: clip.asset.source_in,
+                  });
+                  setRangeDraft({
+                    start: (clip.start / tpsL).toFixed(2),
+                    duration: (clip.duration / tpsL).toFixed(2),
+                    sourceIn: clip.asset.source_in.toFixed(2),
+                  });
+                  onClipRangeEdit?.(clip.id);
+                }
               }}
             />
           </div>
+          {/* 动态层独立 sibling:避免任何 CSS stacking 干扰主 canvas 的事件/坐标 */}
+          <canvas
+            ref={overlayRef}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: contentW,
+              height: geo.totalH + 24,
+              pointerEvents: "none",
+              zIndex: 5,
+            }}
+          />
         </div>
       </div>
 
