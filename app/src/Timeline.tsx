@@ -13,7 +13,7 @@ interface Props {
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
   waveforms?: Record<string, number[]>;
   alignEdges?: number[];
-  onDropAsset?: (assetId: string, trackId: string | null, startTicks: number) => void;
+  onDropAsset?: (assetId: string, trackId: string | null, startTicks: number, laneHint: "Video" | "Audio" | null) => void;
   /// 拖拽中的素材类型(App 在 dragstart 时置位)。
   dragKind?: "video" | "audio";
   /// 轨道排序(手柄拖拽)。
@@ -542,7 +542,9 @@ export default function Timeline({
   }
 
   /// 拖放落点计算:Y 命中轨道行 -> 该轨;缝隙/底部 -> "__newlayer__"。
-  function dropTargetFromEvent(e: React.DragEvent): { trackId: string | null; start: number } | null {
+  function dropTargetFromEvent(
+    e: React.DragEvent
+  ): { trackId: string | null; start: number; lane: "Video" | "Audio" | null } | null {
     if (!onDropAsset) return null;
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -553,13 +555,18 @@ export default function Timeline({
     const inGap = yIn - row * trackH > trackH - 6;
     if (row < 0) return null;
     if (row >= doc.tracks.length || inGap) {
-      return { trackId: "__newlayer__", start: t };
+      return { trackId: "__newlayer__", start: t, lane: null };
     }
     const track = doc.tracks[row];
     if (track.locked) return null;
-    // File 轨:上半落视频块/下半落音频块(由后端按素材能力拆分);
-    // 半区信息附带在 trackId 后缀,后端目前统一双块,半区仅作 UI 提示。
-    return { trackId: track.id, start: t };
+    // 半区决定目标 lane:File 轨上=Video 下=Audio;旧轨按 kind
+    let lane: "Video" | "Audio";
+    if (track.kind === "File") {
+      lane = yIn - row * trackH < trackH / 2 ? "Video" : "Audio";
+    } else {
+      lane = track.kind === "Audio" ? "Audio" : "Video";
+    }
+    return { trackId: track.id, start: t, lane };
   }
 
   function onDragOver(e: React.DragEvent) {
@@ -577,12 +584,12 @@ export default function Timeline({
     const yIn = e.clientY - rect.top;
     const row = Math.floor(yIn / trackH);
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
-    // File 轨半区精确定位:视频素材吸上半(视频区),音频素材吸下半(音频区)
+    // File 轨半区高亮按指针实际位置(拖到哪个区,哪个区亮)
     let hy = row * trackH;
     let hh = trackH;
     if (doc.tracks[row]?.kind === "File") {
       const half = trackH / 2;
-      const upper = dragKind === "video";
+      const upper = yIn - row * trackH < half;
       hy = row * trackH + (upper ? 0 : half);
       hh = half;
     }
@@ -602,7 +609,7 @@ export default function Timeline({
     const target = dropTargetFromEvent(e);
     if (!target) return;
     e.preventDefault();
-    onDropAsset?.(assetId, target.trackId, target.start);
+    onDropAsset?.(assetId, target.trackId, target.start, target.lane);
   }
 
   return (

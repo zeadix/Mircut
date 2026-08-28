@@ -1,29 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { Document } from "./types";
-import Timeline from "./Timeline";
-import Preview from "./Preview";
-import Inspector from "./Inspector";
-import SubtitlePanel from "./SubtitlePanel";
-import TextPanel from "./TextPanel";
-import Scopes from "./Scopes";
-import {
-  FilmSlate,
-  FolderOpen,
-  Scissors,
-  Trash,
-  ArrowCounterClockwise,
-  ArrowClockwise,
-  Export,
-  Waveform as WaveformIcon,
-  Plus,
-  VideoCamera,
-  SpeakerHigh,
-  Waves,
-} from "@phosphor-icons/react";
+import MiniWaveform from "./MiniWaveform";
 
 export default function App() {
   const [doc, setDoc] = useState<Document | null>(null);
@@ -51,6 +32,34 @@ export default function App() {
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
   const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
+
+  // 存量素材缩略图/波形回填(幂等:ref 去重)
+  const backfillRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!doc) return;
+    for (const a of doc.assets) {
+      if (a.has_video && !thumbs[a.id] && !backfillRef.current.has(`t:${a.id}`)) {
+        backfillRef.current.add(`t:${a.id}`);
+        api
+          .genThumbnails(a.path, 4)
+          .then(async (r) => {
+            if (r.files[0]) {
+              const url = await invoke<string>("read_media_base64", { path: r.files[0] });
+              setThumbs((prev) => ({ ...prev, [a.id]: url }));
+            }
+          })
+          .catch(() => {});
+      }
+      if (a.has_audio && !waveforms[a.id] && !backfillRef.current.has(`w:${a.id}`)) {
+        backfillRef.current.add(`w:${a.id}`);
+        api
+          .genWaveform(a.path)
+          .then((w) => setWaveforms((prev) => ({ ...prev, [a.id]: w.peaks })))
+          .catch(() => {});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.assets]);
 
   // 播放循环:推进播放头(JKL 变速);超出最末片段自动停
   useEffect(() => {
@@ -204,7 +213,7 @@ export default function App() {
       0
     );
     try {
-      await api.dropAsset(assetId, "__newlayer__", endTick);
+      await api.dropAsset(assetId, "__newlayer__", endTick, null);
     } catch (e) {
       setStatus(`添加失败: ${String(e).slice(0, 120)}`);
     }
@@ -386,9 +395,14 @@ export default function App() {
     await refresh();
   }
 
-  async function onDropAsset(assetId: string, trackId: string | null, start: number) {
+  async function onDropAsset(
+    assetId: string,
+    trackId: string | null,
+    start: number,
+    laneHint: "Video" | "Audio" | null
+  ) {
     try {
-      await api.dropAsset(assetId, trackId, start);
+      await api.dropAsset(assetId, trackId, start, laneHint);
     } catch (e) {
       setStatus(`放置失败: ${String(e).slice(0, 120)}`);
     }
@@ -584,7 +598,9 @@ export default function App() {
               title="拖到时间轴放置;双击追加到末尾;单击预览"
               style={{ cursor: "grab" }}
             >
-              {thumbs[a.id] ? (
+              {!a.has_video && a.has_audio ? (
+                <MiniWaveform peaks={waveforms[a.id] ?? []} />
+              ) : thumbs[a.id] ? (
                 <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
               ) : (
                 <div style={{ background: "#24262c", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>

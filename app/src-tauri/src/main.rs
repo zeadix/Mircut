@@ -664,6 +664,7 @@ fn drop_asset(
     asset_id: String,
     track_id: Option<String>,
     start: Ticks,
+    lane: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let mut inner = state.inner.lock().unwrap();
@@ -682,7 +683,7 @@ fn drop_asset(
     //  - "__newlayer__" -> 新建 File 轨(素材拖入时间轴缝隙)
     //  - 指定 File 轨(未锁定) -> 该轨
     //  - 其他/None -> 最上层可用 File 轨(无则新建)
-    let target_track = if track_id.as_deref() == Some("__newlayer__") {
+    let mut target_track = if track_id.as_deref() == Some("__newlayer__") {
         let n = inner.doc.tracks.len() + 1;
         let track = Track {
             id: format!("f{n}"),
@@ -729,8 +730,69 @@ fn drop_asset(
         }
     };
 
-    // 完整视频(has_video)自动拆双块:Video lane(绿)+ Audio lane(蓝,含音轨时);
-    // 纯音频只落 Audio lane;纯视频只落 Video lane。
+    // 分块策略(按拖放区域):
+    //  - 落视频区(lane=video) -> 只生成视频块;素材无视频流则退化音频块
+    //  - 落音频区(lane=audio) -> 只生成音频块;素材无音轨则退化视频块
+    //  - 无提示(双击追加等) -> 完整视频拆双块
+    let lanes_needed: Vec<veditor_core::Lane> = match lane.as_deref() {
+        Some("video") => {
+            if asset.has_video {
+                vec![veditor_core::Lane::Video]
+            } else if asset.has_audio {
+                vec![veditor_core::Lane::Audio]
+            } else {
+                vec![]
+            }
+        }
+        Some("audio") => {
+            if asset.has_audio {
+                vec![veditor_core::Lane::Audio]
+            } else if asset.has_video {
+                vec![veditor_core::Lane::Video]
+            } else {
+                vec![]
+            }
+        }
+        _ => {
+            let mut v = Vec::new();
+            if asset.has_video {
+                v.push(veditor_core::Lane::Video);
+            }
+            if asset.has_audio {
+                v.push(veditor_core::Lane::Audio);
+            }
+            v
+        }
+    };
+    if lanes_needed.is_empty() {
+        return Err("素材既无视频也无音频".into());
+    }
+
+    // 轨道类型校验:视频块需 Video/File 轨,音频块需 Audio/File 轨;
+    // 不匹配(如把视频块放到旧 Audio 轨)则新建 File 轨承接
+    let need_video = lanes_needed.contains(&veditor_core::Lane::Video);
+    let need_audio = lanes_needed.contains(&veditor_core::Lane::Audio);
+    let target_kind = inner.doc.track(&target_track).map(|t| t.kind);
+    let mismatch = match target_kind {
+        Some(TrackKind::Video) => need_audio,
+        Some(TrackKind::Audio) => need_video,
+        _ => false,
+    };
+    if mismatch {
+        let n = inner.doc.tracks.len() + 1;
+        let track = Track {
+            id: format!("f{n}"),
+            kind: TrackKind::File,
+            name: format!("文件轨 {n}"),
+            locked: false,
+            hidden: false,
+            muted: false,
+        };
+        let id = track.id.clone();
+        inner.exec(Box::new(AddTrack { track }));
+        target_track = id;
+    }
+
     let mk = |lane: veditor_core::Lane, n: usize| Clip {
         id: format!("c{}", inner.doc.clips.len() + n),
         track_id: target_track.clone(),
@@ -748,14 +810,8 @@ fn drop_asset(
         fx: Default::default(),
     };
     let mut clips_to_add: Vec<Clip> = Vec::new();
-    if asset.has_video {
-        clips_to_add.push(mk(veditor_core::Lane::Video, 1));
-    }
-    if asset.has_audio {
-        clips_to_add.push(mk(veditor_core::Lane::Audio, 2));
-    }
-    if clips_to_add.is_empty() {
-        return Err("素材既无视频也无音频".into());
+    for (i, l) in lanes_needed.iter().enumerate() {
+        clips_to_add.push(mk(*l, i + 1));
     }
 
     // 插入语义:同 lane 内落点重叠的已有片段右移让位(保持顺序)

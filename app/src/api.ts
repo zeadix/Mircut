@@ -57,9 +57,10 @@ export async function trimClip(
 export async function dropAsset(
   assetId: string,
   trackId: string | null,
-  start: number
+  start: number,
+  laneHint: "Video" | "Audio" | null
 ): Promise<void> {
-  await invoke("drop_asset", { assetId, trackId, start });
+  await invoke("drop_asset", { assetId, trackId, start, lane: laneHint });
 }
 
 export async function createFileTrack(): Promise<void> {
