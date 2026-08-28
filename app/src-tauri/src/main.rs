@@ -645,15 +645,25 @@ fn move_clip(
     clip_id: String,
     new_start: Ticks,
     new_track_id: String,
+    lane: Option<String>,
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    inner.exec(Box::new(veditor_core::MoveClip::new(
-        clip_id.clone(),
-        new_start,
-        new_track_id.clone(),
-    )));
-    // 磁吸推挤:消除落点重叠(moved 保位)
+    // 换轨时同步半区(视频区/音频区):跨轨拖到音频区 = 音频块(可撤销)
+    let lane_val = lane.as_deref().map(|l| match l {
+        "Audio" => veditor_core::Lane::Audio,
+        _ => veditor_core::Lane::Video,
+    });
+    let mut cmd = veditor_core::MoveClip::new(clip_id.clone(), new_start, new_track_id.clone());
+    let is_file_target = inner
+        .doc
+        .track(&new_track_id)
+        .is_some_and(|t| t.kind == TrackKind::File);
+    if let (Some(lv), true) = (lane_val, is_file_target) {
+        cmd = cmd.with_lane(Some(lv));
+    }
+    inner.exec(Box::new(cmd));
+    // 磁吸推挤:消除落点重叠(moved 保位,按块所在 lane 分别调度)
     inner.schedule_track(&new_track_id, Some(&clip_id));
     true
 }
@@ -2511,6 +2521,63 @@ mod tests {
     }
 
     #[test]
+    /// File 轨双 lane:视频块/音频块各自时序独立,互不推挤,各自无重叠。
+    #[test]
+    fn file_track_lane_independent_scheduling() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            let mk = |id: &str, lane: veditor_core::Lane, start: i64| Clip {
+                id: id.into(),
+                track_id: "f1".into(),
+                start,
+                duration: 60,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 2.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+            };
+            inner.doc.clips.push(mk("vA", veditor_core::Lane::Video, 0));
+            inner.doc.clips.push(mk("aA", veditor_core::Lane::Audio, 0));
+            // 视频块移到 30:只应推挤视频 lane 的 vA,音频块 aA 不动
+            inner.schedule_track("f1", Some("vB"));
+            // 直接构造:vB 落 30(与 vA 重叠)
+            inner
+                .doc
+                .clips
+                .push(mk("vB", veditor_core::Lane::Video, 30));
+            inner.schedule_track("f1", Some("vB"));
+            let vA = inner.doc.clip("vA").unwrap();
+            let vB = inner.doc.clip("vB").unwrap();
+            let aA = inner.doc.clip("aA").unwrap();
+            // aA 未被波及
+            assert_eq!(aA.start, 0, "音频块不应被视频块调度波及");
+            // 视频块无重叠:vA 被推到 vB 后
+            assert_eq!(vB.start, 30);
+            assert!(
+                vA.start >= vB.start + vB.duration,
+                "vA 应让位: vA={}",
+                vA.start
+            );
+        }
+    }
+
     fn ping_returns_pong() {
         assert_eq!(ping(), "pong");
     }

@@ -38,8 +38,13 @@ export async function splitClip(clipId: string, pos: number): Promise<boolean> {
   return invoke("split_clip", { clipId, pos });
 }
 
-export async function moveClip(clipId: string, newStart: number, newTrackId: string): Promise<boolean> {
-  return invoke("move_clip", { clipId, newStart, newTrackId });
+export async function moveClip(
+  clipId: string,
+  newStart: number,
+  newTrackId: string,
+  lane?: "Video" | "Audio" | null
+): Promise<boolean> {
+  return invoke("move_clip", { clipId, newStart, newTrackId, lane: lane ?? null });
 }
 
 export async function trimClip(

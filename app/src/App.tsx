@@ -366,8 +366,13 @@ export default function App() {
     setExportCmd(cmd);
   }
 
-  async function onClipMove(clipId: string, newStart: number, trackId: string) {
-    await api.moveClip(clipId, newStart, trackId);
+  async function onClipMove(
+    clipId: string,
+    newStart: number,
+    trackId: string,
+    laneHint?: "Video" | "Audio"
+  ) {
+    await api.moveClip(clipId, newStart, trackId, laneHint ?? null);
     await refresh();
   }
 

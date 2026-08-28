@@ -350,12 +350,13 @@ impl Command for RemoveClip {
     }
 }
 
-/// 具体命令:移动片段(改起点与轨道)。
+/// 具体命令:移动片段(改起点与轨道,可选改半区 lane)。
 pub struct MoveClip {
     pub clip_id: String,
     pub new_start: Ticks,
     pub new_track_id: String,
-    old: Option<(Ticks, String)>,
+    pub new_lane: Option<Option<Lane>>,
+    old: Option<(Ticks, String, Option<Lane>)>,
 }
 
 impl MoveClip {
@@ -368,8 +369,15 @@ impl MoveClip {
             clip_id: clip_id.into(),
             new_start,
             new_track_id: new_track_id.into(),
+            new_lane: None,
             old: None,
         }
+    }
+
+    /// 指定移动后的 lane(跨视频区/音频区拖拽)。
+    pub fn with_lane(mut self, lane: Option<Lane>) -> Self {
+        self.new_lane = Some(lane);
+        self
     }
 }
 
@@ -379,16 +387,20 @@ impl Command for MoveClip {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-            self.old = Some((c.start, c.track_id.clone()));
+            self.old = Some((c.start, c.track_id.clone(), c.lane));
             c.start = self.new_start;
             c.track_id = self.new_track_id.clone();
+            if let Some(l) = self.new_lane {
+                c.lane = l;
+            }
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some((start, track_id)) = self.old.take() {
+        if let Some((start, track_id, lane)) = self.old.take() {
             if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
                 c.start = start;
                 c.track_id = track_id;
+                c.lane = lane;
             }
         }
     }

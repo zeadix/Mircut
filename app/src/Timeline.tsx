@@ -8,7 +8,7 @@ interface Props {
   onSeek: (ticks: number) => void;
   onClipClick: (clipId: string) => void;
   selectedClipId: string | null;
-  onClipMove?: (clipId: string, newStart: number, trackId: string) => void;
+  onClipMove?: (clipId: string, newStart: number, trackId: string, laneHint?: "Video" | "Audio") => void;
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
   waveforms?: Record<string, number[]>;
@@ -96,7 +96,7 @@ export default function Timeline({
   /// 当前焦点文件轨道(点击行/标题/选中片段皆置位)。
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   /// 跨轨拖拽的目标(移动会话中动态更新)。
-  const moveTargetRef = useRef<{ trackId: string; row: number } | null>(null);
+  const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   /// 双击片段 -> 精确时间弹窗。
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
@@ -459,7 +459,11 @@ export default function Timeline({
           curX: e.clientX,
           curY: e.clientY,
         };
-        moveTargetRef.current = { trackId: clip.track_id, row: fromRow };
+        moveTargetRef.current = {
+          trackId: clip.track_id,
+          row: fromRow,
+          lane: clip.lane ?? null,
+        };
       }
     } else {
       setGhost(null);
@@ -489,6 +493,7 @@ export default function Timeline({
         0,
         Math.min(doc.tracks.length - 1, Math.floor(yIn / trackH))
       );
+      const half = trackH / 2;
       const rowTrack = doc.tracks[targetRow];
       const isAudioBlock = clip.lane === "Audio" || doc.tracks[ti]?.kind === "Audio";
       const ok =
@@ -498,9 +503,18 @@ export default function Timeline({
           (isAudioBlock ? rowTrack.kind === "Audio" : rowTrack.kind === "Video"));
       const useRow = ok ? targetRow : ti;
       if (ok) {
-        moveTargetRef.current = { trackId: rowTrack.id, row: useRow };
+        // 目标 lane:File 轨按落点半区;旧轨按 kind
+        const targetLane: "Video" | "Audio" | null =
+          rowTrack.kind === "File"
+            ? yIn - targetRow * trackH < half
+              ? "Video"
+              : "Audio"
+            : rowTrack.kind === "Audio"
+              ? "Audio"
+              : "Video";
+        moveTargetRef.current = { trackId: rowTrack.id, row: useRow, lane: targetLane };
+        setGhost((g) => (g ? { ...g, laneOff: targetLane === "Audio" ? half : 0 } : g));
       }
-      const half = trackH / 2;
       const laneOff = rowTrack?.kind === "File" ? (isAudioBlock ? half : 0) : 0;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       setGhost({
@@ -565,7 +579,7 @@ export default function Timeline({
       if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
-        onClipMove(d.clipId, Math.max(0, t), target.trackId);
+        onClipMove(d.clipId, Math.max(0, t), target.trackId, target.lane ?? undefined);
         setActiveTrackId(target.trackId);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
