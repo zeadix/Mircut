@@ -187,12 +187,20 @@ export default function App() {
   }
 
   async function addToTimeline(assetId: string) {
+    // 文件轨道模型:双击卡片 = 在新文件轨道创建(完整视频自动拆绿/蓝双块),
+    // 落点 = 最上层轨道内容末尾之后。
     if (!doc) return;
     const dur = Math.round((doc.assets.find((a) => a.id === assetId)?.duration_secs ?? 1) * fps);
-    const vTrack = doc.tracks.find((t) => t.kind === "Video");
-    if (!vTrack) return;
-    // start=-1:追加到轨道末尾(后端语义),避免重复双击重叠
-    await api.addClip(assetId, vTrack.id, -1, dur);
+    const endTick = doc.clips.reduce(
+      (m, c) => Math.max(m, c.start + c.duration),
+      0
+    );
+    try {
+      await api.dropAsset(assetId, "__newlayer__", endTick);
+    } catch (e) {
+      setStatus(`添加失败: ${String(e).slice(0, 120)}`);
+    }
+    setAssetPreview(null);
     await refresh();
   }
 

@@ -25,7 +25,7 @@ interface Props {
 }
 
 const MIN_TRACK_H = 36;
-const EDGE_HIT_PX = 6;
+const EDGE_HIT_PX = 5;
 
 /// 行几何:每条轨道一行,File 轨内部再分上(Video)/下(Audio)两个半区。
 /// 返回 [行索引, 半区偏移(0|1), 半区高];非 File 轨半区数 1。
@@ -390,7 +390,9 @@ export default function Timeline({
     return null;
   }
 
-  function onPointerDown(e: React.MouseEvent) {
+  function onPointerDown(e: React.PointerEvent) {
+    // 指针捕获:拖出画布/轨道头也不丢事件(拖拽卡死的根因修复)
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const hit = hitTest(t, e.clientX, e.clientY);
     if (hit) {
@@ -411,7 +413,7 @@ export default function Timeline({
     }
   }
 
-  function onPointerMove(e: React.MouseEvent) {
+  function onPointerMove(e: React.PointerEvent) {
     const d = dragRef.current;
     if (!d) {
       const t = ticksFromClientX(e.clientX);
@@ -451,7 +453,7 @@ export default function Timeline({
     }
   }
 
-  function onPointerUp(e: React.MouseEvent) {
+  function onPointerUp(e: React.PointerEvent) {
     const d = dragRef.current;
     dragRef.current = null;
     setGhost(null);
@@ -659,9 +661,19 @@ export default function Timeline({
         >
           <canvas
             ref={canvasRef}
-            onMouseDown={onPointerDown}
-            onMouseMove={onPointerMove}
-            onMouseUp={onPointerUp}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={() => {
+              dragRef.current = null;
+              setGhost(null);
+              setTrimHint(null);
+            }}
+            onPointerLeave={(e) => {
+              // capture 模式下 leave 不终止会话;仅清理 hover 态
+              if (!dragRef.current) setHoverEdge(null);
+              e.preventDefault();
+            }}
             onDoubleClick={(e) => {
               const t = ticksFromClientX(e.clientX);
               const hit = hitTest(t, e.clientX, e.clientY);

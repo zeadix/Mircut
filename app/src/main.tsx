@@ -38,10 +38,13 @@ window.addEventListener("contextmenu", (e) => {
   if (!isTextInput(e.target)) e.preventDefault();
 });
 window.addEventListener("dragstart", (e) => {
-  // 我们自己的卡片拖放用 dataTransfer 白名单放行
+  // 我们自己的拖放用 dataTransfer 白名单放行:
+  // 媒体卡片(上轨)与轨道排序手柄(无自定义类型,由目标元素 draggable 触发)
   const types = e.dataTransfer?.types ?? [];
   const isOurs = types.includes("application/x-veditor-asset");
-  if (!isOurs && !isTextInput(e.target)) e.preventDefault();
+  const target = e.target as HTMLElement | null;
+  const isHandle = target?.getAttribute("title") === "拖动排序轨道";
+  if (!isOurs && !isHandle && !isTextInput(e.target)) e.preventDefault();
 });
 window.addEventListener("drop", (e) => {
   // 阻止往窗口拖文件导致的"网页导航"白屏
