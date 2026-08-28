@@ -613,7 +613,13 @@ export default function Timeline({
   }
 
   return (
-    <div style={{ background: "#17181c", userSelect: "none" }}>
+    <div
+      data-veditor-drop="timeline"
+      style={{ background: "#17181c", userSelect: "none" }}
+      onDragOver={onDragOver}
+      onDragLeave={() => setDropHint(null)}
+      onDrop={onDrop}
+    >
       <div style={{ display: "flex", fontSize: 10, color: "#667", padding: "2px 8px", gap: 10, alignItems: "center" }}>
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附

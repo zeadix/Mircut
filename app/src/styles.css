@@ -28,12 +28,16 @@ input[type="color"] {
   cursor: pointer;
 }
 
-/* 图片/链接不可网页式拖拽 */
+/* 图片/链接不可网页式拖拽(带 draggable 属性的元素除外,如媒体卡片/排序手柄) */
 img,
 a,
 span,
 div {
   -webkit-user-drag: none;
+}
+[draggable="true"] {
+  -webkit-user-drag: element;
+  cursor: grab;
 }
 
 /* 输入框内的选中样式保留可见 */
