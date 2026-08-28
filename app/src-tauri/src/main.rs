@@ -2520,7 +2520,6 @@ mod tests {
         }
     }
 
-    #[test]
     /// File 轨双 lane:视频块/音频块各自时序独立,互不推挤,各自无重叠。
     #[test]
     fn file_track_lane_independent_scheduling() {
@@ -2563,21 +2562,22 @@ mod tests {
                 .clips
                 .push(mk("vB", veditor_core::Lane::Video, 30));
             inner.schedule_track("f1", Some("vB"));
-            let vA = inner.doc.clip("vA").unwrap();
-            let vB = inner.doc.clip("vB").unwrap();
-            let aA = inner.doc.clip("aA").unwrap();
+            let v_a = inner.doc.clip("vA").unwrap();
+            let v_b = inner.doc.clip("vB").unwrap();
+            let a_a = inner.doc.clip("aA").unwrap();
             // aA 未被波及
-            assert_eq!(aA.start, 0, "音频块不应被视频块调度波及");
+            assert_eq!(a_a.start, 0, "音频块不应被视频块调度波及");
             // 视频块无重叠:vA 被推到 vB 后
-            assert_eq!(vB.start, 30);
+            assert_eq!(v_b.start, 30);
             assert!(
-                vA.start >= vB.start + vB.duration,
+                v_a.start >= v_b.start + v_b.duration,
                 "vA 应让位: vA={}",
-                vA.start
+                v_a.start
             );
         }
     }
 
+    #[test]
     fn ping_returns_pong() {
         assert_eq!(ping(), "pong");
     }
