@@ -103,15 +103,23 @@ export default function Preview({
       style={{
         background: "#000",
         color: "#888",
-        minHeight: 240,
+        height: "42vh",
+        minHeight: 260,
+        flexShrink: 0,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
+        overflow: "hidden",
       }}
     >
       {url ? (
-        <img src={url} alt="preview" decoding="async" style={{ maxWidth: "100%", maxHeight: "48vh" }} />
+        <img
+          src={url}
+          alt="preview"
+          decoding="async"
+          style={{ maxWidth: "100%", maxHeight: "100%", width: "auto", height: "auto" }}
+        />
       ) : (
         <span style={{ fontSize: 12, padding: "0 24px", textAlign: "center", wordBreak: "break-all" }}>
           {err ?? "黑场(该位置无视频片段)"}
