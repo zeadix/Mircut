@@ -157,6 +157,8 @@ export default function App() {
       }
     }
     setDoc(d);
+    // 诊断:点击时间轴"块消失"问题,打每次 setDoc 后的块数
+    console.log(`[refresh] doc.clips.length = ${d.clips.length}, tracks=${d.tracks.length}`);
   }, []);
 
   useEffect(() => {
