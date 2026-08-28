@@ -5,6 +5,25 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import * as api from "./api";
 import type { Document } from "./types";
 import MiniWaveform from "./MiniWaveform";
+import Timeline from "./Timeline";
+import Preview from "./Preview";
+import Inspector from "./Inspector";
+import SubtitlePanel from "./SubtitlePanel";
+import TextPanel from "./TextPanel";
+import Scopes from "./Scopes";
+import {
+  FilmSlate,
+  FolderOpen,
+  Scissors,
+  Trash,
+  ArrowCounterClockwise,
+  ArrowClockwise,
+  Export,
+  Plus,
+  VideoCamera,
+  SpeakerHigh,
+  Waves,
+} from "@phosphor-icons/react";
 
 export default function App() {
   const [doc, setDoc] = useState<Document | null>(null);
