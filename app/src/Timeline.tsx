@@ -20,6 +20,8 @@ interface Props {
   onReorderTrack?: (fromIdx: number, toIdx: number) => void;
   /// 双击片段:请求精确时间设置弹窗(通知父级选中)。
   onClipRangeEdit?: (clipId: string) => void;
+  /// 轨道重命名。
+  onRenameTrack?: (trackId: string, name: string) => void;
   /// 弹窗提交:精确设置(秒)。
   onClipRangeSet?: (clipId: string, startSecs: number, durSecs: number, srcInSecs: number) => void;
 }
@@ -66,6 +68,7 @@ export default function Timeline({
   onReorderTrack,
   onClipRangeEdit,
   onClipRangeSet,
+  onRenameTrack,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -83,14 +86,17 @@ export default function Timeline({
   const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; x: number; y: number } | null>(null);
   /// 悬停光标:边缘显示双向箭头。
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
-  /// 拖放置预览(绿色插入线/新层提示)。
-  const [dropHint, setDropHint] = useState<{ x: number; trackIdx: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
+  /// 拖放置预览(插入线/新层提示/半区悬停)。
+  const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   /// 轨道排序拖拽中(来源行)。
   const reorderFrom = useRef<number | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   /// 双击片段 -> 精确时间弹窗。
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
   const [rangeDraft, setRangeDraft] = useState({ start: "", duration: "", sourceIn: "" });
+  /// 轨道改名内联编辑。
+  const [renamingTrack, setRenamingTrack] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
 
   /// 内容总宽 = max(最末片段末尾, 播放头, 视口) + 10s 余量。
   const contentTicks = Math.max(
@@ -148,6 +154,11 @@ export default function Timeline({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
+    // 当前操作轨道:选中片段所属轨
+    const selectedClip = doc.clips.find((c) => c.id === selectedClipId);
+    const activeTrackIdx = selectedClip
+      ? doc.tracks.findIndex((t) => t.id === selectedClip.track_id)
+      : -1;
     // 轨道背景:File 轨上区微绿、下区微蓝;其余旧样式
     doc.tracks.forEach((track, i) => {
       const y = i * trackH;
@@ -172,6 +183,13 @@ export default function Timeline({
         ctx.moveTo(0, y + trackH);
         ctx.lineTo(w, y + trackH);
         ctx.stroke();
+      }
+      // 当前操作轨道:边缘高亮(金色描边)
+      if (i === activeTrackIdx) {
+        ctx.strokeStyle = "#ffd75e";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, y + 1, w - 2, trackH - 2);
+        ctx.lineWidth = 1;
       }
     });
 
@@ -312,18 +330,21 @@ export default function Timeline({
       ctx.fillText(txt, bx + 5, trimHint.y - 8);
     }
 
-    // 拖放置预览:绿色插入线 + 新层提示条
+    // 拖放置预览:插入线 + 悬停半区高亮 + 新层提示
     if (dropHint) {
-      const gy = dropHint.trackIdx * trackH;
-      ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : "rgba(126, 217, 87, 0.10)";
-      ctx.fillRect(scrollX, gy, viewW, trackH);
+      const gy = dropHint.y;
+      const gh = dropHint.h;
+      const zoneColor = dropHint.kind === "audio" ? "rgba(126, 168, 255, 0.16)" : "rgba(126, 217, 87, 0.16)";
+      ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : zoneColor;
+      ctx.fillRect(scrollX, gy, viewW, gh);
       ctx.strokeStyle = "#7ed957";
       ctx.lineWidth = 2;
+      ctx.strokeRect(scrollX + 1, gy + 1, viewW - 2, gh - 2);
+      ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(dropHint.x, gy);
-      ctx.lineTo(dropHint.x, gy + trackH);
+      ctx.lineTo(dropHint.x, gy + gh);
       ctx.stroke();
-      ctx.lineWidth = 1;
       if (dropHint.newLayer) {
         ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
         ctx.font = "11px sans-serif";
@@ -523,9 +544,19 @@ export default function Timeline({
     const yIn = e.clientY - rect.top;
     const row = Math.floor(yIn / trackH);
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
+    // File 轨半区精确定位:视频素材吸上半(视频区),音频素材吸下半(音频区)
+    let hy = row * trackH;
+    let hh = trackH;
+    if (doc.tracks[row]?.kind === "File") {
+      const half = trackH / 2;
+      const upper = dragKind === "video";
+      hy = row * trackH + (upper ? 0 : half);
+      hh = half;
+    }
     setDropHint({
       x: t * pxPerTick,
-      trackIdx: target.trackId && target.trackId !== "__newlayer__" ? row : doc.tracks.length,
+      y: hy,
+      h: hh,
       newLayer: target.trackId === "__newlayer__",
       kind: dragKind,
     });
@@ -612,7 +643,13 @@ export default function Timeline({
               <span
                 title="拖动排序轨道"
                 draggable
-                onDragStart={() => { reorderFrom.current = ti; setReorderHint(ti); }}
+                onDragStart={(ev) => {
+                  // WebKit 要求非空 dataTransfer,否则取消拖拽
+                  ev.dataTransfer.setData("application/x-veditor-track", String(ti));
+                  ev.dataTransfer.effectAllowed = "move";
+                  reorderFrom.current = ti;
+                  setReorderHint(ti);
+                }}
                 onDragEnd={() => { reorderFrom.current = null; setReorderHint(null); }}
                 style={{
                   cursor: "grab",
@@ -628,13 +665,38 @@ export default function Timeline({
                 {'\u2630'}
               </span>
               <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
-                <span style={{
-                  color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2",
-                  fontSize: trackH < 44 ? 10 : 12,
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>
+                {renamingTrack === track.id ? (
+                  <input
+                    className="ti"
+                    style={{ width: "100%", fontSize: 11, padding: "2px 4px" }}
+                    autoFocus
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        onRenameTrack?.(track.id, renameDraft.trim() || track.name);
+                        setRenamingTrack(null);
+                      }
+                      if (e.key === "Escape") setRenamingTrack(null);
+                    }}
+                    onBlur={() => {
+                      onRenameTrack?.(track.id, renameDraft.trim() || track.name);
+                      setRenamingTrack(null);
+                    }}
+                  />
+                ) : (
+                <span
+                  style={{
+                    color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2",
+                    fontSize: trackH < 44 ? 10 : 12,
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}
+                  title="双击重命名"
+                  onDoubleClick={() => { setRenamingTrack(track.id); setRenameDraft(track.name); }}
+                >
                   {track.name}
                 </span>
+                )}
                 {track.kind === "File" && trackH >= 52 && (
                   <span style={{ fontSize: 9, color: "#565b66", lineHeight: "12px" }}>
                     <span style={{ color: "#5f9e73" }}>▮ 视频</span>

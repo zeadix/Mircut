@@ -70,6 +70,10 @@ export async function reorderTrack(fromIdx: number, toIdx: number): Promise<bool
   return invoke("reorder_track", { fromIdx, toIdx });
 }
 
+export async function renameTrack(trackId: string, name: string): Promise<boolean> {
+  return invoke("rename_track", { trackId, name });
+}
+
 export async function setClipRange(
   clipId: string,
   startSecs: number,

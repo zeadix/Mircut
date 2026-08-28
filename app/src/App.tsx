@@ -367,6 +367,11 @@ export default function App() {
     await refresh();
   }
 
+  async function onRenameTrack(trackId: string, name: string) {
+    await api.renameTrack(trackId, name);
+    await refresh();
+  }
+
   async function onReorderTrack(fromIdx: number, toIdx: number) {
     await api.reorderTrack(fromIdx, toIdx);
     await refresh();
@@ -647,6 +652,7 @@ export default function App() {
               dragKind={dragKind}
               onReorderTrack={onReorderTrack}
               onClipRangeSet={onClipRangeSet}
+              onRenameTrack={onRenameTrack}
             />
           </div>
         </main>

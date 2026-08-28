@@ -820,6 +820,19 @@ fn reorder_track(from_idx: usize, to_idx: usize, state: State<'_, AppState>) -> 
     true
 }
 
+/// 轨道重命名(双击轨道名)。
+#[tauri::command]
+fn rename_track(track_id: String, name: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(t) = inner.doc.tracks.iter_mut().find(|t| t.id == track_id) {
+        let name = name.trim();
+        if !name.is_empty() {
+            t.name = name.to_string();
+        }
+    }
+    true
+}
+
 /// 双击片段弹窗:一步设置时间轴起止(秒)+ 素材入点(秒)。
 #[tauri::command]
 fn set_clip_range(
@@ -1889,6 +1902,7 @@ fn main() {
             drop_asset,
             create_file_track,
             reorder_track,
+            rename_track,
             set_clip_range,
             add_track,
             remove_track,
