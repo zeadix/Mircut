@@ -19,6 +19,55 @@ window.addEventListener("unhandledrejection", (e) => {
   reportJsError("rejection", String(e.reason));
 });
 
+/// 原生软件感改造:关闭浏览器默认交互。
+/// - 右键菜单:输入类控件内保留(粘贴/全选),其余一律屏蔽
+/// - 文本/图片拖拽选择、双击选中单词:屏蔽
+/// - 浏览器手势:Ctrl+滚轮缩放页面、拖文件进窗口导航:屏蔽
+function isTextInput(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "TEXTAREA" ||
+    tag === "SELECT" ||
+    target.isContentEditable
+  );
+}
+
+window.addEventListener("contextmenu", (e) => {
+  if (!isTextInput(e.target)) e.preventDefault();
+});
+window.addEventListener("dragstart", (e) => {
+  // 我们自己的卡片拖放用 dataTransfer 白名单放行
+  const types = e.dataTransfer?.types ?? [];
+  const isOurs = types.includes("application/x-veditor-asset");
+  if (!isOurs && !isTextInput(e.target)) e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  // 阻止往窗口拖文件导致的"网页导航"白屏
+  const types = e.dataTransfer?.types ?? [];
+  if (!types.includes("application/x-veditor-asset")) e.preventDefault();
+});
+window.addEventListener("dragover", (e) => {
+  const types = e.dataTransfer?.types ?? [];
+  if (!types.includes("application/x-veditor-asset")) e.preventDefault();
+});
+window.addEventListener(
+  "wheel",
+  (e) => {
+    // Ctrl+滚轮是时间轴缩放(Canvas 已处理),阻止浏览器整页缩放
+    if (e.ctrlKey) e.preventDefault();
+  },
+  { passive: false }
+);
+document.addEventListener("dblclick", (e) => {
+  // 双击标题文字不再"选中单词",但双击交互(卡片上轨)不受影响
+  if (!isTextInput(e.target)) {
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+  }
+});
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

@@ -1,5 +1,49 @@
 * { box-sizing: border-box; }
-body { margin: 0; background: #121317; }
+
+/* 原生软件感:全局禁用文本选择与网页拖拽行为 */
+html,
+body,
+#root {
+  margin: 0;
+  background: #121317;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* 输入类控件保持文本交互(可选中/光标) */
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+select,
+input[type="range"],
+input[type="checkbox"],
+input[type="color"] {
+  cursor: pointer;
+}
+
+/* 图片/链接不可网页式拖拽 */
+img,
+a,
+span,
+div {
+  -webkit-user-drag: none;
+}
+
+/* 输入框内的选中样式保留可见 */
+input::selection,
+textarea::selection {
+  background: #3d5a99;
+  color: #fff;
+}
+
+body { background: #121317; }
 .btn {
   display: inline-flex;
   align-items: center;
@@ -32,3 +76,4 @@ body { margin: 0; background: #121317; }
   padding: 5px 8px;
   font-size: 12px;
 }
+.ti::placeholder { color: #556; }
