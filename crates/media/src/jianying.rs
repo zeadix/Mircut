@@ -103,28 +103,22 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
     }
 
     // 轨道:视频轨正序、音频轨追加
-    let mut v_count = 0;
-    let mut a_count = 0;
+    let mut f_count = 0;
     let mut clip_idx = 0;
     for t in &draft.tracks {
-        let kind = match t.kind.as_str() {
-            "video" => TrackKind::Video,
-            "audio" => TrackKind::Audio,
-            _ => continue, // text 等类型 M4 跳过
+        // 剪映轨 -> File 轨容器(视频段 Video lane / 音频段 Audio lane)
+        let (id, name) = {
+            f_count += 1;
+            (format!("jf{f_count}"), format!("文件轨 {f_count}"))
         };
-        let (id, name) = match kind {
-            TrackKind::Video => {
-                v_count += 1;
-                (format!("jv{v_count}"), format!("JV{v_count}"))
-            }
-            TrackKind::Audio => {
-                a_count += 1;
-                (format!("ja{a_count}"), format!("JA{a_count}"))
-            }
+        let lane = match t.kind.as_str() {
+            "video" => veditor_core::Lane::Video,
+            "audio" => veditor_core::Lane::Audio,
+            _ => continue, // text 等类型跳过
         };
         doc.tracks.push(Track {
             id: id.clone(),
-            kind,
+            kind: TrackKind::File,
             name,
             locked: false,
             hidden: false,
@@ -144,7 +138,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 id: asset_id.clone(),
                 path: path.clone(),
                 duration_secs: *dur_us as f64 / 1_000_000.0,
-                has_video: kind == TrackKind::Video,
+                has_video: lane == veditor_core::Lane::Video,
                 has_audio: true,
                 width: None,
                 height: None,
@@ -165,6 +159,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: Some(lane),
                 fx: Default::default(),
             });
         }
@@ -238,9 +233,13 @@ mod tests {
     #[test]
     fn imports_tracks_clips_and_skips_missing() {
         let doc = import_jianying_draft(&write_fixture_draft()).unwrap();
-        assert_eq!(doc.tracks.len(), 2); // text 跳过
+        assert_eq!(doc.tracks.len(), 2); // video+audio 各成一条 File 轨;text 跳过
         assert_eq!(doc.clips.len(), 2); // missing 素材跳过
-        let v = doc.clips.iter().find(|c| c.track_id == "jv1").unwrap();
+        let v = doc
+            .clips
+            .iter()
+            .find(|c| c.lane == Some(veditor_core::Lane::Video))
+            .unwrap();
         // 2s @ 30fps, 1 tick = 1/30s 的 1/1000000 -> 2s = 60_000_000 ticks
         assert_eq!(v.duration, 60_000_000);
         assert!((v.asset.source_in - 1.0).abs() < 1e-6);
@@ -250,6 +249,13 @@ mod tests {
             .find(|a| a.id == v.asset.asset_id)
             .unwrap();
         assert_eq!(asset.path, "/home/u/vids/a.mp4");
+        // 音频段落 Audio lane
+        let a = doc
+            .clips
+            .iter()
+            .find(|c| c.lane == Some(veditor_core::Lane::Audio))
+            .unwrap();
+        assert_eq!(a.track_id, "jf2");
     }
 
     #[test]

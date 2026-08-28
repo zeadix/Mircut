@@ -1,11 +1,14 @@
 export interface Track {
   id: string;
-  kind: "Video" | "Audio";
+  kind: "Video" | "Audio" | "File";
   name: string;
   locked: boolean;
   hidden: boolean;
   muted: boolean;
 }
+
+/// 文件轨道分块区:Video=上半(绿) Audio=下半(蓝)。
+export type Lane = "Video" | "Audio";
 
 export interface AssetRef {
   asset_id: string;
@@ -73,6 +76,7 @@ export interface Clip {
   speed: number;
   volume: number;
   muted: boolean;
+  lane?: Lane | null;
   fx?: ClipFx;
 }
 

@@ -9,8 +9,8 @@ use tauri::State;
 use veditor_ai::Transcriber;
 use veditor_core::{
     AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, DetachAudio, Document,
-    FreezeFrame, Interpolation, RemoveClip, RemoveTrack, RippleDelete, SetClipAudio, SetFx,
-    SetSpeed, SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind,
+    FreezeFrame, Interpolation, RemoveClip, RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio,
+    SetFx, SetSpeed, SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind,
     Transition, TransitionKind,
 };
 use veditor_media::MediaInfo;
@@ -54,11 +54,36 @@ impl Inner {
     /// 磁吸推挤:对指定轨道消重叠(moved 保位),生成追加 MoveClip 命令。
     /// 返回是否有变更。
     fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {
+        // File 轨按 lane 分别调度(视频块/音频块各自时序独立)
+        let moved_lane = moved_id
+            .and_then(|id| self.doc.clip(id))
+            .and_then(|c| c.lane);
+        let mut changed = false;
+        let lanes: Vec<Option<veditor_core::Lane>> = match moved_lane {
+            Some(_) => vec![moved_lane],
+            None => vec![
+                None,
+                Some(veditor_core::Lane::Video),
+                Some(veditor_core::Lane::Audio),
+            ],
+        };
+        for lane in lanes {
+            changed |= self.schedule_lane(track_id, lane, moved_id);
+        }
+        changed
+    }
+
+    fn schedule_lane(
+        &mut self,
+        track_id: &str,
+        lane: Option<veditor_core::Lane>,
+        moved_id: Option<&str>,
+    ) -> bool {
         let on_track: Vec<&Clip> = self
             .doc
             .clips
             .iter()
-            .filter(|c| c.track_id == track_id)
+            .filter(|c| c.track_id == track_id && c.lane == lane)
             .collect();
         if on_track.is_empty() {
             return false;
@@ -180,28 +205,19 @@ impl Inner {
         if self.renderer.is_none() {
             let restored = self.try_restore();
             if restored {
-                // 历史脏数据整理:消除旧版本产生的同轨重叠(不进撤销栈)
+                // 旧文档迁移到文件轨道模型 + 整理历史重叠(不进撤销栈)
+                self.doc.migrate_to_file_tracks();
                 self.schedule_all_tracks_silent();
             }
-            let mut doc = Document::default();
-            doc.tracks.push(Track {
-                id: "v1".into(),
-                kind: TrackKind::Video,
-                name: "V1".into(),
-                locked: false,
-                hidden: false,
-                muted: false,
-            });
-            doc.tracks.push(Track {
-                id: "a1".into(),
-                kind: TrackKind::Audio,
-                name: "A1".into(),
-                locked: false,
-                hidden: false,
-                muted: false,
-            });
             if self.doc.tracks.is_empty() {
-                self.doc = doc.clone();
+                self.doc.tracks.push(Track {
+                    id: "f1".into(),
+                    kind: TrackKind::File,
+                    name: "文件轨 1".into(),
+                    locked: false,
+                    hidden: false,
+                    muted: false,
+                });
             }
             let r = ProxyRenderer::new(
                 self.doc.clone(),
@@ -602,6 +618,7 @@ fn add_clip(
         speed: 1.0,
         volume: 1.0,
         muted: false,
+        lane: None,
         fx: Default::default(),
     };
     inner.exec(Box::new(AddClip { clip: clip.clone() }));
@@ -660,91 +677,47 @@ fn drop_asset(
         * (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64)
         .round() as i64;
 
-    // 决定目标轨道
-    let target_track = if !asset.has_video && asset.has_audio {
-        // 纯音频素材:必须落音频轨;给定的是视频轨或 null 时找/建音频轨
+    // ---- 文件轨道语义 ----
+    // 目标轨道解析:
+    //  - "__newlayer__" -> 新建 File 轨(素材拖入时间轴缝隙)
+    //  - 指定 File 轨(未锁定) -> 该轨
+    //  - 其他/None -> 最上层可用 File 轨(无则新建)
+    let target_track = if track_id.as_deref() == Some("__newlayer__") {
+        let n = inner.doc.tracks.len() + 1;
+        let track = Track {
+            id: format!("f{n}"),
+            kind: TrackKind::File,
+            name: format!("文件轨 {n}"),
+            locked: false,
+            hidden: false,
+            muted: false,
+        };
+        let id = track.id.clone();
+        inner.exec(Box::new(AddTrack { track }));
+        id
+    } else {
         match track_id.as_deref().and_then(|tid| {
-            inner
-                .doc
-                .tracks
-                .iter()
-                .find(|t| t.id == tid && t.kind == TrackKind::Audio)
-                .map(|t| t.id.clone())
+            inner.doc.track(tid).and_then(|t| {
+                if t.kind == TrackKind::File && !t.locked {
+                    Some(t.id.clone())
+                } else {
+                    None
+                }
+            })
         }) {
             Some(tid) => tid,
             None => inner
                 .doc
                 .tracks
                 .iter()
-                .find(|t| t.kind == TrackKind::Audio && !t.locked)
-                .map(|t| t.id.clone())
-                .unwrap_or_else(|| {
-                    // 自动建音频轨
-                    let n = inner.doc.tracks.len() + 1;
-                    let track = Track {
-                        id: format!("a{n}"),
-                        kind: TrackKind::Audio,
-                        name: format!("A{n}"),
-                        locked: false,
-                        hidden: false,
-                        muted: false,
-                    };
-                    let id = track.id.clone();
-                    inner.exec(Box::new(AddTrack { track }));
-                    id
-                }),
-        }
-    } else if track_id.as_deref() == Some("__newlayer__") {
-        // 显式新建上层轨道(拖到轨道缝隙):按素材类型建视频轨(覆盖叠加)或音频轨
-        let want_audio = !asset.has_video && asset.has_audio;
-        let n = inner.doc.tracks.len() + 1;
-        let track = if want_audio {
-            Track {
-                id: format!("a{n}"),
-                kind: TrackKind::Audio,
-                name: format!("A{n}"),
-                locked: false,
-                hidden: false,
-                muted: false,
-            }
-        } else {
-            Track {
-                id: format!("v{n}"),
-                kind: TrackKind::Video,
-                name: format!("V{n}"),
-                locked: false,
-                hidden: false,
-                muted: false,
-            }
-        };
-        let id = track.id.clone();
-        inner.exec(Box::new(AddTrack { track }));
-        id
-    } else {
-        // 视频素材:必须落视频轨;拖到音频轨(或未指定)时改道最上层可用视频轨
-        let requested_video = track_id.as_deref().and_then(|tid| {
-            inner.doc.track(tid).and_then(|t| {
-                if t.kind == TrackKind::Video && !t.locked {
-                    Some(t.id.clone())
-                } else {
-                    None
-                }
-            })
-        });
-        match requested_video {
-            Some(tid) => tid,
-            None => inner
-                .doc
-                .tracks
-                .iter()
-                .rfind(|t| t.kind == TrackKind::Video && !t.locked)
+                .rfind(|t| t.kind == TrackKind::File && !t.locked)
                 .map(|t| t.id.clone())
                 .unwrap_or_else(|| {
                     let n = inner.doc.tracks.len() + 1;
                     let track = Track {
-                        id: format!("v{n}"),
-                        kind: TrackKind::Video,
-                        name: format!("V{n}"),
+                        id: format!("f{n}"),
+                        kind: TrackKind::File,
+                        name: format!("文件轨 {n}"),
                         locked: false,
                         hidden: false,
                         muted: false,
@@ -756,8 +729,10 @@ fn drop_asset(
         }
     };
 
-    let clip = Clip {
-        id: format!("c{}", inner.doc.clips.len() + 1),
+    // 完整视频(has_video)自动拆双块:Video lane(绿)+ Audio lane(蓝,含音轨时);
+    // 纯音频只落 Audio lane;纯视频只落 Video lane。
+    let mk = |lane: veditor_core::Lane, n: usize| Clip {
+        id: format!("c{}", inner.doc.clips.len() + n),
         track_id: target_track.clone(),
         start: start.max(0),
         duration,
@@ -769,29 +744,112 @@ fn drop_asset(
         speed: 1.0,
         volume: 1.0,
         muted: false,
+        lane: Some(lane),
         fx: Default::default(),
     };
-    // 插入语义(剪映式):新片段落点若与现有片段重叠,将其后(含被叠者)
-    // 的片段统一右移让位,保持时间顺序;不重叠则直接放置。
-    let overlapped: Vec<(String, i64)> = inner
-        .doc
-        .clips
-        .iter()
-        .filter(|c| {
-            c.track_id == target_track && c.start < start + duration && start < c.start + c.duration
-        })
-        .map(|c| (c.id.clone(), c.start))
-        .collect();
-    for (cid, s) in &overlapped {
-        inner.exec(Box::new(veditor_core::MoveClip::new(
-            cid.clone(),
-            s + duration,
-            target_track.clone(),
-        )));
+    let mut clips_to_add: Vec<Clip> = Vec::new();
+    if asset.has_video {
+        clips_to_add.push(mk(veditor_core::Lane::Video, 1));
     }
-    inner.exec(Box::new(AddClip { clip: clip.clone() }));
-    inner.schedule_track(&target_track, Some(&clip.id));
-    Ok(clip.id)
+    if asset.has_audio {
+        clips_to_add.push(mk(veditor_core::Lane::Audio, 2));
+    }
+    if clips_to_add.is_empty() {
+        return Err("素材既无视频也无音频".into());
+    }
+
+    // 插入语义:同 lane 内落点重叠的已有片段右移让位(保持顺序)
+    let total = clips_to_add[0].duration;
+    for lane_clip in &clips_to_add {
+        let lane_val = lane_clip.lane.unwrap();
+        let overlapped: Vec<(String, i64)> = inner
+            .doc
+            .clips
+            .iter()
+            .filter(|c| {
+                c.track_id == target_track
+                    && c.lane == Some(lane_val)
+                    && c.start < lane_clip.start + lane_clip.duration
+                    && lane_clip.start < c.start + c.duration
+            })
+            .map(|c| (c.id.clone(), c.start))
+            .collect();
+        for (cid, s) in &overlapped {
+            inner.exec(Box::new(veditor_core::MoveClip::new(
+                cid.clone(),
+                s + lane_clip.duration,
+                target_track.clone(),
+            )));
+        }
+    }
+    let first_id = clips_to_add[0].id.clone();
+    for c in clips_to_add {
+        inner.exec(Box::new(AddClip { clip: c }));
+    }
+    // 调度消重叠(以视频 lane 为准)
+    let _ = total;
+    inner.schedule_track(&target_track, Some(&first_id));
+    Ok(first_id)
+}
+
+/// 手动新建空文件轨道。
+#[tauri::command]
+fn create_file_track(state: State<'_, AppState>) -> Result<Track, String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.ensure();
+    let n = inner.doc.tracks.len() + 1;
+    let track = Track {
+        id: format!("f{n}"),
+        kind: TrackKind::File,
+        name: format!("文件轨 {n}"),
+        locked: false,
+        hidden: false,
+        muted: false,
+    };
+    inner.exec(Box::new(AddTrack {
+        track: track.clone(),
+    }));
+    Ok(track)
+}
+
+/// 轨道排序(拖拽手柄):from_idx -> to_idx。
+#[tauri::command]
+fn reorder_track(from_idx: usize, to_idx: usize, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(ReorderTrack { from_idx, to_idx }));
+    true
+}
+
+/// 双击片段弹窗:一步设置时间轴起止(秒)+ 素材入点(秒)。
+#[tauri::command]
+fn set_clip_range(
+    clip_id: String,
+    timeline_start_secs: f64,
+    duration_secs: f64,
+    source_in_secs: f64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return Err("片段不存在".into());
+    };
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    if duration_secs <= 0.0 {
+        return Err("时长必须大于 0".into());
+    }
+    let new_start = (timeline_start_secs * tps as f64).round() as i64;
+    let new_duration = (duration_secs * tps as f64).round() as i64;
+    let delta = source_in_secs - clip.asset.source_in;
+    let track = clip.track_id.clone();
+    inner.exec(Box::new(veditor_core::SetClipRange::new(
+        clip_id.clone(),
+        new_start.max(0),
+        new_duration.max(1),
+        delta,
+    )));
+    inner.schedule_track(&track, Some(&clip_id));
+    Ok(())
 }
 
 /// 修剪片段头/尾(边缘拖拽)。
@@ -951,14 +1009,13 @@ fn set_clip_audio(
 #[tauri::command]
 fn detach_audio(clip_id: String, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    let audio_track = inner
+    // 文件轨道模型:分离音频 = 同一条 File 轨的 Audio lane(视频块静音)
+    let track = inner
         .doc
-        .tracks
-        .iter()
-        .find(|t| t.kind == TrackKind::Audio)
-        .map(|t| t.id.clone())
-        .unwrap_or_else(|| "a1".into());
-    inner.exec(Box::new(DetachAudio::new(clip_id, audio_track)));
+        .clip(&clip_id)
+        .map(|c| c.track_id.clone())
+        .unwrap_or_else(|| "f1".into());
+    inner.exec(Box::new(DetachAudio::new(clip_id, track)));
     true
 }
 
@@ -1145,6 +1202,7 @@ fn remove_silence(path: String, state: State<'_, AppState>) -> Result<usize, Str
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             fx: Default::default(),
         });
         cursor += end - start;
@@ -1695,6 +1753,7 @@ fn main() {
                     speed: 1.0,
                     volume: 1.0,
                     muted: false,
+                    lane: None,
                     fx: Default::default(),
                 });
                 let snapshot = inner.doc.clone();
@@ -1828,6 +1887,9 @@ fn main() {
             move_clip,
             trim_clip,
             drop_asset,
+            create_file_track,
+            reorder_track,
+            set_clip_range,
             add_track,
             remove_track,
             set_track_flags,
@@ -1941,6 +2003,7 @@ mod tests {
                     speed: 1.0,
                     volume: 1.0,
                     muted: false,
+                    lane: None,
                     fx: Default::default(),
                 });
             }
@@ -1985,6 +2048,7 @@ mod tests {
                     speed: 1.0,
                     volume: 1.0,
                     muted: false,
+                    lane: None,
                     fx: Default::default(),
                 });
             }
@@ -2041,6 +2105,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: None,
                 fx: Default::default(),
             });
             // 头修 1s(30 ticks):start=30, source_in=1.0
@@ -2186,6 +2251,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: None,
                 fx: Default::default(),
             });
             // 模拟 drop_asset:新片段 B(60 ticks)落到 0 —— 复刻插入逻辑
@@ -2223,6 +2289,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: None,
                 fx: Default::default(),
             });
             // B 在前 [0,60),A 顺延 [60,120)
@@ -2312,6 +2379,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: None,
                 fx: Default::default(),
             }
         };
@@ -2404,6 +2472,7 @@ mod tests {
                 speed: 1.0,
                 volume: 1.0,
                 muted: false,
+                lane: None,
                 fx: Default::default(),
             };
             inner.exec(Box::new(AddClip { clip }));

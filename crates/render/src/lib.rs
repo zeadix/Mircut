@@ -59,19 +59,26 @@ impl ProxyRenderer {
             .doc
             .tracks
             .iter()
-            .filter(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+            .filter(|tr| (tr.kind == TrackKind::Video || tr.kind == TrackKind::File) && !tr.hidden)
             .map(|tr| tr.id.as_str())
             .collect();
         self.doc
             .clips
             .iter()
-            .filter(|c| visible.contains(&c.track_id.as_str()) && c.start <= t && t < c.end())
-            .max_by_key(|c| {
+            .filter(|c| {
+                visible.contains(&c.track_id.as_str())
+                    && c.start <= t
+                    && t < c.end()
+                    // File 轨只取视频块(上区);纯音频块/旧音频轨不参与画面
+                    && c.lane != Some(veditor_core::Lane::Audio)
+            })
+            // 上层轨道(tracks 索引小)优先 -> 遮挡下层
+            .min_by_key(|c| {
                 self.doc
                     .tracks
                     .iter()
                     .position(|tr| tr.id == c.track_id)
-                    .unwrap_or(0)
+                    .unwrap_or(usize::MAX)
             })
     }
 }
@@ -203,19 +210,26 @@ impl RealtimeRenderer {
             .doc
             .tracks
             .iter()
-            .filter(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+            .filter(|tr| (tr.kind == TrackKind::Video || tr.kind == TrackKind::File) && !tr.hidden)
             .map(|tr| tr.id.as_str())
             .collect();
         self.doc
             .clips
             .iter()
-            .filter(|c| visible.contains(&c.track_id.as_str()) && c.start <= t && t < c.end())
-            .max_by_key(|c| {
+            .filter(|c| {
+                visible.contains(&c.track_id.as_str())
+                    && c.start <= t
+                    && t < c.end()
+                    // File 轨只取视频块(上区);纯音频块/旧音频轨不参与画面
+                    && c.lane != Some(veditor_core::Lane::Audio)
+            })
+            // 上层轨道(tracks 索引小)优先 -> 遮挡下层
+            .min_by_key(|c| {
                 self.doc
                     .tracks
                     .iter()
                     .position(|tr| tr.id == c.track_id)
-                    .unwrap_or(0)
+                    .unwrap_or(usize::MAX)
             })
     }
 
@@ -426,6 +440,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
         });

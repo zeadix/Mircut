@@ -342,6 +342,29 @@ export default function App() {
     await refresh();
   }
 
+  async function onCreateFileTrack() {
+    try {
+      await api.createFileTrack();
+    } catch (e) {
+      setStatus(`创建失败: ${e}`);
+    }
+    await refresh();
+  }
+
+  async function onReorderTrack(fromIdx: number, toIdx: number) {
+    await api.reorderTrack(fromIdx, toIdx);
+    await refresh();
+  }
+
+  async function onClipRangeSet(clipId: string, startSecs: number, durSecs: number, srcInSecs: number) {
+    try {
+      await api.setClipRange(clipId, startSecs, durSecs, srcInSecs);
+    } catch (e) {
+      setStatus(`设置失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   async function onDropAsset(assetId: string, trackId: string | null, start: number) {
     try {
       await api.dropAsset(assetId, trackId, start);
@@ -487,8 +510,7 @@ export default function App() {
         <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
         <button className="btn" onClick={onRemove} disabled={!selected} title="删除 (Del)"><Trash size={16} /></button>
         <button className="btn" onClick={onRippleDelete} disabled={!selected} title="波纹删除"><Waves size={16} /></button>
-        <button className="btn" onClick={() => onAddTrack("video")} title="添加视频轨"><VideoCamera size={16} /></button>
-        <button className="btn" onClick={() => onAddTrack("audio")} title="添加音频轨"><SpeakerHigh size={16} /></button>
+        <button className="btn" onClick={onCreateFileTrack} title="创建文件轨道"><Plus size={14} /> 文件轨道</button>
         <button className="btn" onClick={onSaveProject} title="保存项目">保存</button>
         <button className="btn" onClick={onOpenProject} title="打开项目">打开</button>
         <button className="btn" onClick={onImportJianying} title="导入剪映草稿">剪映导入</button>
@@ -607,6 +629,8 @@ export default function App() {
               alignEdges={alignEdges}
               onDropAsset={onDropAsset}
               dragKind={dragKind}
+              onReorderTrack={onReorderTrack}
+              onClipRangeSet={onClipRangeSet}
             />
           </div>
         </main>

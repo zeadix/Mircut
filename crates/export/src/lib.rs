@@ -128,15 +128,16 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let video_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Video && !t.hidden)
+        .filter(|t| (t.kind == TrackKind::Video || t.kind == TrackKind::File) && !t.hidden)
         .map(|t| t.id.clone())
         .collect();
-    let video_track = video_tracks.first().cloned(); // 主轨
-                                                     // 音频轨:所有轨
+    // 合成底 = 视频层中"最下"(tracks 数组最末,与 UI 自上而下排列一致)
+    let video_track = video_tracks.last().cloned(); // 底层轨
+                                                    // 音频轨:所有轨
     let audio_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Audio)
+        .filter(|t| t.kind == TrackKind::Audio || t.kind == TrackKind::File)
         .map(|t| t.id.clone())
         .collect();
 
@@ -148,7 +149,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     }
     let mut uses: Vec<InputUse> = Vec::new();
     for vt in &video_tracks {
-        for c in doc.clips_on_track(vt) {
+        for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
             if let Some(a) = doc.asset(&c.asset.asset_id) {
                 if !a.path.is_empty() {
                     uses.push(InputUse {
@@ -160,9 +161,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         }
     }
     for at in &audio_tracks {
-        for c in doc.clips_on_track(at) {
+        for c in doc.clips_on_lane(at, veditor_core::Lane::Audio) {
             if let Some(a) = doc.asset(&c.asset.asset_id) {
-                if !a.path.is_empty() {
+                if a.has_audio && !a.path.is_empty() {
                     uses.push(InputUse {
                         path: a.path.clone(),
                         clip_id: c.id.clone(),
@@ -181,7 +182,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut filters: Vec<String> = Vec::new();
 
     if let Some(ref vt) = video_track {
-        let clips = doc.clips_on_track(vt);
+        let clips = doc.clips_on_lane(vt, veditor_core::Lane::Video);
         if !clips.is_empty() {
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
@@ -344,8 +345,12 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut vout = "[vcat]".to_string();
     let mut ov_n = 0usize;
     let fps_tb = doc.timebase.num as f64 / doc.timebase.den as f64;
-    for vt in video_tracks.iter().skip(1) {
-        for c in doc.clips_on_track(vt) {
+    // 上层覆盖:除底层外自下而上逐层 overlay(越靠上越后叠 -> 遮挡下层)
+    let mut upper_layers: Vec<&String> = video_tracks.iter().collect();
+    upper_layers.pop(); // 移除底层
+    upper_layers.reverse(); // 自下而上
+    for vt in upper_layers {
+        for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
             let input_idx = input_of(&c.id);
             let st = c.start as f64 / fps_tb;
             let en = (c.start + c.duration) as f64 / fps_tb;
@@ -397,7 +402,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     // 音频:各轨片段 trim 后 concat,再 amix
     let mut audio_labels: Vec<String> = Vec::new();
     for (ti, at) in audio_tracks.iter().enumerate() {
-        let clips = doc.clips_on_track(at);
+        let clips = doc.clips_on_lane(at, veditor_core::Lane::Audio);
         if clips.is_empty() {
             continue;
         }
@@ -445,7 +450,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     // 字幕烧录 + 文字叠层:在最终视频(vout,可能含画中画)之后逐条 drawtext
     let has_video_out = video_track
         .as_ref()
-        .is_some_and(|vt| !doc.clips_on_track(vt).is_empty());
+        .is_some_and(|vt| !doc.clips_on_lane(vt, veditor_core::Lane::Video).is_empty());
     let has_subs = has_video_out && !doc.subtitles.cues.is_empty();
     let has_texts = has_video_out && !doc.text_overlays.is_empty();
     if has_subs || has_texts {
@@ -508,7 +513,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     args.retain(|a| a != "__USE_VSUB__");
 
     if let Some(vt) = video_track.as_ref() {
-        if !doc.clips_on_track(vt).is_empty() {
+        if !doc.clips_on_lane(vt, veditor_core::Lane::Video).is_empty() {
             args.push("-map".into());
             args.push(if use_vsub {
                 "[vsub]".into()
@@ -689,6 +694,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
         });
@@ -704,6 +710,7 @@ mod tests {
             speed: 1.0,
             volume: 0.5,
             muted: false,
+            lane: None,
             track_id: "t2".into(),
             fx: Default::default(),
         });
@@ -769,6 +776,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
         });
@@ -976,6 +984,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
         });

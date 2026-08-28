@@ -52,13 +52,36 @@ export async function trimClip(
   await invoke("trim_clip", { clipId, edge, newStart, newDuration, ripple });
 }
 
-/// 拖放素材到时间轴(trackId=null 表示新建上层视频轨)。
+/// 拖放素材到时间轴(trackId="__newlayer__" 新建文件轨道)。
+/// 完整视频自动拆双块(绿视频+蓝音频)。
 export async function dropAsset(
   assetId: string,
   trackId: string | null,
   start: number
 ): Promise<void> {
   await invoke("drop_asset", { assetId, trackId, start });
+}
+
+export async function createFileTrack(): Promise<void> {
+  await invoke("create_file_track");
+}
+
+export async function reorderTrack(fromIdx: number, toIdx: number): Promise<boolean> {
+  return invoke("reorder_track", { fromIdx, toIdx });
+}
+
+export async function setClipRange(
+  clipId: string,
+  startSecs: number,
+  durSecs: number,
+  srcInSecs: number
+): Promise<void> {
+  await invoke("set_clip_range", {
+    clipId,
+    timelineStartSecs: startSecs,
+    durationSecs: durSecs,
+    sourceInSecs: srcInSecs,
+  });
 }
 
 // ---------- M2 ----------

@@ -284,6 +284,7 @@ impl Command for DetachAudio {
             speed: src.speed,
             volume: src.volume,
             muted: src.muted,
+            lane: Some(crate::Lane::Audio),
             fx: src.fx.clone(),
         };
         doc.clips.push(audio_clip);
@@ -454,6 +455,7 @@ impl Command for FreezeFrame {
             speed,
             volume: orig.volume,
             muted: orig.muted,
+            lane: orig.lane,
             fx: orig.fx.clone(),
         };
         doc.clips.retain(|c| c.id != self.clip_id);
@@ -502,6 +504,81 @@ impl Command for FreezeFrame {
         self.left_id = None;
         self.freeze_id = None;
         self.right_id = None;
+    }
+}
+
+/// 轨道排序:把轨道 from_idx 移到 to_idx(拖拽手柄)。
+pub struct ReorderTrack {
+    pub from_idx: usize,
+    pub to_idx: usize,
+}
+
+impl Command for ReorderTrack {
+    fn label(&self) -> &str {
+        "轨道排序"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if self.from_idx >= doc.tracks.len() || self.to_idx >= doc.tracks.len() {
+            return;
+        }
+        let t = doc.tracks.remove(self.from_idx);
+        doc.tracks.insert(self.to_idx, t);
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        let mut rev = ReorderTrack {
+            from_idx: self.to_idx,
+            to_idx: self.from_idx,
+        };
+        rev.apply(doc);
+    }
+}
+
+/// 一步设置片段时间轴区间(双击弹窗精确设置):新 start/duration + 入点平移量。
+pub struct SetClipRange {
+    pub clip_id: String,
+    pub new_start: Ticks,
+    pub new_duration: Ticks,
+    pub source_in_delta: f64,
+    old: Option<(Ticks, Ticks, f64)>,
+}
+
+impl SetClipRange {
+    pub fn new(
+        clip_id: impl Into<String>,
+        new_start: Ticks,
+        new_duration: Ticks,
+        source_in_delta: f64,
+    ) -> Self {
+        Self {
+            clip_id: clip_id.into(),
+            new_start,
+            new_duration,
+            source_in_delta,
+            old: None,
+        }
+    }
+}
+
+impl Command for SetClipRange {
+    fn label(&self) -> &str {
+        "设置片段区间"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
+            self.old = Some((c.start, c.duration, c.asset.source_in));
+            c.start = self.new_start;
+            c.duration = self.new_duration;
+            c.asset.source_in += self.source_in_delta;
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some((start, duration, si)) = self.old.take() {
+            if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
+                c.start = start;
+                c.duration = duration;
+                c.asset.source_in = si;
+            }
+        }
     }
 }
 
@@ -571,6 +648,7 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             fx: Default::default(),
         }
     }

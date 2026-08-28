@@ -42,6 +42,7 @@ fn bench_doc(n_clips: usize) -> Document {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             fx: Default::default(),
         });
     }
@@ -69,6 +70,7 @@ fn bench_command(c: &mut Criterion) {
                             speed: 1.0,
                             volume: 1.0,
                             muted: false,
+                            lane: None,
                             fx: Default::default(),
                         },
                     }),
@@ -108,6 +110,7 @@ fn bench_undo(c: &mut Criterion) {
                             speed: 1.0,
                             volume: 1.0,
                             muted: false,
+                            lane: None,
                             fx: Default::default(),
                         },
                     }),

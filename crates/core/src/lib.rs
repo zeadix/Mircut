@@ -15,8 +15,8 @@ pub use fx_ext::{AudioFx, LutApply, TextOverlay};
 pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
 
 pub use commands_m2::{
-    AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, RippleDelete, SetClipAudio,
-    SetFx, SetSpeed, SetTrackFlags, SetTransition, TagAsset,
+    AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, ReorderTrack, RippleDelete,
+    SetClipAudio, SetClipRange, SetFx, SetSpeed, SetTrackFlags, SetTransition, TagAsset,
 };
 pub use fx::{
     Animatable, ChromaKey, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind,
@@ -80,6 +80,10 @@ pub struct Clip {
     pub volume: f64,
     /// 是否静音。
     pub muted: bool,
+    /// 文件轨道内的分块区(Video=上半绿块 / Audio=下半蓝块)。
+    /// 旧 Video/Audio 轨按 kind 推导,此字段仅 File 轨必填。
+    #[serde(default)]
+    pub lane: Option<Lane>,
     /// 特效属性(不透明度/缩放/旋转/位移/调色/音量动画)。
     #[serde(default)]
     pub fx: ClipFx,
@@ -97,10 +101,28 @@ impl Clip {
 }
 
 /// 轨道类型。
+/// File = 文件轨道容器(上=视频块,下=音频块,渲染时整轨作为一个图层)。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrackKind {
     Video,
     Audio,
+    File,
+}
+
+/// 文件轨道内的分块区:Video 上半(绿)/ Audio 下半(蓝)。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Lane {
+    Video,
+    Audio,
+}
+
+impl Lane {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Lane::Video => "video",
+            Lane::Audio => "audio",
+        }
+    }
 }
 
 /// 时间轴轨道。
@@ -183,6 +205,86 @@ impl Document {
             .collect();
         v.sort_by_key(|c| c.start);
         v
+    }
+
+    /// 轨道上指定 lane 的片段(File 轨分块;普通轨按 kind 推导)。
+    pub fn clips_on_lane(&self, track_id: &str, lane: Lane) -> Vec<&Clip> {
+        let track_kind = self.track(track_id).map(|t| t.kind);
+        let mut v: Vec<&Clip> = self
+            .clips
+            .iter()
+            .filter(|c| c.track_id == track_id)
+            .filter(|c| match (&c.lane, track_kind) {
+                (Some(l), _) => *l == lane,
+                (None, Some(TrackKind::Audio)) => lane == Lane::Audio,
+                _ => lane == Lane::Video,
+            })
+            .collect();
+        v.sort_by_key(|c| c.start);
+        v
+    }
+
+    /// 旧文档迁移:Video/Audio 轨两两合并为 File 轨(视频轨+其分离音频)。
+    /// 幂等:已含 File 轨或无旧轨则不动。
+    pub fn migrate_to_file_tracks(&mut self) {
+        if self.tracks.iter().any(|t| t.kind == TrackKind::File) {
+            return;
+        }
+        let old_tracks = std::mem::take(&mut self.tracks);
+        let mut new_tracks: Vec<Track> = Vec::new();
+        // 视频轨依次变 File 轨
+        for t in old_tracks.iter().filter(|t| t.kind == TrackKind::Video) {
+            new_tracks.push(Track {
+                id: t.id.clone(),
+                kind: TrackKind::File,
+                name: t.name.clone(),
+                locked: t.locked,
+                hidden: t.hidden,
+                muted: t.muted,
+            });
+        }
+        // 音频轨:并入最后一条 File 轨的 Audio lane(无 File 轨则自建一条)
+        let audio_tracks: Vec<&Track> = old_tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Audio)
+            .collect();
+        if !audio_tracks.is_empty() && new_tracks.is_empty() {
+            new_tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+        }
+        for (i, at) in audio_tracks.iter().enumerate() {
+            let target = if new_tracks.is_empty() {
+                None
+            } else {
+                new_tracks.last().map(|t| t.id.clone())
+            };
+            let target = target.unwrap_or_else(|| format!("f{}", i + 1));
+            // 该音频轨的片段改挂目标 File 轨 Audio lane
+            for c in self.clips.iter_mut() {
+                if c.track_id == at.id {
+                    c.track_id = target.clone();
+                    c.lane = Some(Lane::Audio);
+                }
+            }
+            // 若是自建轨且不存在则补
+            if !new_tracks.iter().any(|t| t.id == target) {
+                new_tracks.push(Track {
+                    id: target,
+                    kind: TrackKind::File,
+                    name: format!("文件轨 {}", new_tracks.len() + 1),
+                    locked: at.locked,
+                    hidden: at.hidden,
+                    muted: at.muted,
+                });
+            }
+        }
+        self.tracks = new_tracks;
     }
 }
 
@@ -396,6 +498,7 @@ impl Command for SplitClip {
             speed,
             volume: left.volume,
             muted: left.muted,
+            lane: left.lane,
             fx: left.fx.clone(),
         };
         doc.clips.push(right);
@@ -486,8 +589,105 @@ mod tests {
             speed: 1.0,
             volume: 1.0,
             muted: false,
+            lane: None,
             fx: Default::default(),
         }
+    }
+
+    #[test]
+    fn migrate_to_file_tracks_and_lanes() {
+        let mut doc = Document::default();
+        doc.tracks.push(Track {
+            id: "v1".into(),
+            kind: TrackKind::Video,
+            name: "V1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        doc.tracks.push(Track {
+            id: "a1".into(),
+            kind: TrackKind::Audio,
+            name: "A1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        doc.clips.push(Clip {
+            id: "c1".into(),
+            track_id: "v1".into(),
+            start: 0,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            lane: None,
+            fx: Default::default(),
+        });
+        doc.clips.push(Clip {
+            id: "c2".into(),
+            track_id: "a1".into(),
+            start: 0,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            lane: None,
+            fx: Default::default(),
+        });
+        doc.migrate_to_file_tracks();
+        // 单视频轨 -> 单 File 轨;音频并入其 Audio lane
+        assert_eq!(doc.tracks.len(), 1);
+        assert_eq!(doc.tracks[0].kind, TrackKind::File);
+        assert_eq!(
+            doc.clips.iter().find(|c| c.id == "c2").unwrap().lane,
+            Some(Lane::Audio)
+        );
+        assert_eq!(doc.clips.iter().find(|c| c.id == "c1").unwrap().lane, None);
+        // clips_on_lane 区分
+        assert_eq!(doc.clips_on_lane("v1", Lane::Video).len(), 1);
+        assert_eq!(doc.clips_on_lane("v1", Lane::Audio).len(), 1);
+        // 幂等
+        doc.migrate_to_file_tracks();
+        assert_eq!(doc.tracks.len(), 1);
+    }
+
+    #[test]
+    fn reorder_track_undo() {
+        let mut doc = Document::default();
+        for i in 0..3 {
+            doc.tracks.push(Track {
+                id: format!("t{i}"),
+                kind: TrackKind::File,
+                name: format!("t{i}"),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+        }
+        let mut stack = CommandStack::new();
+        stack.execute(
+            &mut doc,
+            Box::new(crate::ReorderTrack {
+                from_idx: 0,
+                to_idx: 2,
+            }),
+        );
+        let ids: Vec<&str> = doc.tracks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["t1", "t2", "t0"]);
+        stack.undo(&mut doc);
+        let ids: Vec<&str> = doc.tracks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["t0", "t1", "t2"]);
     }
 
     #[test]

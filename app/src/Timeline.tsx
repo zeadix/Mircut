@@ -16,10 +16,24 @@ interface Props {
   onDropAsset?: (assetId: string, trackId: string | null, startTicks: number) => void;
   /// 拖拽中的素材类型(App 在 dragstart 时置位)。
   dragKind?: "video" | "audio";
+  /// 轨道排序(手柄拖拽)。
+  onReorderTrack?: (fromIdx: number, toIdx: number) => void;
+  /// 双击片段:请求精确时间设置弹窗(通知父级选中)。
+  onClipRangeEdit?: (clipId: string) => void;
+  /// 弹窗提交:精确设置(秒)。
+  onClipRangeSet?: (clipId: string, startSecs: number, durSecs: number, srcInSecs: number) => void;
 }
 
 const MIN_TRACK_H = 36;
 const EDGE_HIT_PX = 6;
+
+/// 行几何:每条轨道一行,File 轨内部再分上(Video)/下(Audio)两个半区。
+/// 返回 [行索引, 半区偏移(0|1), 半区高];非 File 轨半区数 1。
+function trackRowGeom(kind: string, trackH: number) {
+  const halves = kind === "File" ? 2 : 1;
+  const halfH = trackH / halves;
+  return { halves, halfH };
+}
 
 /// 拖拽会话:移动 / 左缘修剪 / 右缘修剪。
 type DragSession =
@@ -49,6 +63,9 @@ export default function Timeline({
   alignEdges,
   onDropAsset,
   dragKind = "video",
+  onReorderTrack,
+  onClipRangeEdit,
+  onClipRangeSet,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -68,6 +85,12 @@ export default function Timeline({
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   /// 拖放置预览(绿色插入线/新层提示)。
   const [dropHint, setDropHint] = useState<{ x: number; trackIdx: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
+  /// 轨道排序拖拽中(来源行)。
+  const reorderFrom = useRef<number | null>(null);
+  const [reorderHint, setReorderHint] = useState<number | null>(null);
+  /// 双击片段 -> 精确时间弹窗。
+  const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
+  const [rangeDraft, setRangeDraft] = useState({ start: "", duration: "", sourceIn: "" });
 
   /// 内容总宽 = max(最末片段末尾, 播放头, 视口) + 10s 余量。
   const contentTicks = Math.max(
@@ -78,6 +101,24 @@ export default function Timeline({
   const contentW = Math.max(contentTicks * pxPerTick, 400);
 
   const tps = doc.timebase.num / doc.timebase.den;
+
+  /// 行几何:每轨一整行 trackH;File 轨内部上=Video 半区 下=Audio 半区。
+  /// clipY(clip) 返回其半区顶部 y;rowOfTrack(idx) 行顶 y。
+  function clipRowY(clip: { track_id: string; lane?: string | null }): { y: number; h: number } | null {
+    const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
+    if (ti < 0) return null;
+    const track = doc.tracks[ti];
+    const top = ti * trackH;
+    if (track.kind === "File") {
+      const half = trackH / 2;
+      const isAudio = clip.lane === "Audio";
+      return { y: top + (isAudio ? half : 0) + 2, h: half - 4 };
+    }
+    return { y: top + 5, h: trackH - 10 };
+  }
+  function trackTopY(ti: number): number {
+    return ti * trackH;
+  }
 
   // 播放时自动跟随:播放头超出视口右侧 85% 则滚动跟随
   useEffect(() => {
@@ -107,16 +148,31 @@ export default function Timeline({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // 轨道背景(整条内容宽)
+    // 轨道背景:File 轨上区微绿、下区微蓝;其余旧样式
     doc.tracks.forEach((track, i) => {
       const y = i * trackH;
-      ctx.fillStyle = i % 2 === 0 ? "#1e1f24" : "#23242a";
-      ctx.fillRect(0, y, w, trackH);
-      ctx.strokeStyle = "#2e3038";
-      ctx.beginPath();
-      ctx.moveTo(0, y + trackH);
-      ctx.lineTo(w, y + trackH);
-      ctx.stroke();
+      if (track.kind === "File") {
+        const half = trackH / 2;
+        ctx.fillStyle = "rgba(90, 140, 90, 0.10)";
+        ctx.fillRect(0, y, w, half);
+        ctx.fillStyle = "rgba(70, 110, 170, 0.10)";
+        ctx.fillRect(0, y + half, w, half);
+        ctx.strokeStyle = "#2e3038";
+        ctx.beginPath();
+        ctx.moveTo(0, y + half);
+        ctx.lineTo(w, y + half); // 半区分隔线
+        ctx.moveTo(0, y + trackH);
+        ctx.lineTo(w, y + trackH);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = i % 2 === 0 ? "#1e1f24" : "#23242a";
+        ctx.fillRect(0, y, w, trackH);
+        ctx.strokeStyle = "#2e3038";
+        ctx.beginPath();
+        ctx.moveTo(0, y + trackH);
+        ctx.lineTo(w, y + trackH);
+        ctx.stroke();
+      }
     });
 
     // 时间刻度(每秒;视口范围内的秒段)
@@ -134,24 +190,27 @@ export default function Timeline({
       if (s % 2 === 0) ctx.fillText(`${s}s`, x + 2, doc.tracks.length * trackH + 18);
     }
 
-    // 片段
+    // 片段:File 轨按 lane 放入对应半区(绿=视频块/蓝=音频块)
     doc.clips.forEach((clip) => {
-      const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
-      if (ti < 0) return;
-      const y = ti * trackH + 5;
+      const row = clipRowY(clip);
+      if (!row) return;
+      const { y, h } = row;
       const x = clip.start * pxPerTick;
       const cw = clip.duration * pxPerTick;
+      const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
       const track = doc.tracks[ti];
-      const grad = ctx.createLinearGradient(0, y, 0, y + trackH - 10);
-      if (track.kind === "Video") {
-        grad.addColorStop(0, "#3d5a99");
-        grad.addColorStop(1, "#2c4070");
+      const isAudioBlock =
+        clip.lane === "Audio" || track.kind === "Audio";
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      if (isAudioBlock) {
+        grad.addColorStop(0, "#2f6fb8");
+        grad.addColorStop(1, "#1f4e86"); // 蓝色音频块
       } else {
-        grad.addColorStop(0, "#2f7a5f");
-        grad.addColorStop(1, "#215943");
+        grad.addColorStop(0, "#3f9d5a");
+        grad.addColorStop(1, "#2c7040"); // 绿色视频块
       }
       ctx.fillStyle = grad;
-      ctx.fillRect(x, y, Math.max(cw, 2), trackH - 10);
+      ctx.fillRect(x, y, Math.max(cw, 2), h);
       // 音频轨/含音轨视频:绘制迷你波形(峰值竖线)
       const wf = waveforms?.[clip.asset.asset_id];
       if (wf && cw > 8) {
@@ -166,8 +225,8 @@ export default function Timeline({
           const peakIdx = Math.floor(srcSecs * 10); // 后端 10 峰值/s
           const peak = wf[peakIdx] ?? 0;
           if (peak > 0.01) {
-            const ph = peak * (trackH - 16) * 0.9;
-            const cy = y + (trackH - 10) / 2;
+            const ph = peak * (h - 4) * 0.9;
+            const cy = y + h / 2;
             ctx.moveTo(px, cy - ph / 2);
             ctx.lineTo(px, cy + ph / 2);
           }
@@ -183,19 +242,19 @@ export default function Timeline({
       if (clip.id === selectedClipId) {
         ctx.strokeStyle = "#ffd75e";
         ctx.lineWidth = 2;
-        ctx.strokeRect(x, y, Math.max(cw, 2), trackH - 10);
+        ctx.strokeRect(x, y, Math.max(cw, 2), h);
         ctx.fillStyle = hoverEdge ? "#ffd75e" : "rgba(255,215,94,0.45)";
-        ctx.fillRect(x, y, 3, trackH - 10);
-        ctx.fillRect(x + Math.max(cw, 2) - 3, y, 3, trackH - 10);
+        ctx.fillRect(x, y, 3, h);
+        ctx.fillRect(x + Math.max(cw, 2) - 3, y, 3, h);
         ctx.lineWidth = 1;
       }
-      // 文件名(视口内才有意义)
-      if (x + cw > scrollX && x < scrollX + viewW) {
+      // 文件名(视口内;半区高度小时省略波形冲突)
+      if (x + cw > scrollX && x < scrollX + viewW && h >= 18) {
         ctx.fillStyle = "#dfe3ea";
-        ctx.font = "11px sans-serif";
+        ctx.font = `${Math.min(11, h - 6)}px sans-serif`;
         const asset = doc.assets.find((a) => a.id === clip.asset.asset_id);
         const name = asset?.path.split("/").pop() ?? clip.id;
-        ctx.fillText(name.slice(0, 18), x + 4, y + 15, Math.max(cw - 8, 2));
+        ctx.fillText(name.slice(0, 18), x + 4, y + h - 3, Math.max(cw - 8, 2));
       }
     });
 
@@ -207,22 +266,23 @@ export default function Timeline({
       ctx.fillRect(x, doc.tracks.length * trackH + 10, Math.max(cw, 2), 6);
     });
 
-    // 拖拽虚影
+    // 拖拽虚影(半区高度)
     if (ghost) {
-      const gy = ghost.trackIdx * trackH + 5;
+      const gclip = doc.clips.find((c) => c.id === ghost.clipId);
+      const grow = gclip ? clipRowY(gclip) : null;
+      const gy = ghost.trackIdx * trackH + (grow ? grow.y - ghost.trackIdx * trackH : 5);
+      const gh = grow ? grow.h : trackH - 10;
       const gx = ghost.start * pxPerTick;
       const gw = ghost.duration * pxPerTick;
       ctx.fillStyle = "rgba(126, 168, 255, 0.35)";
-      ctx.fillRect(gx, gy, Math.max(gw, 2), trackH - 10);
+      ctx.fillRect(gx, gy, Math.max(gw, 2), gh);
       ctx.strokeStyle = "#7ea8ff";
       ctx.setLineDash([4, 3]);
-      ctx.strokeRect(gx, gy, Math.max(gw, 2), trackH - 10);
+      ctx.strokeRect(gx, gy, Math.max(gw, 2), gh);
       ctx.setLineDash([]);
-      const orig = doc.clips.find((c) => c.id === ghost.clipId);
-      if (orig) {
-        const oy = doc.tracks.findIndex((t) => t.id === orig.track_id) * trackH + 5;
+      if (gclip && grow) {
         ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(orig.start * pxPerTick, oy, Math.max(orig.duration * pxPerTick, 2), trackH - 10);
+        ctx.fillRect(gclip.start * pxPerTick, grow.y, Math.max(gclip.duration * pxPerTick, 2), grow.h);
       }
     }
 
@@ -267,11 +327,7 @@ export default function Timeline({
       if (dropHint.newLayer) {
         ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
         ctx.font = "11px sans-serif";
-        ctx.fillText(
-          dropHint.kind === "audio" ? "+ 新建音频轨道" : "+ 新建上层视频轨道(覆盖叠加)",
-          scrollX + 8,
-          gy + 16
-        );
+        ctx.fillText("+ 新建文件轨道", scrollX + 8, gy + 16);
       }
     }
 
@@ -299,11 +355,30 @@ export default function Timeline({
     return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 6, alignEdges ?? []);
   }
 
-  /// 命中检测:片段 + 边缘类型(左右 6px)。
-  function hitTest(t: number, clientX: number): { clipId: string; edge: "left" | "right" | "body" } | null {
-    const rect = canvasRef.current!.getBoundingClientRect();
+  /// 命中检测:先按 Y 半区筛 lane,再按 X 定片段与边缘(左右 6px)。
+  function hitTest(t: number, clientX: number, clientY?: number): { clipId: string; edge: "left" | "right" | "body" } | null {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
     const px = clientX - rect.left;
+    // Y -> (行, 半区 lane 或 null=整轨)
+    let laneFilter: string | null | undefined; // undefined=不过滤
+    if (clientY !== undefined) {
+      const yIn = clientY - rect.top;
+      const row = Math.floor(yIn / trackH);
+      const track = doc.tracks[row];
+      if (!track) return null;
+      if (track.kind === "File") {
+        const half = trackH / 2;
+        laneFilter = yIn - row * trackH < half ? "Video" : "Audio";
+      } else {
+        laneFilter = null; // 旧轨按 lane=None 匹配
+      }
+    }
     for (const c of doc.clips) {
+      if (laneFilter !== undefined) {
+        const cLane = c.lane ?? null;
+        if (cLane !== laneFilter) continue;
+      }
       const x0 = c.start * pxPerTick;
       const x1 = (c.start + c.duration) * pxPerTick;
       if (t >= c.start && t < c.start + c.duration) {
@@ -317,7 +392,7 @@ export default function Timeline({
 
   function onPointerDown(e: React.MouseEvent) {
     const t = ticksFromClientX(e.clientX);
-    const hit = hitTest(t, e.clientX);
+    const hit = hitTest(t, e.clientX, e.clientY);
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
@@ -340,7 +415,7 @@ export default function Timeline({
     const d = dragRef.current;
     if (!d) {
       const t = ticksFromClientX(e.clientX);
-      const hit = hitTest(t, e.clientX);
+      const hit = hitTest(t, e.clientX, e.clientY);
       setHoverEdge(hit?.edge === "left" || hit?.edge === "right" ? hit.edge : null);
       return;
     }
@@ -348,6 +423,7 @@ export default function Timeline({
     if (!clip) return;
     const t = snapTicks(ticksFromClientX(e.clientX), d.clipId);
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
+    const row = clipRowY(clip);
     if (d.kind === "move") {
       setGhost({ clipId: d.clipId, start: Math.max(0, t), duration: clip.duration, trackIdx: ti });
       setTrimHint(null);
@@ -358,8 +434,8 @@ export default function Timeline({
       setTrimHint({
         clipId: d.clipId, edge: "left", newStart,
         newDuration: clip.start + clip.duration - newStart,
-        x: (rect?.left ?? 0) >= 0 ? e.clientX - (rect?.left ?? 0) : 0,
-        y: ti * trackH,
+        x: e.clientX - (rect?.left ?? 0),
+        y: row?.y ?? 0,
       });
       setGhost(null);
     } else {
@@ -369,7 +445,7 @@ export default function Timeline({
         clipId: d.clipId, edge: "right", newStart: clip.start,
         newDuration: newEnd - clip.start,
         x: e.clientX - (rect?.left ?? 0),
-        y: ti * trackH,
+        y: row?.y ?? 0,
       });
       setGhost(null);
     }
@@ -411,6 +487,8 @@ export default function Timeline({
     }
     const track = doc.tracks[row];
     if (track.locked) return null;
+    // File 轨:上半落视频块/下半落音频块(由后端按素材能力拆分);
+    // 半区信息附带在 trackId 后缀,后端目前统一双块,半区仅作 UI 提示。
     return { trackId: track.id, start: t };
   }
 
@@ -488,23 +566,66 @@ export default function Timeline({
       </div>
       <div style={{ display: "flex" }}>
         {/* 轨道头(粘性,不随横向滚动) */}
-        <div style={{ width: 120, flexShrink: 0 }}>
-          {doc.tracks.map((track) => (
+        <div style={{ width: 132, flexShrink: 0 }}>
+          {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
               style={{
                 height: trackH,
                 display: "flex",
-                alignItems: "center",
+                alignItems: "stretch",
                 gap: 4,
                 padding: "0 6px",
                 borderBottom: "1px solid #2e3038",
-                background: track.kind === "Video" ? "#1b1d26" : "#1a211d",
+                background: track.kind === "Audio" ? "#1a211d" : "#1b1d26",
+                position: "relative",
+              }}
+              onDragOver={(e) => {
+                if (reorderFrom.current !== null) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                if (reorderFrom.current !== null && reorderFrom.current !== ti) {
+                  e.preventDefault();
+                  onReorderTrack?.(reorderFrom.current, ti);
+                }
+                reorderFrom.current = null;
+                setReorderHint(null);
               }}
             >
-              <span style={{ color: track.kind === "Video" ? "#8ea2d8" : "#7fb8a2", fontSize: 12, flex: 1 }}>
-                {track.name}
+              {/* 拖拽手柄(六点) */}
+              <span
+                title="拖动排序轨道"
+                draggable
+                onDragStart={() => { reorderFrom.current = ti; setReorderHint(ti); }}
+                onDragEnd={() => { reorderFrom.current = null; setReorderHint(null); }}
+                style={{
+                  cursor: "grab",
+                  alignSelf: "center",
+                  color: reorderHint === ti ? "#ffd75e" : "#565b66",
+                  fontSize: 13,
+                  lineHeight: "6px",
+                  letterSpacing: "1px",
+                  userSelect: "none",
+                  paddingLeft: 2,
+                }}
+              >
+                {'\u2630'}
               </span>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
+                <span style={{
+                  color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2",
+                  fontSize: trackH < 44 ? 10 : 12,
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {track.name}
+                </span>
+                {track.kind === "File" && trackH >= 52 && (
+                  <span style={{ fontSize: 9, color: "#565b66", lineHeight: "12px" }}>
+                    <span style={{ color: "#5f9e73" }}>▮ 视频</span>
+                    <span style={{ color: "#5f83b8" }}> ▮ 音频</span>
+                  </span>
+                )}
+              </div>
               {(["locked", "hidden", "muted"] as const).map((f) => (
                 <button
                   key={f}
@@ -541,10 +662,98 @@ export default function Timeline({
             onMouseDown={onPointerDown}
             onMouseMove={onPointerMove}
             onMouseUp={onPointerUp}
+            onDoubleClick={(e) => {
+              const t = ticksFromClientX(e.clientX);
+              const hit = hitTest(t, e.clientX, e.clientY);
+              if (hit) {
+                const clip = doc.clips.find((c) => c.id === hit.clipId)!;
+                const tpsL = doc.timebase.num / doc.timebase.den;
+                setRangeEdit({
+                  clipId: clip.id,
+                  start: clip.start,
+                  duration: clip.duration,
+                  sourceIn: clip.asset.source_in,
+                });
+                setRangeDraft({
+                  start: (clip.start / tpsL).toFixed(2),
+                  duration: (clip.duration / tpsL).toFixed(2),
+                  sourceIn: clip.asset.source_in.toFixed(2),
+                });
+                onClipRangeEdit?.(clip.id);
+              }
+            }}
             style={{ cursor: hoverEdge ? "ew-resize" : "crosshair", display: "block" }}
           />
         </div>
       </div>
+
+      {/* 双击片段:精确时间设置弹窗 */}
+      {rangeEdit && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setRangeEdit(null);
+          }}
+        >
+          <div
+            style={{
+              background: "#1e2026",
+              border: "1px solid #3a3d46",
+              borderRadius: 8,
+              padding: 16,
+              width: 300,
+              fontSize: 12,
+              color: "#dfe3ea",
+            }}
+          >
+            <div style={{ fontWeight: "bold", marginBottom: 10 }}>
+              设置片段时间 <span style={{ color: "#667", fontWeight: "normal" }}>{rangeEdit.clipId}</span>
+            </div>
+            {([
+              ["start", "时间轴起点(秒)"],
+              ["duration", "时长(秒)"],
+              ["sourceIn", "素材入点(秒)"],
+            ] as const).map(([key, label]) => (
+              <label key={key} style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, alignItems: "center" }}>
+                <span>{label}</span>
+                <input
+                  className="ti"
+                  style={{ width: 110 }}
+                  value={rangeDraft[key]}
+                  onChange={(e) => setRangeDraft({ ...rangeDraft, [key]: e.target.value })}
+                  onKeyDown={(e) => e.key === "Enter" && submitRange()}
+                />
+              </label>
+            ))}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button className="btn" onClick={() => setRangeEdit(null)}>取消</button>
+              <button className="btn primary" onClick={submitRange}>确定</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+
+  function submitRange() {
+    if (!rangeEdit || !onClipRangeSet) {
+      setRangeEdit(null);
+      return;
+    }
+    const start = parseFloat(rangeDraft.start);
+    const dur = parseFloat(rangeDraft.duration);
+    const srcIn = parseFloat(rangeDraft.sourceIn);
+    if (Number.isFinite(start) && Number.isFinite(dur) && dur > 0 && Number.isFinite(srcIn)) {
+      onClipRangeSet(rangeEdit.clipId, Math.max(0, start), dur, Math.max(0, srcIn));
+    }
+    setRangeEdit(null);
+  }
 }
