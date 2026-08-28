@@ -39,7 +39,7 @@ function trackRowGeom(kind: string, trackH: number) {
 
 /// 拖拽会话:移动 / 左缘修剪 / 右缘修剪。
 type DragSession =
-  | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number }
+  | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
   | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
 
@@ -81,7 +81,7 @@ export default function Timeline({
   /// 缩放:每 ticks 像素(0.1 - 4)。
   const [pxPerTick, setPxPerTick] = useState(0.5);
   /// 拖拽虚影:拖动中的目标位置(ticks),绘制幽灵片段。
-  const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number } | null>(null);
+  const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number; laneOff: number; h: number } | null>(null);
   /// 修剪预览:edge + 新起点/时长。
   const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; x: number; y: number } | null>(null);
   /// 悬停光标:边缘显示双向箭头。
@@ -90,6 +90,10 @@ export default function Timeline({
   const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   /// 轨道排序拖拽中(来源行)。
   const reorderFrom = useRef<number | null>(null);
+  /// 当前焦点文件轨道(点击行/标题/选中片段皆置位)。
+  const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
+  /// 跨轨拖拽的目标(移动会话中动态更新)。
+  const moveTargetRef = useRef<{ trackId: string; row: number } | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   /// 双击片段 -> 精确时间弹窗。
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
@@ -154,11 +158,13 @@ export default function Timeline({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
 
-    // 当前操作轨道:选中片段所属轨
+    // 当前操作轨道:显式焦点优先,其次选中片段所属轨
     const selectedClip = doc.clips.find((c) => c.id === selectedClipId);
-    const activeTrackIdx = selectedClip
+    const activeTrackIdx = doc.tracks.findIndex((t) => t.id === activeTrackId);
+    const fallbackIdx = selectedClip
       ? doc.tracks.findIndex((t) => t.id === selectedClip.track_id)
       : -1;
+    const focusIdx = activeTrackIdx >= 0 ? activeTrackIdx : fallbackIdx;
     // 轨道背景:File 轨上区微绿、下区微蓝;其余旧样式
     doc.tracks.forEach((track, i) => {
       const y = i * trackH;
@@ -185,7 +191,7 @@ export default function Timeline({
         ctx.stroke();
       }
       // 当前操作轨道:边缘高亮(金色描边)
-      if (i === activeTrackIdx) {
+      if (i === focusIdx) {
         ctx.strokeStyle = "#ffd75e";
         ctx.lineWidth = 2;
         ctx.strokeRect(1, y + 1, w - 2, trackH - 2);
@@ -284,12 +290,10 @@ export default function Timeline({
       ctx.fillRect(x, doc.tracks.length * trackH + 10, Math.max(cw, 2), 6);
     });
 
-    // 拖拽虚影(半区高度)
+    // 拖拽虚影(目标轨行 + 半区偏移)
     if (ghost) {
-      const gclip = doc.clips.find((c) => c.id === ghost.clipId);
-      const grow = gclip ? clipRowY(gclip) : null;
-      const gy = ghost.trackIdx * trackH + (grow ? grow.y - ghost.trackIdx * trackH : 5);
-      const gh = grow ? grow.h : trackH - 10;
+      const gy = ghost.trackIdx * trackH + ghost.laneOff + 2;
+      const gh = ghost.h;
       const gx = ghost.start * pxPerTick;
       const gw = ghost.duration * pxPerTick;
       ctx.fillStyle = "rgba(126, 168, 255, 0.35)";
@@ -298,10 +302,6 @@ export default function Timeline({
       ctx.setLineDash([4, 3]);
       ctx.strokeRect(gx, gy, Math.max(gw, 2), gh);
       ctx.setLineDash([]);
-      if (gclip && grow) {
-        ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(gclip.start * pxPerTick, grow.y, Math.max(gclip.duration * pxPerTick, 2), grow.h);
-      }
     }
 
     // 修剪预览:黄色边缘线 + 时间提示
@@ -363,7 +363,7 @@ export default function Timeline({
       ctx.stroke();
       ctx.lineWidth = 1;
     }
-  }, [doc, playheadTicks, selectedClipId, trackH, ghost, trimHint, hoverEdge, waveforms, dropHint, scrollX, pxPerTick, contentW, tps]);
+  }, [doc, playheadTicks, selectedClipId, trackH, ghost, trimHint, hoverEdge, waveforms, dropHint, scrollX, pxPerTick, contentW, tps, activeTrackId]);
 
   /// 事件 ticks(含滚动偏移)。
   function ticksFromClientX(clientX: number): number {
@@ -421,6 +421,12 @@ export default function Timeline({
     // 指针捕获:拖出画布/轨道头也不丢事件(拖拽卡死的根因修复)
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
+    // 点击行 = 该轨道获得焦点
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const row = Math.floor((e.clientY - rect.top) / trackH);
+      if (doc.tracks[row]) setActiveTrackId(doc.tracks[row].id);
+    }
     const hit = hitTest(t, e.clientX, e.clientY);
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
@@ -432,7 +438,9 @@ export default function Timeline({
       } else {
         onSeek(Math.min(Math.max(t, clip.start), clip.start + clip.duration - 1));
         const grabTicks = Math.round(t - clip.start); // 按下点相对片段左缘
-        dragRef.current = { kind: "move", clipId: hit.clipId, startX: e.clientX, origStart: clip.start, grabTicks };
+        const fromRow = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
+        dragRef.current = { kind: "move", clipId: hit.clipId, startX: e.clientX, origStart: clip.start, grabTicks, fromRow };
+        moveTargetRef.current = { trackId: clip.track_id, row: fromRow };
       }
     } else {
       setGhost(null);
@@ -455,12 +463,34 @@ export default function Timeline({
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
     const row = clipRowY(clip);
     if (d.kind === "move") {
+      // 跨轨:Y 命中行需与块类型匹配(视频块->视频/File;音频块->音频/File)
+      const rectC = canvasRef.current?.getBoundingClientRect();
+      const yIn = rectC ? e.clientY - rectC.top : 0;
+      const targetRow = Math.max(
+        0,
+        Math.min(doc.tracks.length - 1, Math.floor(yIn / trackH))
+      );
+      const rowTrack = doc.tracks[targetRow];
+      const isAudioBlock = clip.lane === "Audio" || doc.tracks[ti]?.kind === "Audio";
+      const ok =
+        !!rowTrack &&
+        !rowTrack.locked &&
+        (rowTrack.kind === "File" ||
+          (isAudioBlock ? rowTrack.kind === "Audio" : rowTrack.kind === "Video"));
+      const useRow = ok ? targetRow : ti;
+      if (ok) {
+        moveTargetRef.current = { trackId: rowTrack.id, row: useRow };
+      }
+      const half = trackH / 2;
+      const laneOff = rowTrack?.kind === "File" ? (isAudioBlock ? half : 0) : 0;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       setGhost({
         clipId: d.clipId,
         start: Math.max(0, t - grab),
         duration: clip.duration,
-        trackIdx: ti,
+        trackIdx: useRow,
+        laneOff,
+        h: rowTrack?.kind === "File" ? half - 4 : trackH - 10,
       });
       setTrimHint(null);
     } else if (d.kind === "trimL") {
@@ -496,10 +526,13 @@ export default function Timeline({
     if (!d) return;
     if (d.kind === "move") {
       const clip = doc.clips.find((c) => c.id === d.clipId);
-      if (clip && onClipMove && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
+      const target = moveTargetRef.current;
+      moveTargetRef.current = null;
+      if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
-        onClipMove(d.clipId, Math.max(0, t), clip.track_id);
+        onClipMove(d.clipId, Math.max(0, t), target.trackId);
+        setActiveTrackId(target.trackId);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
       if (hint && hint.clipId === d.clipId && hint.newDuration !== d.origDuration) {
@@ -617,6 +650,7 @@ export default function Timeline({
           {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
+              onMouseDown={() => setActiveTrackId(track.id)}
               style={{
                 height: trackH,
                 display: "flex",
@@ -626,6 +660,10 @@ export default function Timeline({
                 borderBottom: "1px solid #2e3038",
                 background: track.kind === "Audio" ? "#1a211d" : "#1b1d26",
                 position: "relative",
+                outline:
+                  (activeTrackId ?? "") === track.id ? "2px solid #ffd75e" : "none",
+                outlineOffset: -2,
+                zIndex: (activeTrackId ?? "") === track.id ? 3 : undefined,
               }}
               onDragOver={(e) => {
                 if (reorderFrom.current !== null) e.preventDefault();
