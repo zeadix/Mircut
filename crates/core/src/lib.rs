@@ -285,6 +285,14 @@ impl Document {
             }
         }
         self.tracks = new_tracks;
+        // 归一化:File 轨上 lane=None 的片段视为视频块(Video);
+        // 音频轨并入的片段已在上面标为 Audio
+        let file_track_ids: Vec<String> = self.tracks.iter().map(|t| t.id.clone()).collect();
+        for c in self.clips.iter_mut() {
+            if c.lane.is_none() && file_track_ids.contains(&c.track_id) {
+                c.lane = Some(Lane::Video);
+            }
+        }
     }
 }
 
@@ -653,8 +661,11 @@ mod tests {
             doc.clips.iter().find(|c| c.id == "c2").unwrap().lane,
             Some(Lane::Audio)
         );
-        assert_eq!(doc.clips.iter().find(|c| c.id == "c1").unwrap().lane, None);
-        // clips_on_lane 区分
+        // clips_on_lane 区分(迁移后 c1 归一为 Video lane)
+        assert_eq!(
+            doc.clips.iter().find(|c| c.id == "c1").unwrap().lane,
+            Some(Lane::Video)
+        );
         assert_eq!(doc.clips_on_lane("v1", Lane::Video).len(), 1);
         assert_eq!(doc.clips_on_lane("v1", Lane::Audio).len(), 1);
         // 幂等

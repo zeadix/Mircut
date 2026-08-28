@@ -360,7 +360,7 @@ export default function Timeline({
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const px = clientX - rect.left;
-    // Y -> (行, 半区 lane 或 null=整轨)
+    // Y -> (行, 半区 lane 或 undefined=不过滤)
     let laneFilter: string | null | undefined; // undefined=不过滤
     if (clientY !== undefined) {
       const yIn = clientY - rect.top;
@@ -369,7 +369,8 @@ export default function Timeline({
       if (!track) return null;
       if (track.kind === "File") {
         const half = trackH / 2;
-        laneFilter = yIn - row * trackH < half ? "Video" : "Audio";
+        // 上半区=视频块(含旧数据 lane=null 视为视频);下半区=音频块
+        laneFilter = yIn - row * trackH < half ? "__TOP__" : "Audio";
       } else {
         laneFilter = null; // 旧轨按 lane=None 匹配
       }
@@ -377,7 +378,12 @@ export default function Timeline({
     for (const c of doc.clips) {
       if (laneFilter !== undefined) {
         const cLane = c.lane ?? null;
-        if (cLane !== laneFilter) continue;
+        if (laneFilter === "__TOP__") {
+          // 视频半区:显式 Video 或历史迁移的 null 都可命中
+          if (!(cLane === "Video" || cLane === null)) continue;
+        } else if (cLane !== laneFilter) {
+          continue;
+        }
       }
       const x0 = c.start * pxPerTick;
       const x1 = (c.start + c.duration) * pxPerTick;

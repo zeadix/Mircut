@@ -96,7 +96,15 @@ export default function App() {
   }, []);
 
   async function refresh() {
-    setDoc(await api.getDocument());
+    const d = await api.getDocument();
+    // 归一化:文件轨上 lane=null 的旧片段视为视频块(渲染/命中一致)
+    for (const c of d.clips) {
+      const track = d.tracks.find((t) => t.id === c.track_id);
+      if (track?.kind === "File" && (c.lane === null || c.lane === undefined)) {
+        c.lane = "Video";
+      }
+    }
+    setDoc(d);
   }
 
   useEffect(() => {
