@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 import * as api from "./api";
 import type { Clip, Document } from "./types";
 
@@ -10,7 +10,7 @@ interface Props {
 }
 
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
-export default function Inspector({ doc, clip, onRefresh, playheadTicks }: Props) {
+function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [speed, setSpeed] = useState("1.0");
   const [volume, setVolume] = useState("1.0");
   const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1 });
@@ -535,3 +535,6 @@ function emptyFx(): NonNullable<Clip["fx"]> {
     lut: { path: "", strength: 0 },
   };
 }
+
+const Inspector = memo(InspectorInner);
+export default Inspector;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { TextOverlay } from "./types";
 
@@ -8,7 +8,7 @@ interface Props {
 }
 
 /// 文字面板:标题叠层 CRUD + AI 配音(TTS)。
-export default function TextPanel({ playheadTicks, onRefresh }: Props) {
+function TextPanelInner({ playheadTicks, onRefresh }: Props) {
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
   const [status, setStatus] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
@@ -120,3 +120,6 @@ export default function TextPanel({ playheadTicks, onRefresh }: Props) {
     </div>
   );
 }
+
+const TextPanel = memo(TextPanelInner);
+export default TextPanel;

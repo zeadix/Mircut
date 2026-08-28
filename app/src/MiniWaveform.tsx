@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 
 /// 音频卡片迷你波形(蓝)。
-export default function MiniWaveform({ peaks }: { peaks: number[] }) {
+function MiniWaveformInner({ peaks }: { peaks: number[] }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
@@ -38,3 +38,6 @@ export default function MiniWaveform({ peaks }: { peaks: number[] }) {
     />
   );
 }
+
+const MiniWaveform = memo(MiniWaveformInner);
+export default MiniWaveform;

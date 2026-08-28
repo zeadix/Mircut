@@ -28,6 +28,11 @@ import {
 export default function App() {
   const [doc, setDoc] = useState<Document | null>(null);
   const [playhead, setPlayhead] = useState(0);
+  /// 播放头真值(rAF 直写,避免每帧 React 重渲染)。
+  const playheadRef = useRef(0);
+  useEffect(() => {
+    playheadRef.current = playhead;
+  }, [playhead]);
   const [selected, setSelected] = useState<string | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
@@ -83,15 +88,21 @@ export default function App() {
   // 播放循环:推进播放头(JKL 变速);超出最末片段自动停
   useEffect(() => {
     if (!playing || !doc) return;
-    const endTick = doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
     lastTsRef.current = performance.now();
+    let acc = 0;
     const step = (ts: number) => {
       const dt = (ts - lastTsRef.current) / 1000;
       lastTsRef.current = ts;
-      setPlayhead((p) => {
-        const next = p + Math.round(dt * fps * playSpeed);
-        return next < 0 ? 0 : next;
-      });
+      playheadRef.current = Math.max(
+        0,
+        playheadRef.current + Math.round(dt * fps * playSpeed)
+      );
+      acc += dt;
+      // 低频同步 state(5Hz):驱动 Preview/Scopes/时间码,不经每帧 React
+      if (acc >= 0.2) {
+        acc = 0;
+        setPlayhead(playheadRef.current);
+      }
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
@@ -123,7 +134,20 @@ export default function App() {
     };
   }, []);
 
-  async function refresh() {
+  const refreshLockRef = useRef(0);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refresh = useCallback(async () => {
+    // 节流合并:150ms 内多次编辑只拉一次全量文档
+    const now = Date.now();
+    const gap = now - refreshLockRef.current;
+    if (gap < 150 && refreshTimerRef.current === null) {
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        void refresh();
+      }, 150 - gap);
+      return;
+    }
+    refreshLockRef.current = now;
     const d = await api.getDocument();
     // 归一化:文件轨上 lane=null 的旧片段视为视频块(渲染/命中一致)
     for (const c of d.clips) {
@@ -133,7 +157,7 @@ export default function App() {
       }
     }
     setDoc(d);
-  }
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -690,7 +714,10 @@ export default function App() {
             <Timeline
               doc={doc}
               playheadTicks={playhead}
-              onSeek={setPlayhead}
+              onSeek={(t) => {
+                playheadRef.current = t;
+                setPlayhead(t);
+              }}
               onClipClick={setSelected}
               selectedClipId={selected}
               onClipMove={onClipMove}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
@@ -11,7 +11,7 @@ interface Props {
 }
 
 /// 字幕面板:ASR 识别 / SRT 导入导出 / 逐条编辑。
-export default function SubtitlePanel({ assetPaths, onRefresh, fps }: Props) {
+function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   const [track, setTrack] = useState<SubtitleTrack | null>(null);
   const [status, setStatus] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
@@ -144,3 +144,6 @@ export default function SubtitlePanel({ assetPaths, onRefresh, fps }: Props) {
     </div>
   );
 }
+
+const SubtitlePanel = memo(SubtitlePanelInner);
+export default SubtitlePanel;
