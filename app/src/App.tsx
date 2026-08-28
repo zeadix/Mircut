@@ -597,7 +597,7 @@ export default function App() {
       <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "#1a1b20", borderBottom: "1px solid #2a2c33" }}>
         <FilmSlate size={22} />
         <strong>VEditor</strong>
-        <span style={{ flex: 1 }} />
+        <span style={{ flex: 1 }} /><span style={{color:"#8b93a1",fontSize:11}} title="内存 doc.clips 数(对比点击时间轴前/后)">clips={doc?.clips.length ?? 0}</span>
         <button className="btn" onClick={onUndo} title="撤销 (Ctrl+Z)"><ArrowCounterClockwise size={16} /></button>
         <button className="btn" onClick={onRedo} title="重做 (Ctrl+Shift+Z)"><ArrowClockwise size={16} /></button>
         <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
