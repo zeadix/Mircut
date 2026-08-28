@@ -37,7 +37,7 @@ function trackRowGeom(kind: string, trackH: number) {
 
 /// 拖拽会话:移动 / 左缘修剪 / 右缘修剪。
 type DragSession =
-  | { kind: "move"; clipId: string; startX: number; origStart: number }
+  | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
   | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
 
@@ -410,7 +410,8 @@ export default function Timeline({
         dragRef.current = { kind: hit.edge === "left" ? "trimL" : "trimR", clipId: hit.clipId, origStart: clip.start, origDuration: clip.duration };
       } else {
         onSeek(Math.min(Math.max(t, clip.start), clip.start + clip.duration - 1));
-        dragRef.current = { kind: "move", clipId: hit.clipId, startX: e.clientX, origStart: clip.start };
+        const grabTicks = Math.round(t - clip.start); // 按下点相对片段左缘
+        dragRef.current = { kind: "move", clipId: hit.clipId, startX: e.clientX, origStart: clip.start, grabTicks };
       }
     } else {
       setGhost(null);
@@ -433,7 +434,13 @@ export default function Timeline({
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
     const row = clipRowY(clip);
     if (d.kind === "move") {
-      setGhost({ clipId: d.clipId, start: Math.max(0, t), duration: clip.duration, trackIdx: ti });
+      const grab = "grabTicks" in d ? d.grabTicks : 0;
+      setGhost({
+        clipId: d.clipId,
+        start: Math.max(0, t - grab),
+        duration: clip.duration,
+        trackIdx: ti,
+      });
       setTrimHint(null);
     } else if (d.kind === "trimL") {
       const maxStart = clip.start + clip.duration - 1;
@@ -469,7 +476,8 @@ export default function Timeline({
     if (d.kind === "move") {
       const clip = doc.clips.find((c) => c.id === d.clipId);
       if (clip && onClipMove && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
-        const t = snapTicks(ticksFromClientX(e.clientX), d.clipId);
+        const grab = "grabTicks" in d ? d.grabTicks : 0;
+        const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
         onClipMove(d.clipId, Math.max(0, t), clip.track_id);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
