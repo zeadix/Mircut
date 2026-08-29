@@ -1,0 +1,10 @@
+{
+  "name": "veditor",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --dir app dev",
+    "build": "pnpm --dir app build",
+    "test": "pnpm --dir app test",
+    "tauri": "pnpm --dir app tauri"
+  }
+}
