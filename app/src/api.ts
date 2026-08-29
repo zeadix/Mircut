@@ -46,6 +46,16 @@ export async function articleToVideo(text: string): Promise<number> {
   return invoke("article_to_video", { text });
 }
 
+export interface Plugin {
+  name: string;
+  kind: string;
+  grade?: { brightness: number; contrast: number; saturation: number; temperature: number };
+  lut?: string;
+}
+export async function listPlugins(): Promise<Plugin[]> {
+  return invoke("list_plugins");
+}
+
 export async function moveClip(
   clipId: string,
   newStart: number,

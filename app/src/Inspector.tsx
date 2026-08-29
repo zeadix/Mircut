@@ -32,6 +32,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   });
   const [blend, setBlend] = useState<string>("Normal");
   const [splitStatus, setSplitStatus] = useState("");
+  const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
 
   useEffect(() => {
     if (clip) {
@@ -531,7 +532,8 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
             className="ti"
             defaultValue=""
             onChange={(e) => {
-              const p = FILTER_PRESETS.find((f) => f.name === e.target.value);
+              const p = FILTER_PRESETS.find((f) => f.name === e.target.value) ??
+                pluginPresets.find((f) => f.name === e.target.value);
               if (p) applyFilterPreset(p.grade);
             }}
           >
@@ -539,6 +541,11 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
             {FILTER_PRESETS.map((f) => (
               <option key={f.name} value={f.name}>{f.name}</option>
             ))}
+            {pluginPresets.length > 0 && <optgroup label="插件">
+              {pluginPresets.map((f) => (
+                <option key={f.name} value={f.name}>{f.name}</option>
+              ))}
+            </optgroup>}
           </select>
         </label>
         {(["brightness", "contrast", "saturation"] as const).map((k) => (
