@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=VEditor
+Comment=开源剪映式视频编辑器
+Exec=veditor-app
+Terminal=false
+Type=Application
+Icon=veditor-app
+Categories=AudioVideo;Video;Editing;
+MimeType=video/mp4;video/quicktime;video/x-matroska;video/webm;
