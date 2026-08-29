@@ -666,6 +666,78 @@ fn split_clip(clip_id: String, pos: Ticks, state: State<'_, AppState>) -> bool {
     true
 }
 
+/// 场景检测:FFmpeg scene 分数 > threshold 的帧时间点(相对 source_in 的秒)。
+fn detect_scene_times(path: &str, source_in: f64, source_out: f64) -> Result<Vec<f64>, String> {
+    let dur = source_out - source_in;
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-ss",
+            &format!("{source_in:.3}"),
+            "-t",
+            &format!("{dur:.3}"),
+        ])
+        .args(["-i", path])
+        .args(["-vf", "select='gt(scene,0.35)',showinfo", "-f", "null", "-"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut times = Vec::new();
+    for line in stderr.lines() {
+        if let Some(idx) = line.find("pts_time:") {
+            let rest = &line[idx + 9..];
+            if let Some(num) = rest.split_whitespace().next() {
+                if let Ok(t) = num.parse::<f64>() {
+                    if t > 0.5 && !times.last().is_some_and(|last| (t - last).abs() < 0.5) {
+                        times.push(t);
+                    }
+                }
+            }
+        }
+    }
+    Ok(times)
+}
+
+/// 智能分割:检测场景变化并自动切分片段(降级:scene 检测替代 AI 语义分割)。
+#[tauri::command(async)]
+fn auto_split_scenes(clip_id: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let (path, source_in, source_out, start, duration) = {
+        let inner = state.inner.lock().unwrap();
+        let c = inner.doc.clip(&clip_id).cloned().ok_or("clip not found")?;
+        let a = inner
+            .doc
+            .asset(&c.asset.asset_id)
+            .cloned()
+            .ok_or("asset not found")?;
+        (
+            a.path,
+            c.asset.source_in,
+            c.asset.source_out,
+            c.start,
+            c.duration,
+        )
+    };
+    let times = detect_scene_times(&path, source_in, source_out)?;
+    let tb_num = {
+        let inner = state.inner.lock().unwrap();
+        inner.doc.timebase.num as f64 / inner.doc.timebase.den as f64
+    };
+    // 从后往前切分(前面 clip 保持原 id)
+    let mut count = 0;
+    let mut inner = state.inner.lock().unwrap();
+    for t in times.into_iter().rev() {
+        let pos = start + (t * tb_num).round() as Ticks;
+        if pos > start && pos < start + duration {
+            inner.exec(Box::new(SplitClip::new(clip_id.clone(), pos)));
+            count += 1;
+        }
+    }
+    if count > 0 {
+        inner.autosave();
+    }
+    Ok(count)
+}
+
 #[tauri::command]
 fn move_clip(
     clip_id: String,
@@ -2121,6 +2193,7 @@ fn main() {
             add_clip,
             remove_clip,
             split_clip,
+            auto_split_scenes,
             move_clip,
             trim_clip,
             drop_asset,

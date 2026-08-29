@@ -31,6 +31,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     enabled: false, x: 0.5, y: 0.5, w: 0.6, h: 0.6,
   });
   const [blend, setBlend] = useState<string>("Normal");
+  const [splitStatus, setSplitStatus] = useState("");
 
   useEffect(() => {
     if (clip) {
@@ -284,6 +285,25 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <h3 style={{ margin: 0, fontSize: 13 }}>{clip.id}</h3>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>智能分割</legend>
+        <button
+          className="btn"
+          onClick={async () => {
+            try {
+              const n = await api.autoSplitScenes(clip.id);
+              setSplitStatus(`已按场景切分 ${n} 处`);
+              await onRefresh();
+            } catch (e) {
+              setSplitStatus(`分割失败: ${e}`);
+            }
+          }}
+        >
+          按场景自动切分
+        </button>
+        {splitStatus && <div style={{ color: "#667", marginTop: 3 }}>{splitStatus}</div>}
+      </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
         <legend>截取范围(素材内,秒)</legend>

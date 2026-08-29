@@ -38,6 +38,10 @@ export async function splitClip(clipId: string, pos: number): Promise<boolean> {
   return invoke("split_clip", { clipId, pos });
 }
 
+export async function autoSplitScenes(clipId: string): Promise<number> {
+  return invoke("auto_split_scenes", { clipId });
+}
+
 export async function moveClip(
   clipId: string,
   newStart: number,
