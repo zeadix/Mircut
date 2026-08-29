@@ -750,6 +750,19 @@ export default function App() {
             </button>
             <select
               className="ti"
+              value={String(Math.abs(playSpeed))}
+              onChange={(e) => setPlaySpeed(parseFloat(e.target.value))}
+              title="播放倍率"
+            >
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1">1x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+            <select
+              className="ti"
               value={renderMode}
               onChange={(e) => onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
               title="渲染引擎"

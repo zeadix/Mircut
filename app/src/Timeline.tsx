@@ -29,7 +29,8 @@ const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 type DragSession =
   | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
-  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
+  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number }
+  | { kind: "seek" };
 
 /// 稳定渐变(模块级缓存,避免每片段每帧新建)。
 const GRAD_VIDEO: [string, string] = ["#3f9d5a", "#2c7040"];
@@ -235,7 +236,7 @@ function TimelineInner({
       ctx.fillRect(x + Math.max(cw, 2) - 2, laneTop, 2, h);
       if (clip.id === selectedClipId) {
         ctx.strokeStyle = "#ffd75e";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1;
         ctx.strokeRect(x, laneTop, Math.max(cw, 2), h);
         // 选中时把手 10px(修剪触发区),hover 侧高亮
         ctx.fillStyle = hoverEdge ? "#ffd75e" : "rgba(255,215,94,0.45)";
@@ -466,6 +467,8 @@ function TimelineInner({
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const hit = hitTest(t, e.clientX, e.clientY);
+    // 播放头(关键帧红线)拖拽:命中块优先;未命中块且鼠标在播放头 ±10px 内 -> scrub
+    const headHit = Math.abs(t - playheadRef.current) * pxPerTick <= 10;
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
@@ -488,6 +491,9 @@ function TimelineInner({
         };
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
       }
+    } else if (headHit) {
+      dragRef.current = { kind: "seek" };
+      onSeek(t);
     } else {
       setGhost(null);
       setTrimHint(null);
@@ -501,6 +507,11 @@ function TimelineInner({
       const t = ticksFromClientX(e.clientX);
       const hit = hitTest(t, e.clientX, e.clientY);
       setHoverEdge(hit?.edge === "left" || hit?.edge === "right" ? hit.edge : null);
+      return;
+    }
+    if (d.kind === "seek") {
+      const st = Math.max(0, Math.floor(ticksFromClientX(e.clientX)));
+      onSeek(st);
       return;
     }
     const clip = doc.clips.find((c) => c.id === d.clipId);
