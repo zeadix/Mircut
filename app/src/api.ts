@@ -42,6 +42,10 @@ export async function autoSplitScenes(clipId: string): Promise<number> {
   return invoke("auto_split_scenes", { clipId });
 }
 
+export async function articleToVideo(text: string): Promise<number> {
+  return invoke("article_to_video", { text });
+}
+
 export async function moveClip(
   clipId: string,
   newStart: number,

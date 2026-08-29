@@ -1542,6 +1542,64 @@ fn remove_text_overlay(index: usize, state: State<'_, AppState>) -> bool {
     true
 }
 
+/// 图文成片(降级):文案按句切分,逐句生成文字卡(估算时长)顺序排列到时间轴。
+#[tauri::command]
+fn article_to_video(text: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let sentences = split_sentences(&text);
+    if sentences.is_empty() {
+        return Err("文案为空".into());
+    }
+    let mut inner = state.inner.lock().unwrap();
+    let num = inner.doc.timebase.num as f64;
+    let den = inner.doc.timebase.den as f64;
+    let mut cursor = 0i64;
+    let mut count = 0usize;
+    for (i, s) in sentences.iter().enumerate() {
+        let chars = s.chars().count().max(1);
+        let dur_secs = (chars as f64 * 0.35).clamp(1.0, 8.0);
+        let dur = (dur_secs * num / den).round() as i64;
+        inner.doc.text_overlays.push(veditor_core::TextOverlay {
+            id: format!("art{}", i + 1),
+            start: cursor,
+            end: cursor + dur,
+            text: s.clone(),
+            font_size: 64,
+            color: "#ffffff".into(),
+            outline: Some("#000000".into()),
+            bold: true,
+            shadow: true,
+            animation: veditor_core::TextAnimation::FadeIn,
+            x: 0.5,
+            y: 0.5,
+        });
+        cursor += dur;
+        count += 1;
+    }
+    inner.autosave();
+    Ok(count)
+}
+
+/// 按中文/英文标点切句,忽略空句。
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in text.chars() {
+        cur.push(ch);
+        if matches!(ch, '。' | '！' | '？' | '!' | '?' | '；' | ';' | '\n' | '.') {
+            let s = cur.trim().to_string();
+            if !s.is_empty() {
+                out.push(s);
+            }
+            cur.clear();
+        }
+    }
+    let s = cur.trim().to_string();
+    if !s.is_empty() {
+        out.push(s);
+    }
+    out
+}
+
 /// 示波器:当前播放头处最上层片段的波形/矢量数据。
 #[tauri::command(async)]
 fn analyze_scopes(
@@ -2243,6 +2301,7 @@ fn main() {
             detect_beats,
             list_text_overlays,
             add_text_overlay,
+            article_to_video,
             update_text_overlay,
             remove_text_overlay,
             seek_frame,

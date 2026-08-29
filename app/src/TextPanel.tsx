@@ -14,6 +14,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState<TextOverlay | null>(null);
   const [ttsText, setTtsText] = useState("");
+  const [articleText, setArticleText] = useState("");
 
   async function load() {
     setOverlays(await invoke("list_text_overlays"));
@@ -55,6 +56,23 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
     await invoke("remove_text_overlay", { index: i });
     await load();
     await onRefresh();
+  }
+
+  /// 图文成片:文案按句生成文字卡排列到时间轴。
+  async function onArticleToVideo() {
+    if (!articleText.trim()) {
+      setStatus("请输入图文文案");
+      return;
+    }
+    setStatus("生成中...");
+    try {
+      const n = await invoke<number>("article_to_video", { text: articleText });
+      await load();
+      await onRefresh();
+      setStatus(`已生成 ${n} 张文字卡`);
+    } catch (e) {
+      setStatus(`生成失败: ${e}`);
+    }
   }
 
   /// TTS 配音:合成 wav 并导入为素材(前端双击即可上轨)。
@@ -117,6 +135,19 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
           )}
         </div>
       ))}
+
+      <fieldset style={{ borderColor: "#2a2c33", marginTop: 4 }}>
+        <legend>图文成片</legend>
+        <textarea
+          className="ti"
+          rows={4}
+          style={{ width: "100%" }}
+          placeholder="输入文案,按句生成文字卡(每句约 0.35s/字)..."
+          value={articleText}
+          onChange={(e) => setArticleText(e.target.value)}
+        />
+        <button className="btn" style={{ marginTop: 6 }} onClick={onArticleToVideo}>生成图文视频</button>
+      </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33", marginTop: 4 }}>
         <legend>AI 配音 (TTS)</legend>
