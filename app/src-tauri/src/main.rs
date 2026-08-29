@@ -211,7 +211,7 @@ impl Inner {
             }
             if self.doc.tracks.is_empty() {
                 self.doc.tracks.push(Track {
-                    id: "f1".into(),
+                    id: String::from("f1"),
                     kind: TrackKind::File,
                     name: "文件轨 1".into(),
                     locked: false,
@@ -1124,7 +1124,7 @@ fn detach_audio(clip_id: String, state: State<'_, AppState>) -> bool {
         .doc
         .clip(&clip_id)
         .map(|c| c.track_id.clone())
-        .unwrap_or_else(|| "f1".into());
+        .unwrap_or_else(|| String::from("f1"));
     inner.exec(Box::new(DetachAudio::new(clip_id, track)));
     true
 }
@@ -2520,6 +2520,84 @@ mod tests {
         }
     }
 
+    /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
+    #[test]
+    fn move_drops_at_exact_position() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: String::from("f1"),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 5.0,
+                has_video: true,
+                has_audio: true,
+                width: None,
+                height: None,
+                tags: vec![],
+            });
+            inner.doc.clips.push(Clip {
+                id: "v1".into(),
+                track_id: String::from("f1"),
+                start: 0,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                fx: Default::default(),
+            });
+            inner.exec(Box::new(veditor_core::MoveClip::new(
+                "v1",
+                85,
+                String::from("f1"),
+            )));
+            let v1 = inner.doc.clip("v1").unwrap();
+            assert_eq!(v1.start, 85, "v1 start=85(鼠标位置 - 抓取偏移)");
+            inner.doc.clips.push(Clip {
+                id: "b".into(),
+                track_id: String::from("f1"),
+                start: 90,
+                duration: 60,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 3.0,
+                    source_out: 5.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                fx: Default::default(),
+            });
+            inner.exec(Box::new(veditor_core::MoveClip::new(
+                "v1",
+                185,
+                String::from("f1"),
+            )));
+            // v1 在 185 长度 90 → 终 275;b 在 [90,150],不重叠→不推(0 间隔真空带)
+            let b = inner.doc.clip("b").unwrap();
+            assert_eq!(b.start, 90, "无重叠 b 不应被推动: b.start={}", b.start);
+            let v1 = inner.doc.clip("v1").unwrap();
+            assert_eq!(v1.start, 185, "v1 落点就是 185");
+        }
+    }
+
     /// File 轨双 lane:视频块/音频块各自时序独立,互不推挤,各自无重叠。
     #[test]
     fn file_track_lane_independent_scheduling() {
@@ -2529,7 +2607,7 @@ mod tests {
             inner.ensure();
             inner.doc = Document::default();
             inner.doc.tracks.push(Track {
-                id: "f1".into(),
+                id: String::from("f1"),
                 kind: TrackKind::File,
                 name: "文件轨 1".into(),
                 locked: false,
@@ -2538,7 +2616,7 @@ mod tests {
             });
             let mk = |id: &str, lane: veditor_core::Lane, start: i64| Clip {
                 id: id.into(),
-                track_id: "f1".into(),
+                track_id: String::from("f1"),
                 start,
                 duration: 60,
                 asset: AssetRef {

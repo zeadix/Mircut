@@ -477,7 +477,10 @@ function TimelineInner({
     }
     const clip = doc.clips.find((c) => c.id === d.clipId);
     if (!clip) return;
-    const t = snapTicks(ticksFromClientX(e.clientX), d.clipId);
+    // move 拖动用鼠标原始 ticks(不吸附),其它操作(trim 等)继续用 snapTicks
+    const t = d.kind === "move"
+      ? Math.max(0, Math.floor(ticksFromClientX(e.clientX)))
+      : snapTicks(ticksFromClientX(e.clientX), d.clipId);
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
     const row = clipRow(clip);
     if (d.kind === "move") {
@@ -502,9 +505,10 @@ function TimelineInner({
       }
       const laneOff = rowTrack?.kind === "File" ? (targetLane === "Audio" ? half : 0) : 0;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
+      const rawStart = Math.max(0, t - grab);
       setGhost({
         clipId: d.clipId,
-        start: Math.max(0, t - grab),
+        start: rawStart,
         duration: clip.duration,
         trackIdx: useRow,
         laneOff,
@@ -560,8 +564,11 @@ function TimelineInner({
       const clip = doc.clips.find((c) => c.id === d.clipId);
       if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
-        const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
-        onClipMove(d.clipId, Math.max(0, t), target.trackId, target.lane ?? undefined);
+        // move 拖动不应吸附边缘(会"跳"到其它块的边界)。
+        // 仅做 ticks 圆整(向下取整到 pxPerTick 整数倍)即可。
+        const rawT = ticksFromClientX(e.clientX) - grab;
+        const t = Math.max(0, Math.floor(rawT));
+        onClipMove(d.clipId, t, target.trackId, target.lane ?? undefined);
         setActiveTrackId(target.trackId);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
