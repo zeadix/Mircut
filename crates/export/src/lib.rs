@@ -377,6 +377,27 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             let input_idx = input_of(&c.id);
             let st = c.start as f64 / fps_tb;
             let en = (c.start + c.duration) as f64 / fps_tb;
+            // 混合模式:上层全尺寸画面与下层像素混合(blend 滤镜)
+            if let Some(blend) = c.fx.blend_mode {
+                if blend != veditor_core::BlendMode::Normal {
+                    let chain = format!(
+                        "[{input_idx}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,scale={}:{},format=yuva420p[pip{ov_n}]",
+                        c.asset.source_in,
+                        c.source_span_secs(&doc.timebase),
+                        params.width,
+                        params.height
+                    );
+                    filters.push(chain);
+                    let out_label = format!("[vov{ov_n}]");
+                    filters.push(format!(
+                        "{vout}[pip{ov_n}]blend=all_mode={}:enable='between(t,{st:.3},{en:.3})'{out_label}",
+                        blend.ffmpeg()
+                    ));
+                    vout = out_label;
+                    ov_n += 1;
+                    continue;
+                }
+            }
             // 画中画尺寸:fx.scale 静态值(默认 0.35);位置:x/y_offset(0-1,默认 0.72/0.72 右下)
             let pip_scale =
                 c.fx.scale

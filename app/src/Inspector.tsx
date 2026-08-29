@@ -30,6 +30,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [mask, setMask] = useState<{ enabled: boolean; x: number; y: number; w: number; h: number }>({
     enabled: false, x: 0.5, y: 0.5, w: 0.6, h: 0.6,
   });
+  const [blend, setBlend] = useState<string>("Normal");
 
   useEffect(() => {
     if (clip) {
@@ -84,6 +85,16 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
       });
     }
   }, [clip?.id]);
+
+  /// 混合模式写入 fx.blend_mode。
+  async function applyBlend(mode: string) {
+    if (!clip) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const fx = clip.fx ?? emptyFx();
+    fx.blend_mode = (mode === "Normal" ? null : mode) as never;
+    await invoke("set_clip_fx", { clipId: clip.id, fx });
+    await onRefresh();
+  }
 
   /// 蒙版写入 fx.mask(切换开关/参数)。
   async function applyMask(next?: { enabled: boolean; x: number; y: number; w: number; h: number }) {
@@ -410,6 +421,21 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
             </label>
           )
         )}
+        <label style={{ display: "block", marginBottom: 3 }}>
+          混合模式:
+          <select
+            className="ti"
+            value={blend}
+            onChange={(e) => {
+              setBlend(e.target.value);
+              applyBlend(e.target.value);
+            }}
+          >
+            {["Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Difference", "Addition"].map((m) => (
+              <option key={m} value={m}>{m === "Normal" ? "正常" : m}</option>
+            ))}
+          </select>
+        </label>
         <div style={{ color: "#667", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
 

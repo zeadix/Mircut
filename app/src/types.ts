@@ -81,6 +81,7 @@ export interface ClipFx {
   audio_fx?: AudioFx;
   lut?: LutApply;
   mask?: Mask;
+  blend_mode?: "Normal" | "Multiply" | "Screen" | "Overlay" | "Darken" | "Lighten" | "Difference" | "Addition";
 }
 
 export interface Clip {

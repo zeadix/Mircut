@@ -234,6 +234,35 @@ impl Default for Mask {
     }
 }
 
+/// 混合模式(画中画上层片段与下层的像素混合)。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    Difference,
+    Addition,
+}
+
+impl BlendMode {
+    /// FFmpeg blend 滤镜的模式名。
+    pub fn ffmpeg(&self) -> &'static str {
+        match self {
+            BlendMode::Normal => "normal",
+            BlendMode::Multiply => "multiply",
+            BlendMode::Screen => "screen",
+            BlendMode::Overlay => "overlay",
+            BlendMode::Darken => "darken",
+            BlendMode::Lighten => "lighten",
+            BlendMode::Difference => "difference",
+            BlendMode::Addition => "addition",
+        }
+    }
+}
+
 /// 片段特效属性(M2 挂在 Clip 的可选扩展)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ClipFx {
@@ -257,6 +286,9 @@ pub struct ClipFx {
     /// 蒙版(矩形/线性,默认无)。
     #[serde(default)]
     pub mask: Option<Mask>,
+    /// 混合模式(画中画,默认无 = 正常 overlay)。
+    #[serde(default)]
+    pub blend_mode: Option<BlendMode>,
 }
 
 #[cfg(test)]
