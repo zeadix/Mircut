@@ -19,7 +19,8 @@ pub use commands_m2::{
     SetClipAudio, SetClipRange, SetFx, SetSpeed, SetTrackFlags, SetTransition, TagAsset,
 };
 pub use fx::{
-    Animatable, ChromaKey, ClipFx, ColorGrade, Interpolation, Keyframe, Transition, TransitionKind,
+    bezier_eval, Animatable, ChromaKey, ClipFx, ColorGrade, Interpolation, Keyframe, Transition,
+    TransitionKind,
 };
 
 /// 有理数时间基(如 30fps -> 1/30)。

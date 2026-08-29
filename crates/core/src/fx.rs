@@ -11,6 +11,56 @@ pub enum Interpolation {
     Hold,
     /// 贝塞尔(平滑)——M2 用 ease-in-out 近似。
     Smooth,
+    /// 自定义贝塞尔曲线(cubic-bezier,控制点 y 归一化到值域,x 归一化到时间)。
+    Bezier {
+        c1x: f64,
+        c1y: f64,
+        c2x: f64,
+        c2y: f64,
+    },
+}
+
+impl Interpolation {
+    /// 默认"缓入缓出"贝塞尔。
+    pub fn ease_in_out() -> Self {
+        Interpolation::Bezier {
+            c1x: 0.42,
+            c1y: 0.0,
+            c2x: 0.58,
+            c2y: 1.0,
+        }
+    }
+}
+
+/// cubic-bezier 的 x(t)。
+fn bezier_x(t: f64, c1x: f64, c2x: f64) -> f64 {
+    3.0 * (1.0 - t) * (1.0 - t) * t * c1x + 3.0 * (1.0 - t) * t * t * c2x + t * t * t
+}
+
+/// cubic-bezier 的 y(t)。
+fn bezier_y(t: f64, c1y: f64, c2y: f64) -> f64 {
+    3.0 * (1.0 - t) * (1.0 - t) * t * c1y + 3.0 * (1.0 - t) * t * t * c2y + t * t * t
+}
+
+/// 给定归一化 x,解出 cubic-bezier 的 y(牛顿迭代求 t 再求 y)。
+pub fn bezier_eval(x: f64, c1x: f64, c1y: f64, c2x: f64, c2y: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    let mut t = x;
+    for _ in 0..12 {
+        let err = bezier_x(t, c1x, c2x) - x;
+        if err.abs() < 1e-7 {
+            break;
+        }
+        // 数值求导
+        let h = 1e-4;
+        let dx = (bezier_x((t + h).min(1.0), c1x, c2x) - bezier_x((t - h).max(0.0), c1x, c2x))
+            / (2.0 * h);
+        if dx.abs() < 1e-12 {
+            break;
+        }
+        t = (t - err / dx).clamp(0.0, 1.0);
+    }
+    bezier_y(t, c1y, c2y)
 }
 
 /// 单个关键帧(时间 = 时间轴 ticks)。
@@ -54,6 +104,9 @@ impl Animatable {
                     Interpolation::Linear => x,
                     Interpolation::Hold => return Some(a.value),
                     Interpolation::Smooth => x * x * (3.0 - 2.0 * x),
+                    Interpolation::Bezier { c1x, c1y, c2x, c2y } => {
+                        bezier_eval(x, c1x, c1y, c2x, c2y)
+                    }
                 };
                 return Some(a.value + (b.value - a.value) * x);
             }
@@ -202,5 +255,50 @@ mod tests {
         let g = ColorGrade::default();
         assert_eq!(g.contrast, 1.0);
         assert_eq!(g.saturation, 1.0);
+    }
+
+    #[test]
+    fn bezier_interpolation() {
+        let mut a = Animatable::default();
+        a.set(0, 0.0, Interpolation::ease_in_out());
+        a.set(10, 1.0, Interpolation::ease_in_out());
+        let mid = a.value_at(5).unwrap();
+        assert!((mid - 0.5).abs() < 1e-6, "中点应 0.5, got {mid}");
+        // 线性贝塞尔等价线性
+        let mut l = Animatable::default();
+        l.set(
+            0,
+            0.0,
+            Interpolation::Bezier {
+                c1x: 0.0,
+                c1y: 0.0,
+                c2x: 1.0,
+                c2y: 1.0,
+            },
+        );
+        l.set(
+            10,
+            1.0,
+            Interpolation::Bezier {
+                c1x: 0.0,
+                c1y: 0.0,
+                c2x: 1.0,
+                c2y: 1.0,
+            },
+        );
+        assert!((l.value_at(5).unwrap() - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bezier_eval_endpoints() {
+        assert!(bezier_eval(0.0, 0.42, 0.0, 0.58, 1.0).abs() < 1e-9);
+        assert!((bezier_eval(1.0, 0.42, 0.0, 0.58, 1.0) - 1.0).abs() < 1e-9);
+        let mut prev = -1.0;
+        for i in 0..=10 {
+            let x = i as f64 / 10.0;
+            let y = bezier_eval(x, 0.42, 0.0, 0.58, 1.0);
+            assert!(y >= prev, "应单调递增");
+            prev = y;
+        }
     }
 }

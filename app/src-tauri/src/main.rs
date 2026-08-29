@@ -767,7 +767,10 @@ fn drop_asset(
     };
 
     let lanes_needed = lanes_for_drop(asset.has_video, asset.has_audio, lane.as_deref());
-    diag::log_cmd("drop_asset", &format!("lane={lane:?} track={target_track} lanes={lanes_needed:?}"));
+    diag::log_cmd(
+        "drop_asset",
+        &format!("lane={lane:?} track={target_track} lanes={lanes_needed:?}"),
+    );
     if lanes_needed.is_empty() {
         return Err("素材既无视频也无音频".into());
     }
@@ -2607,14 +2610,29 @@ mod tests {
     #[test]
     fn lanes_for_drop_by_zone() {
         // 拖到音频区(大小写不敏感):只出音频块
-        assert_eq!(lanes_for_drop(true, true, Some("Audio")), vec![veditor_core::Lane::Audio]);
-        assert_eq!(lanes_for_drop(true, true, Some("audio")), vec![veditor_core::Lane::Audio]);
+        assert_eq!(
+            lanes_for_drop(true, true, Some("Audio")),
+            vec![veditor_core::Lane::Audio]
+        );
+        assert_eq!(
+            lanes_for_drop(true, true, Some("audio")),
+            vec![veditor_core::Lane::Audio]
+        );
         // 拖到视频区:只出视频块
-        assert_eq!(lanes_for_drop(true, true, Some("Video")), vec![veditor_core::Lane::Video]);
+        assert_eq!(
+            lanes_for_drop(true, true, Some("Video")),
+            vec![veditor_core::Lane::Video]
+        );
         // 无声视频拖到音频区:退化视频块
-        assert_eq!(lanes_for_drop(true, false, Some("Audio")), vec![veditor_core::Lane::Video]);
+        assert_eq!(
+            lanes_for_drop(true, false, Some("Audio")),
+            vec![veditor_core::Lane::Video]
+        );
         // 无提示:拆双块
-        assert_eq!(lanes_for_drop(true, true, None), vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]);
+        assert_eq!(
+            lanes_for_drop(true, true, None),
+            vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]
+        );
     }
 
     fn move_drops_at_exact_position() {
