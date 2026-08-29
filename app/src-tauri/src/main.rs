@@ -2042,6 +2042,23 @@ fn cancel_export() -> bool {
     true
 }
 
+/// 打开系统默认浏览器(一键发布跳转上传页)。
+#[tauri::command]
+fn open_browser(url: String) -> Result<(), String> {
+    let (cmd, arg) = if cfg!(target_os = "macos") {
+        ("open", url.clone())
+    } else if cfg!(target_os = "windows") {
+        ("cmd", format!("/C start {url}"))
+    } else {
+        ("xdg-open", url.clone())
+    };
+    std::process::Command::new(cmd)
+        .arg(&arg)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 平台导出预设列表。
 #[tauri::command]
 fn list_export_presets() -> Vec<serde_json::Value> {
@@ -2288,6 +2305,7 @@ fn main() {
             get_project_path,
             import_jianying,
             cancel_export,
+            open_browser,
             list_export_presets,
             set_chroma_key,
             analyze_scopes,

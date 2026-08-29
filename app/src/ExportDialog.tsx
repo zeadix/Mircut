@@ -96,6 +96,31 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     setBusy(false);
   }
 
+  /// 一键发布(降级):导出到指定路径后打开平台上传页。
+  async function onPublish(platform: string) {
+    if (doc.clips.length === 0) {
+      onStatus("时间轴为空:请先添加素材");
+      return;
+    }
+    setBusy(true);
+    setExportPct(0);
+    try {
+      await api.exportVideo(req);
+      const url =
+        platform === "bilibili"
+          ? "https://member.bilibili.com/platform/upload/video/frame"
+          : "https://creator.douyin.com/creator-micro/content/upload";
+      await api.openBrowser(url);
+      onStatus(`已导出并打开 ${platform === "bilibili" ? "B站" : "抖音"} 上传页,请手动上传`);
+      setExportPct(null);
+    } catch (e) {
+      onStatus(`发布失败: ${e}`);
+      setExportPct(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div
       style={{
@@ -235,6 +260,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose} disabled={busy}>
             关闭
+          </button>
+          <button className="btn" onClick={() => onPublish("douyin")} disabled={busy}>
+            一键发布(抖音)
+          </button>
+          <button className="btn" onClick={() => onPublish("bilibili")} disabled={busy}>
+            一键发布(B站)
           </button>
           <button className="btn primary" onClick={onExport} disabled={busy}>
             {busy ? "导出中…" : "开始导出"}

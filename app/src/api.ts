@@ -224,6 +224,10 @@ export async function cancelExport(): Promise<boolean> {
   return invoke("cancel_export");
 }
 
+export async function openBrowser(url: string): Promise<boolean> {
+  return invoke("open_browser", { url });
+}
+
 export interface ExportPresetInfo {
   name: string;
   width: number;
