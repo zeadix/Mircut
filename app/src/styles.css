@@ -90,3 +90,10 @@ body { background: #121317; }
 /* 时间轴画布容器:隐藏原生滚动条(纵向滚动用滚轮,横向用自绘条) */
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }
+
+/* 时间轴横向滚动容器:隐藏横向原生滚动条(自绘条接管),纵向原生滚动条保留可见 */
+.timeline-wrap::-webkit-scrollbar { width: 10px; height: 0; }
+.timeline-wrap::-webkit-scrollbar-thumb { background: #3a3d46; border-radius: 5px; }
+.timeline-wrap::-webkit-scrollbar-track { background: #1a1b1f; }
+.timeline-wrap { scrollbar-width: thin; }
+.timeline-wrap { scrollbar-color: #3a3d46 #1a1b1f; }

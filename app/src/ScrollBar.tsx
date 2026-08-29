@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface Props {
   total: number;     // 内容总长(px)
@@ -16,16 +16,18 @@ export default function ScrollBar({ total, viewport, offset, onScroll }: Props) 
   const dragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
-  const trackWidth = useRef(0);
+  // trackWidth 用 state(而非 ref):宽度变化需触发重渲染以更新 thumb 位置/宽度
+  const [trackWidth, setTrackWidth] = useState(0);
 
   // 不可滚动时隐藏(避免无意义的 0 长度条)
   const show = total > viewport + 1 && total > 0;
   const range = Math.max(1, total - viewport);
-  const thumbW = show ? Math.max(20, (trackWidth.current || 0) * (viewport / total)) : 0;
+  const tw = trackWidth || 0;
+  const thumbW = show ? Math.max(20, tw * (viewport / total)) : 0;
   const thumbX = show
     ? Math.min(
-        Math.max(0, (trackWidth.current || 0) - thumbW),
-        (range > 0 ? (offset / range) * ((trackWidth.current || 0) - thumbW) : 0)
+        Math.max(0, tw - thumbW),
+        (range > 0 ? (offset / range) * (tw - thumbW) : 0)
       )
     : 0;
 
@@ -45,7 +47,7 @@ export default function ScrollBar({ total, viewport, offset, onScroll }: Props) 
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     const track = trackRef.current.getBoundingClientRect();
-    trackWidth.current = track.width;
+    setTrackWidth(track.width);
     // 点击空白:跳转;点击 thumb:开始拖动
     const target = e.target as HTMLElement;
     if (target.dataset.thumb !== "1") {
@@ -59,8 +61,8 @@ export default function ScrollBar({ total, viewport, offset, onScroll }: Props) 
   function onPointerMove(e: React.PointerEvent) {
     if (!dragging.current) return;
     const dx = e.clientX - dragStartX.current;
-    if (trackWidth.current > 0) {
-      const delta = (dx / trackWidth.current) * range;
+    if (trackWidth > 0) {
+      const delta = (dx / trackWidth) * range;
       const next = Math.max(0, Math.min(range, dragStartOffset.current + delta));
       onScroll(Math.round(next));
     }
@@ -76,10 +78,10 @@ export default function ScrollBar({ total, viewport, offset, onScroll }: Props) 
     const el = trackRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      trackWidth.current = el.clientWidth;
+      setTrackWidth(el.clientWidth);
     });
     ro.observe(el);
-    trackWidth.current = el.clientWidth;
+    setTrackWidth(el.clientWidth);
     return () => ro.disconnect();
   }, []);
 

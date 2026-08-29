@@ -867,10 +867,11 @@ function TimelineInner({
         {/* 时间轴视口:静态层 + 动态层(播放头)分别做 stacking context,各占独立层 */}
         <div
           ref={wrapRef}
+          className="timeline-wrap"
           style={{
             flex: 1,
             minWidth: 0,
-            overflowX: "hidden",
+            overflowX: "auto",
             overflowY: "auto",
             position: "relative",
           }}
