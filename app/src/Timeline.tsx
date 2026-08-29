@@ -1,7 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges } from "./snap";
-import ScrollBar from "./ScrollBar";
 
 interface Props {
   doc: Document;
@@ -365,6 +364,22 @@ function TimelineInner({
       cancelAnimationFrame(rafRef.current);
     };
   }, [scrollX, pxPerTick, geo.totalH]);
+
+  // 鼠标滚轮 = 水平时间帧缩放(与上方缩放 slider 同步同一 pxPerTick);
+  // Shift+滚轮 = 纵向滚动(浏览器默认,不拦截)。
+  // React onWheel 是 passive 无法 preventDefault,故用原生监听。
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.shiftKey) return; // Shift 让出纵向滚动
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      setPxPerTick((p) => Math.min(4, Math.max(0.1, p * factor)));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   // 播放跟随
   useEffect(() => {
@@ -882,12 +897,6 @@ function TimelineInner({
               headInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`;
             }
           }}
-          onWheel={(e) => {
-            if (e.ctrlKey) {
-              e.preventDefault();
-              setPxPerTick((p) => Math.min(4, Math.max(0.1, p * (e.deltaY < 0 ? 1.12 : 0.89))));
-            }
-          }}
         >
           <div style={{ position: "relative", width: contentW, height: geo.totalH }}>
             <canvas
@@ -948,14 +957,6 @@ function TimelineInner({
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
-          />
-          <ScrollBar
-            total={contentW}
-            viewport={viewWRef.current}
-            offset={scrollX}
-            onScroll={(px: number) => {
-              if (wrapRef.current) wrapRef.current.scrollLeft = px;
-            }}
           />
         </div>
       </div>
