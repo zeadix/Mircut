@@ -528,7 +528,6 @@ export default function App() {
       if (e.key === "Delete") onRemove();
       if (e.key === " ") {
         e.preventDefault();
-        setPlaySpeed(1);
         setPlaying((p) => !p);
       }
       if (e.key === "j") {
@@ -745,7 +744,7 @@ export default function App() {
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
-            <button className="btn" onClick={() => { setPlaySpeed(1); setPlaying(p => !p); }} title="播放/暂停 (空格)">
+            <button className="btn" onClick={() => setPlaying((p) => !p)} title="播放/暂停 (空格)">
               {playing ? `暂停 ${playSpeed}x` : "播放"}
             </button>
             <select

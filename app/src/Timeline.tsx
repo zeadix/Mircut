@@ -467,9 +467,12 @@ function TimelineInner({
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const hit = hitTest(t, e.clientX, e.clientY);
-    // 播放头(关键帧红线)拖拽:命中块优先;未命中块且鼠标在播放头 ±10px 内 -> scrub
+    // 播放头(帧指示器)拖拽:鼠标在播放头红线 ±10px 内按下 -> scrub,优先于块命中
     const headHit = Math.abs(t - playheadRef.current) * pxPerTick <= 10;
-    if (hit) {
+    if (headHit) {
+      dragRef.current = { kind: "seek" };
+      onSeek(t);
+    } else if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
       if (track?.locked) return;
@@ -491,9 +494,6 @@ function TimelineInner({
         };
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
       }
-    } else if (headHit) {
-      dragRef.current = { kind: "seek" };
-      onSeek(t);
     } else {
       setGhost(null);
       setTrimHint(null);
