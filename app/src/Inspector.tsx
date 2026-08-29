@@ -1,6 +1,7 @@
 import { useEffect, useState, memo } from "react";
 import * as api from "./api";
 import type { Clip, Document } from "./types";
+import KeyframeEditor from "./KeyframeEditor";
 
 interface Props {
   doc: Document;
@@ -466,10 +467,22 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
         <button className="btn" onClick={() => addKeyframe("volume")}>
           + 音量帧
         </button>
-        <div style={{ color: "#667", marginTop: 4 }}>
-          {clip.fx?.opacity.keyframes.length ?? 0} 帧不透明度 /{" "}
-          {clip.fx?.volume.keyframes.length ?? 0} 帧音量
-        </div>
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="opacity"
+          label="不透明度"
+          keyframes={clip.fx?.opacity.keyframes ?? []}
+          tps={30}
+          onRefresh={onRefresh}
+        />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="volume"
+          label="音量"
+          keyframes={clip.fx?.volume.keyframes ?? []}
+          tps={30}
+          onRefresh={onRefresh}
+        />
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>

@@ -1177,6 +1177,10 @@ fn set_keyframe(
     t: Ticks,
     value: f64,
     interp: String,
+    c1x: Option<f64>,
+    c1y: Option<f64>,
+    c2x: Option<f64>,
+    c2y: Option<f64>,
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
@@ -1187,6 +1191,12 @@ fn set_keyframe(
     let interp = match interp.as_str() {
         "hold" => Interpolation::Hold,
         "smooth" => Interpolation::Smooth,
+        "bezier" => Interpolation::Bezier {
+            c1x: c1x.unwrap_or(0.42),
+            c1y: c1y.unwrap_or(0.0),
+            c2x: c2x.unwrap_or(0.58),
+            c2y: c2y.unwrap_or(1.0),
+        },
         _ => Interpolation::Linear,
     };
     match prop.as_str() {
@@ -1195,6 +1205,25 @@ fn set_keyframe(
         "volume" => fx.volume.set(t, value, interp),
         _ => return false,
     }
+    inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    true
+}
+
+/// 删除指定时间点的关键帧。
+#[tauri::command]
+fn remove_keyframe(clip_id: String, prop: String, t: Ticks, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
+        return false;
+    };
+    let mut fx = clip.fx;
+    let target: &mut veditor_core::Animatable = match prop.as_str() {
+        "opacity" => &mut fx.opacity,
+        "scale" => &mut fx.scale,
+        "volume" => &mut fx.volume,
+        _ => return false,
+    };
+    target.keyframes.retain(|k| k.t != t);
     inner.exec(Box::new(SetFx::new(clip_id, fx)));
     true
 }
@@ -2093,6 +2122,7 @@ fn main() {
             detach_audio,
             set_clip_fx,
             set_keyframe,
+            remove_keyframe,
             set_transition,
             remove_transition,
             transcribe,

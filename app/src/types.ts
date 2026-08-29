@@ -19,7 +19,12 @@ export interface AssetRef {
 export interface Keyframe {
   t: number;
   value: number;
-  interp: "Linear" | "Hold" | "Smooth";
+  interp: "Linear" | "Hold" | "Smooth" | "Bezier";
+  /// Bezier 控制点(interp=Bezier 时有效)。
+  c1x?: number;
+  c1y?: number;
+  c2x?: number;
+  c2y?: number;
 }
 
 export interface Animatable {

@@ -138,9 +138,28 @@ export async function setKeyframe(
   prop: "opacity" | "scale" | "volume",
   t: number,
   value: number,
-  interp: "linear" | "hold" | "smooth"
+  interp: "linear" | "hold" | "smooth" | "bezier",
+  bezier?: { c1x: number; c1y: number; c2x: number; c2y: number }
 ): Promise<boolean> {
-  return invoke("set_keyframe", { clipId, prop, t, value, interp });
+  return invoke("set_keyframe", {
+    clipId,
+    prop,
+    t,
+    value,
+    interp,
+    c1x: bezier?.c1x ?? null,
+    c1y: bezier?.c1y ?? null,
+    c2x: bezier?.c2x ?? null,
+    c2y: bezier?.c2y ?? null,
+  });
+}
+
+export async function removeKeyframe(
+  clipId: string,
+  prop: "opacity" | "scale" | "volume",
+  t: number
+): Promise<boolean> {
+  return invoke("remove_keyframe", { clipId, prop, t });
 }
 
 export async function setTransition(
