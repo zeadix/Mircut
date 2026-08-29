@@ -56,6 +56,10 @@ export async function listPlugins(): Promise<Plugin[]> {
   return invoke("list_plugins");
 }
 
+export async function autoChromaKey(clipId: string): Promise<string> {
+  return invoke("auto_chroma_key", { clipId });
+}
+
 export async function moveClip(
   clipId: string,
   newStart: number,

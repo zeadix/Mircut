@@ -579,7 +579,23 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
-        <legend>智能抠像(绿幕)</legend>
+        <legend>智能抠像(绿幕/纯色背景)</legend>
+        <button
+          className="btn"
+          style={{ marginBottom: 4 }}
+          onClick={async () => {
+            try {
+              const color = await api.autoChromaKey(clip.id);
+              setCk((c) => ({ ...c, similarity: 0.15, color }));
+              setSplitStatus(`已自动识别背景色 ${color}(降级:纯色背景抠像)`);
+              await onRefresh();
+            } catch (e) {
+              setSplitStatus(`抠像失败: ${e}`);
+            }
+          }}
+        >
+          自动识别背景抠像
+        </button>
         <label style={{ display: "block", marginBottom: 4 }}>
           强度:{" "}
           <input

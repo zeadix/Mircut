@@ -1370,6 +1370,60 @@ fn set_chroma_key(
     true
 }
 
+/// 智能抠像(降级):取首帧四角平均色作为背景色,自动应用色度抠像。
+/// (真·人像 AI 抠像需 onnx 模型,此为无模型降级)
+#[tauri::command(async)]
+fn auto_chroma_key(clip_id: String, state: State<'_, AppState>) -> Result<String, String> {
+    let (path, source_in) = {
+        let inner = state.inner.lock().unwrap();
+        let c = inner.doc.clip(&clip_id).cloned().ok_or("clip not found")?;
+        let a = inner
+            .doc
+            .asset(&c.asset.asset_id)
+            .cloned()
+            .ok_or("asset not found")?;
+        (a.path, c.asset.source_in)
+    };
+    // 取首帧缩到 1x1(整帧平均色近似背景色)
+    let out = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-ss",
+            &format!("{source_in:.3}"),
+            "-i",
+            &path,
+        ])
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=1:1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.stdout.len() < 3 {
+        return Err("无法读取画面".into());
+    }
+    let (r, g, b) = (out.stdout[0], out.stdout[1], out.stdout[2]);
+    let color = format!("#{r:02x}{g:02x}{b:02x}");
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(clip) = inner.doc.clip(&clip_id).cloned() {
+        let mut fx = clip.fx;
+        fx.chroma_key = veditor_core::ChromaKey {
+            similarity: 0.15,
+            color: color.clone(),
+            blend: 0.1,
+        };
+        inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    }
+    Ok(color)
+}
+
 /// 音频滤镜设置(淡入淡出/降噪/变声/EQ)。
 #[tauri::command]
 fn set_audio_fx(clip_id: String, fx: veditor_core::AudioFx, state: State<'_, AppState>) -> bool {
@@ -2346,6 +2400,7 @@ fn main() {
             list_export_presets,
             list_plugins,
             set_chroma_key,
+            auto_chroma_key,
             analyze_scopes,
             realtime_frame,
             set_render_mode,
