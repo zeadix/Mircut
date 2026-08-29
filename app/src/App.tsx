@@ -11,6 +11,7 @@ import Inspector from "./Inspector";
 import SubtitlePanel from "./SubtitlePanel";
 import TextPanel from "./TextPanel";
 import Scopes from "./Scopes";
+import ExportDialog from "./ExportDialog";
 import {
   FilmSlate,
   FolderOpen,
@@ -37,11 +38,7 @@ export default function App() {
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
   const [status, setStatus] = useState("");
-  const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
-  const [exportCmd, setExportCmd] = useState("");
-  const [exportPct, setExportPct] = useState<number | null>(null);
-  const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
-  const [presetIdx, setPresetIdx] = useState(0);
+  const [exportDialog, setExportDialog] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
@@ -118,21 +115,6 @@ export default function App() {
       setPlaySpeed(1);
     }
   }, [playhead, playing, doc]);
-
-  useEffect(() => {
-    api.listExportPresets().then(setPresets).catch(() => {});
-  }, []);
-
-  // 导出进度事件
-  useEffect(() => {
-    const un = listen<{ percent: number; done?: boolean }>("export-progress", (e) => {
-      setExportPct(e.payload.percent);
-      if (e.payload.done) setTimeout(() => setExportPct(null), 800);
-    });
-    return () => {
-      un.then((f) => f());
-    };
-  }, []);
 
   const refreshLockRef = useRef(0);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -280,52 +262,6 @@ export default function App() {
     await refresh();
   }
 
-  async function onExport() {
-    if (!doc) return;
-    // 导出前检查:片段数与重叠提示
-    if (doc.clips.length === 0) {
-      setStatus("时间轴为空:请拖入素材后再导出");
-      return;
-    }
-    const hasAudio = doc.clips.some((c) => {
-      const a = doc.assets.find((x) => x.id === c.asset.asset_id);
-      return a?.has_audio && !c.muted;
-    });
-    if (!hasAudio) setStatus("提示:未检测到有效音频,将导出纯视频");
-    let out = exportPath;
-    const picked = await saveDialog({
-      defaultPath: exportPath,
-      filters: [{ name: "视频", extensions: ["mp4"] }],
-    });
-    if (picked) {
-      out = picked;
-      setExportPath(picked);
-    }
-    const preset = presets[presetIdx];
-    const req: api.ExportRequest = {
-      outPath: out,
-      width: preset?.width ?? 1280,
-      height: preset?.height ?? 720,
-      fps: preset?.fps ?? Math.round(fps),
-      crf: preset?.crf ?? 20,
-    };
-    setStatus("导出中...");
-    setExportPct(0);
-    try {
-      const result = await api.exportVideo(req);
-      setStatus(`导出完成: ${result}`);
-    } catch (e) {
-      setStatus(`导出失败: ${e}`);
-      setExportPct(null);
-    }
-  }
-
-  async function onCancelExport() {
-    await api.cancelExport();
-    setStatus("已取消导出");
-    setExportPct(null);
-  }
-
   async function onSaveProject() {
     const picked = await saveDialog({
       defaultPath: "veditor-project.json",
@@ -368,19 +304,6 @@ export default function App() {
     } catch (e) {
       setStatus(`导入失败: ${e}`);
     }
-  }
-
-  async function onPreviewCmd() {
-    if (!doc) return;
-    const preset = presets[presetIdx];
-    const cmd = await api.previewExportCmd({
-      outPath: exportPath,
-      width: preset?.width ?? 1280,
-      height: preset?.height ?? 720,
-      fps: preset?.fps ?? Math.round(fps),
-      crf: preset?.crf ?? 20,
-    });
-    setExportCmd(cmd);
   }
 
   async function onClipMove(
@@ -602,7 +525,7 @@ export default function App() {
         <button className="btn" onClick={onImportJianying} title="导入剪映草稿">剪映导入</button>
         <button className="btn" onClick={onDetectBeats} title="节拍检测">节拍</button>
         <button className="btn" onClick={onRemoveSilence} title="AI 去静音">去静音</button>
-        <button className="btn primary" onClick={onExport}><Export size={16} /> 导出</button>
+        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> 导出</button>
       </header>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -772,43 +695,10 @@ export default function App() {
         </aside>
       </div>
 
-      {/* 导出设置(底部抽屉式简化) */}
-      <footer style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 16px", background: "#1a1b20", borderTop: "1px solid #2a2c33", fontSize: 12 }}>
-        <span>导出路径:</span>
-        <input
-          className="ti"
-          value={exportPath}
-          onChange={(e) => setExportPath(e.target.value)}
-          style={{ width: 240 }}
-        />
-        <select
-          className="ti"
-          value={presetIdx}
-          onChange={(e) => setPresetIdx(Number(e.target.value))}
-          title="平台预设"
-        >
-          {presets.map((p, i) => (
-            <option key={p.name} value={i}>
-              {p.name} ({p.width}x{p.height}@{p.fps})
-            </option>
-          ))}
-        </select>
-        <button className="btn" onClick={onPreviewCmd}>FFmpeg 命令预览</button>
-        {exportPct !== null && (
-          <>
-            <div style={{ flex: 1, maxWidth: 220, height: 8, background: "#24262c", borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ width: `${exportPct}%`, height: "100%", background: "#3d5a99", transition: "width 0.2s" }} />
-            </div>
-            <span style={{ color: "#8b93a1", width: 44 }}>{Math.round(exportPct)}%</span>
-            <button className="btn" onClick={onCancelExport}>取消</button>
-          </>
-        )}
-        {exportCmd && (
-          <code style={{ color: "#9aa8b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={exportCmd}>
-            {exportCmd.slice(0, 120)}
-          </code>
-        )}
-      </footer>
+      {/* 导出操作窗口(所有导出配置集中于此) */}
+      {exportDialog && doc && (
+        <ExportDialog doc={doc} fps={fps} onClose={() => setExportDialog(false)} onStatus={setStatus} />
+      )}
     </div>
   );
 }
