@@ -843,8 +843,9 @@ function TimelineInner({
           ref={wrapRef}
           style={{
             flex: 1,
+            minHeight: 0,
             overflowX: "auto",
-            overflowY: "hidden",
+            overflowY: "auto",
             position: "relative",
           }}
           onScroll={(e) => setScrollX((e.target as HTMLDivElement).scrollLeft)}
