@@ -157,8 +157,6 @@ export default function App() {
       }
     }
     setDoc(d);
-    // 诊断:点击时间轴"块消失"问题,打每次 setDoc 后的块数
-    console.log(`[refresh] doc.clips.length = ${d.clips.length}, tracks=${d.tracks.length}`);
   }, []);
 
   useEffect(() => {
@@ -249,16 +247,9 @@ export default function App() {
   }
 
   async function addToTimeline(assetId: string) {
-    // 文件轨道模型:双击卡片 = 在新文件轨道创建(完整视频自动拆绿/蓝双块),
-    // 落点 = 最上层轨道内容末尾之后。
     if (!doc) return;
-    const dur = Math.round((doc.assets.find((a) => a.id === assetId)?.duration_secs ?? 1) * fps);
-    const endTick = doc.clips.reduce(
-      (m, c) => Math.max(m, c.start + c.duration),
-      0
-    );
     try {
-      await api.dropAsset(assetId, "__newlayer__", endTick, null);
+      await api.dropAsset(assetId, "__newlayer__", playhead, null);
     } catch (e) {
       setStatus(`添加失败: ${String(e).slice(0, 120)}`);
     }
@@ -599,7 +590,7 @@ export default function App() {
       <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "#1a1b20", borderBottom: "1px solid #2a2c33" }}>
         <FilmSlate size={22} />
         <strong>VEditor</strong>
-        <span style={{ flex: 1 }} /><span style={{color:"#8b93a1",fontSize:11}} title="内存 doc.clips 数(对比点击时间轴前/后)">clips={doc?.clips.length ?? 0}</span>
+        <span style={{ flex: 1 }} />
         <button className="btn" onClick={onUndo} title="撤销 (Ctrl+Z)"><ArrowCounterClockwise size={16} /></button>
         <button className="btn" onClick={onRedo} title="重做 (Ctrl+Shift+Z)"><ArrowClockwise size={16} /></button>
         <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
