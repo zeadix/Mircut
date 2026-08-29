@@ -22,6 +22,8 @@ pub struct ExportParams {
     /// 如 "aac"。
     pub acodec: String,
     pub audio_bitrate: String,
+    /// 响度标准化(EBU R128 loudnorm,-14 LUFS 对标流媒体)。
+    pub loudness_normalize: bool,
 }
 
 impl Default for ExportParams {
@@ -35,6 +37,7 @@ impl Default for ExportParams {
             fps: 30,
             acodec: "aac".into(),
             audio_bitrate: "192k".into(),
+            loudness_normalize: false,
         }
     }
 }
@@ -490,10 +493,18 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
 
     if !audio_labels.is_empty() {
         let joined = audio_labels.concat();
-        filters.push(format!(
-            "{joined}amix=inputs={}:normalize=0[aout]",
-            audio_labels.len()
-        ));
+        if params.loudness_normalize {
+            // 响度标准化:EBU R128 动态模式(-14 LUFS 对标流媒体)
+            filters.push(format!(
+                "{joined}amix=inputs={}:normalize=0,loudnorm=I=-14:LRA=7:TP=-1.5[aout]",
+                audio_labels.len()
+            ));
+        } else {
+            filters.push(format!(
+                "{joined}amix=inputs={}:normalize=0[aout]",
+                audio_labels.len()
+            ));
+        }
     }
 
     // 字幕烧录 + 文字叠层:在最终视频(vout,可能含画中画)之后逐条 drawtext
@@ -1362,6 +1373,7 @@ mod tests {
             fps: 30,
             acodec: "aac".into(),
             audio_bitrate: "192k".into(),
+            loudness_normalize: false,
         };
         let args = compile_ffmpeg_cmd(&d, &params);
         let cancel = Arc::new(AtomicBool::new(false));

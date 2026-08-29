@@ -195,6 +195,7 @@ export interface ExportRequest {
   height: number;
   fps: number;
   crf: number;
+  loudnessNormalize?: boolean;
 }
 
 export async function exportVideo(req: ExportRequest): Promise<string> {
@@ -205,6 +206,7 @@ export async function exportVideo(req: ExportRequest): Promise<string> {
       height: req.height,
       fps: req.fps,
       crf: req.crf,
+      loudness_normalize: req.loudnessNormalize ?? false,
     },
   };
   return invoke("export_video", payload);
@@ -235,6 +237,7 @@ export async function previewExportCmd(req: ExportRequest): Promise<string> {
       height: req.height,
       fps: req.fps,
       crf: req.crf,
+      loudness_normalize: req.loudnessNormalize ?? false,
     },
   };
   return invoke("preview_export_cmd", payload);

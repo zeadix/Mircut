@@ -1850,6 +1850,8 @@ struct ExportRequest {
     height: u32,
     fps: u32,
     crf: u32,
+    #[serde(default)]
+    loudness_normalize: bool,
 }
 
 #[tauri::command(async)]
@@ -1867,6 +1869,7 @@ fn export_video(
             height: req.height,
             fps: req.fps,
             crf: req.crf,
+            loudness_normalize: req.loudness_normalize,
             ..Default::default()
         };
         let total = inner

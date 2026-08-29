@@ -22,6 +22,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
   const [presetIdx, setPresetIdx] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [loudness, setLoudness] = useState(false);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -47,8 +48,9 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
       height: preset?.height ?? 720,
       fps: preset?.fps ?? Math.round(fps),
       crf: preset?.crf ?? 20,
+      loudnessNormalize: loudness,
     }),
-    [exportPath, preset, fps]
+    [exportPath, preset, fps, loudness]
   );
 
   async function onPickSavePath() {
@@ -148,6 +150,16 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
               </option>
             ))}
           </select>
+        </label>
+
+        {/* 响度标准化 */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={loudness}
+            onChange={(e) => setLoudness(e.target.checked)}
+          />
+          响度标准化 (-14 LUFS, 对标流媒体)
         </label>
 
         {/* 输出路径 */}
