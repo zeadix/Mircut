@@ -147,10 +147,7 @@ export async function setKeyframe(
     t,
     value,
     interp,
-    c1x: bezier?.c1x ?? null,
-    c1y: bezier?.c1y ?? null,
-    c2x: bezier?.c2x ?? null,
-    c2y: bezier?.c2y ?? null,
+    bezier: bezier ?? null,
   });
 }
 

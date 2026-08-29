@@ -1170,6 +1170,14 @@ fn set_clip_fx(clip_id: String, fx: ClipFx, state: State<'_, AppState>) -> bool 
     true
 }
 
+#[derive(serde::Deserialize)]
+struct BezierPoints {
+    c1x: f64,
+    c1y: f64,
+    c2x: f64,
+    c2y: f64,
+}
+
 #[tauri::command]
 fn set_keyframe(
     clip_id: String,
@@ -1177,10 +1185,7 @@ fn set_keyframe(
     t: Ticks,
     value: f64,
     interp: String,
-    c1x: Option<f64>,
-    c1y: Option<f64>,
-    c2x: Option<f64>,
-    c2y: Option<f64>,
+    bezier: Option<BezierPoints>,
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
@@ -1191,12 +1196,20 @@ fn set_keyframe(
     let interp = match interp.as_str() {
         "hold" => Interpolation::Hold,
         "smooth" => Interpolation::Smooth,
-        "bezier" => Interpolation::Bezier {
-            c1x: c1x.unwrap_or(0.42),
-            c1y: c1y.unwrap_or(0.0),
-            c2x: c2x.unwrap_or(0.58),
-            c2y: c2y.unwrap_or(1.0),
-        },
+        "bezier" => {
+            let b = bezier.unwrap_or(BezierPoints {
+                c1x: 0.42,
+                c1y: 0.0,
+                c2x: 0.58,
+                c2y: 1.0,
+            });
+            Interpolation::Bezier {
+                c1x: b.c1x,
+                c1y: b.c1y,
+                c2x: b.c2x,
+                c2y: b.c2y,
+            }
+        }
         _ => Interpolation::Linear,
     };
     match prop.as_str() {
@@ -2635,8 +2648,7 @@ mod tests {
         }
     }
 
-    /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
-    #[test]
+    /// 分块策略(按拖放区域)。
     #[test]
     fn lanes_for_drop_by_zone() {
         // 拖到音频区(大小写不敏感):只出音频块
@@ -2665,6 +2677,8 @@ mod tests {
         );
     }
 
+    /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
+    #[test]
     fn move_drops_at_exact_position() {
         let st = AppState::default();
         {
