@@ -766,42 +766,8 @@ fn drop_asset(
         }
     };
 
-    // 分块策略(按拖放区域):
-    //  - 落视频区(lane=video) -> 只生成视频块;素材无视频流则退化音频块
-    //  - 落音频区(lane=audio) -> 只生成音频块;素材无音轨则退化视频块
-    //  - 无提示(双击追加等) -> 完整视频拆双块
-    // 前端传 "Video"/"Audio"(大写),统一转小写匹配
-    let lane_lc = lane.as_deref().map(|s| s.to_ascii_lowercase());
-    let lanes_needed: Vec<veditor_core::Lane> = match lane_lc.as_deref() {
-        Some("video") => {
-            if asset.has_video {
-                vec![veditor_core::Lane::Video]
-            } else if asset.has_audio {
-                vec![veditor_core::Lane::Audio]
-            } else {
-                vec![]
-            }
-        }
-        Some("audio") => {
-            if asset.has_audio {
-                vec![veditor_core::Lane::Audio]
-            } else if asset.has_video {
-                vec![veditor_core::Lane::Video]
-            } else {
-                vec![]
-            }
-        }
-        _ => {
-            let mut v = Vec::new();
-            if asset.has_video {
-                v.push(veditor_core::Lane::Video);
-            }
-            if asset.has_audio {
-                v.push(veditor_core::Lane::Audio);
-            }
-            v
-        }
-    };
+    let lanes_needed = lanes_for_drop(asset.has_video, asset.has_audio, lane.as_deref());
+    diag::log_cmd("drop_asset", &format!("lane={lane:?} track={target_track} lanes={lanes_needed:?}"));
     if lanes_needed.is_empty() {
         return Err("素材既无视频也无音频".into());
     }
@@ -915,6 +881,43 @@ fn duplicate_clip(
     inner.exec(Box::new(AddClip { clip: dup }));
     inner.schedule_track(&track_id, Some(&new_id));
     Ok(new_id)
+}
+
+/// 分块策略(按拖放区域):落视频区只出视频块(无视频流退化音频块);
+/// 落音频区只出音频块(无音轨退化视频块);无提示则完整拆双块。
+/// lane 大小写不敏感。
+fn lanes_for_drop(has_video: bool, has_audio: bool, lane: Option<&str>) -> Vec<veditor_core::Lane> {
+    let lc = lane.map(|s| s.to_ascii_lowercase());
+    match lc.as_deref() {
+        Some("video") => {
+            if has_video {
+                vec![veditor_core::Lane::Video]
+            } else if has_audio {
+                vec![veditor_core::Lane::Audio]
+            } else {
+                vec![]
+            }
+        }
+        Some("audio") => {
+            if has_audio {
+                vec![veditor_core::Lane::Audio]
+            } else if has_video {
+                vec![veditor_core::Lane::Video]
+            } else {
+                vec![]
+            }
+        }
+        _ => {
+            let mut v = Vec::new();
+            if has_video {
+                v.push(veditor_core::Lane::Video);
+            }
+            if has_audio {
+                v.push(veditor_core::Lane::Audio);
+            }
+            v
+        }
+    }
 }
 
 /// 手动新建空文件轨道。
@@ -2601,6 +2604,19 @@ mod tests {
 
     /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
     #[test]
+    #[test]
+    fn lanes_for_drop_by_zone() {
+        // 拖到音频区(大小写不敏感):只出音频块
+        assert_eq!(lanes_for_drop(true, true, Some("Audio")), vec![veditor_core::Lane::Audio]);
+        assert_eq!(lanes_for_drop(true, true, Some("audio")), vec![veditor_core::Lane::Audio]);
+        // 拖到视频区:只出视频块
+        assert_eq!(lanes_for_drop(true, true, Some("Video")), vec![veditor_core::Lane::Video]);
+        // 无声视频拖到音频区:退化视频块
+        assert_eq!(lanes_for_drop(true, false, Some("Audio")), vec![veditor_core::Lane::Video]);
+        // 无提示:拆双块
+        assert_eq!(lanes_for_drop(true, true, None), vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]);
+    }
+
     fn move_drops_at_exact_position() {
         let st = AppState::default();
         {

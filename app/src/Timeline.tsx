@@ -701,6 +701,15 @@ function TimelineInner({
     setDropHint(null);
     if (!assetId) return;
     const target = dropTargetFromEvent(e);
+    // 诊断:定位"拖到音频区却生成视频块"
+    import("@tauri-apps/api/core")
+      .then(({ invoke }) =>
+        invoke("log_js_error", {
+          kind: "drop",
+          detail: `clientY=${e.clientY} rectTop=${canvasRef.current?.getBoundingClientRect().top} trackId=${target?.trackId} lane=${target?.lane}`,
+        }).catch(() => {})
+      )
+      .catch(() => {});
     if (!target) return;
     e.preventDefault();
     onDropAsset?.(assetId, target.trackId, target.start, target.lane);
