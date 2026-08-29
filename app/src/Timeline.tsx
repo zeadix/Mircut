@@ -394,19 +394,24 @@ function TimelineInner({
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const px = clientX - rect.left;
+    // 必先按 Y 锁定行:再在该行内找段,避免误命中其他行
+    let row = -1;
     let laneFilter: string | null | undefined;
     if (clientY !== undefined) {
       const yIn = clientY - rect.top;
-      const row = Math.floor(yIn / trackH);
+      row = Math.floor(yIn / trackH);
       const track = doc.tracks[row];
       if (!track) return null;
       if (track.kind === "File") {
-        laneFilter = yIn - row * trackH < trackH / 2 ? "__TOP__" : "Audio";
+        laneFilter = yIn - row * trackH < trackH / 2 ? "Video" : "Audio";
       } else {
-        laneFilter = null;
+        laneFilter = track.kind === "Audio" ? "Audio" : "Video";
       }
     }
-    for (const c of doc.clips) {
+    if (row < 0) laneFilter = undefined;
+    // 在该行内搜索(没有 Y 时退化为全文档)
+    const candidates = row >= 0 ? doc.clips.filter((c) => c.track_id === doc.tracks[row]?.id) : doc.clips;
+    for (const c of candidates) {
       if (laneFilter !== undefined) {
         const cLane = c.lane ?? null;
         if (laneFilter === "__TOP__") {
