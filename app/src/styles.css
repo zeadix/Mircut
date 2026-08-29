@@ -1,15 +1,20 @@
 * { box-sizing: border-box; }
 
 /* 原生软件感:全局禁用文本选择与网页拖拽行为 */
-html,
-body,
-#root {
+html, body {
   margin: 0;
   background: #121317;
-  overflow: hidden;
+  height: 100%;
+  min-height: 100vh;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+}
+#root {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
 }
 
 /* 输入类控件保持文本交互(可选中/光标) */

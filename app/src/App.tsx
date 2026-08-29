@@ -676,7 +676,7 @@ export default function App() {
         </aside>
 
         {/* 主区 */}
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
             <button className="btn" onClick={() => { setPlaySpeed(1); setPlaying(p => !p); }} title="播放/暂停 (空格)">
               {playing ? `暂停 ${playSpeed}x` : "播放"}
