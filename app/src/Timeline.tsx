@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
-import { snapToEdges } from "./snap";
+import { snapToEdges, computeMagneticStart } from "./snap";
 
 interface Props {
   doc: Document;
@@ -403,6 +403,14 @@ function TimelineInner({
     return Math.max(0, Math.round((clientX - rect.left) / pxPerTick));
   }
 
+  /// 片段所在半区("Video"/"Audio"):File 轨按 lane(缺省视为 Video),旧轨按 kind。
+  function laneOf(c: { track_id: string; lane?: string | null }): "Video" | "Audio" {
+    const track = doc.tracks.find((tr) => tr.id === c.track_id);
+    if (!track) return "Video";
+    if (track.kind === "File") return (c.lane ?? "Video") === "Audio" ? "Audio" : "Video";
+    return track.kind === "Audio" ? "Audio" : "Video";
+  }
+
   function snapTicks(t: number, excludeClipId?: string): number {
     return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 6, alignEdges ?? []);
   }
@@ -536,9 +544,19 @@ function TimelineInner({
       const gh = ghostTrack?.kind === "File" ? half - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       const rawStart = Math.max(0, t - grab);
+      // 磁吸插入:与目标块重叠时按中心点判放左/放右,虚影实时反映
+      const mt = moveTargetRef.current;
+      const magStart = computeMagneticStart(
+        rawStart,
+        clip,
+        doc.clips,
+        laneOf,
+        mt?.trackId ?? clip.track_id,
+        mt?.lane ?? null
+      );
       setGhost({
         clipId: d.clipId,
-        start: rawStart,
+        start: magStart,
         duration: clip.duration,
         trackIdx: useRow,
         laneOff,
@@ -594,11 +612,16 @@ function TimelineInner({
       const clip = doc.clips.find((c) => c.id === d.clipId);
       if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
-        // move 拖动不应吸附边缘(会"跳"到其它块的边界)。
-        // 仅做 ticks 圆整(向下取整到 pxPerTick 整数倍)即可。
         const rawT = ticksFromClientX(e.clientX) - grab;
-        const t = Math.max(0, Math.floor(rawT));
-        onClipMove(d.clipId, t, target.trackId, target.lane ?? undefined);
+        const magStart = computeMagneticStart(
+          rawT,
+          clip,
+          doc.clips,
+          laneOf,
+          target.trackId,
+          target.lane ?? null
+        );
+        onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
         setActiveTrackId(target.trackId);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
