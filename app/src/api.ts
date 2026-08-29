@@ -223,3 +223,23 @@ export async function previewExportCmd(req: ExportRequest): Promise<string> {
   };
   return invoke("preview_export_cmd", payload);
 }
+
+export async function newProject(): Promise<Document> {
+  return invoke("new_project");
+}
+
+export async function listRecentProjects(): Promise<string[]> {
+  return invoke("list_recent_projects");
+}
+
+export async function getProjectPath(): Promise<string | null> {
+  return invoke("get_project_path");
+}
+
+export async function saveProject(path: string): Promise<void> {
+  await invoke("save_project", { path });
+}
+
+export async function openProject(path: string): Promise<Document> {
+  return invoke("open_project", { path });
+}

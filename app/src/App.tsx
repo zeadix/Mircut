@@ -39,6 +39,9 @@ export default function App() {
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
   const [status, setStatus] = useState("");
   const [exportDialog, setExportDialog] = useState(false);
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
@@ -143,6 +146,9 @@ export default function App() {
 
   useEffect(() => {
     refresh();
+    refreshProjectPath();
+    loadRecentProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 诊断:后端 VEDITOR_AUTO_CLICK=1 时,自动播放+模拟时间轴点击风暴
@@ -262,18 +268,71 @@ export default function App() {
     await refresh();
   }
 
-  async function onSaveProject() {
-    const picked = await saveDialog({
-      defaultPath: "veditor-project.json",
-      filters: [{ name: "VEditor 项目", extensions: ["json"] }],
-    });
-    if (!picked) return;
+  async function refreshProjectPath() {
     try {
-      await invoke("save_project", { path: picked });
+      setProjectPath(await api.getProjectPath());
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  async function loadRecentProjects() {
+    try {
+      setRecentProjects(await api.listRecentProjects());
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  async function onNewProject() {
+    try {
+      await api.newProject();
+      setProjectPath(null);
+      await refresh();
+      setStatus("已新建工程");
+    } catch (e) {
+      setStatus(`新建失败: ${e}`);
+    }
+    setFileMenuOpen(false);
+  }
+
+  /// 保存:已有路径则直接存,否则弹框(等价另存为)。
+  async function onSaveProject() {
+    let target = projectPath;
+    if (!target) {
+      const picked = await saveDialog({
+        defaultPath: "veditor-project.json",
+        filters: [{ name: "VEditor 项目", extensions: ["json"] }],
+      });
+      target = picked ?? null;
+      if (!target) return;
+    }
+    try {
+      await api.saveProject(target);
+      setProjectPath(target);
+      await loadRecentProjects();
       setStatus("项目已保存");
     } catch (e) {
       setStatus(`保存失败: ${e}`);
     }
+    setFileMenuOpen(false);
+  }
+
+  async function onSaveAsProject() {
+    const picked = await saveDialog({
+      defaultPath: projectPath ?? "veditor-project.json",
+      filters: [{ name: "VEditor 项目", extensions: ["json"] }],
+    });
+    if (!picked) return;
+    try {
+      await api.saveProject(picked);
+      setProjectPath(picked);
+      await loadRecentProjects();
+      setStatus("项目已另存为");
+    } catch (e) {
+      setStatus(`另存失败: ${e}`);
+    }
+    setFileMenuOpen(false);
   }
 
   async function onOpenProject() {
@@ -283,22 +342,31 @@ export default function App() {
     });
     const path = Array.isArray(picked) ? picked[0] : picked;
     if (!path) return;
+    await openProjectPath(path);
+  }
+
+  async function openProjectPath(path: string) {
     try {
-      await invoke("open_project", { path });
+      await api.openProject(path);
+      setProjectPath(path);
+      await loadRecentProjects();
       await refresh();
       setStatus("项目已打开");
     } catch (e) {
       setStatus(`打开失败: ${e}`);
     }
+    setFileMenuOpen(false);
   }
 
   async function onImportJianying() {
+    setFileMenuOpen(false);
     const picked = await openDialog({ multiple: false, directory: true });
     const dir = Array.isArray(picked) ? picked[0] : picked;
     if (!dir) return;
     setStatus("导入剪映草稿...");
     try {
       await invoke("import_jianying", { draftDir: dir });
+      setProjectPath(null);
       await refresh();
       setStatus("剪映草稿已导入");
     } catch (e) {
@@ -500,10 +568,16 @@ export default function App() {
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.shiftKey ? onRedo() : onUndo();
       }
+      // 文件菜单快捷键
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "n") { e.preventDefault(); onNewProject(); }
+        else if (e.key === "o") { e.preventDefault(); onOpenProject(); }
+        else if (e.key === "s") { e.preventDefault(); onSaveProject(); }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, playhead, doc]);
+  }, [selected, playhead, doc, projectPath]);
 
   if (!doc) return <div style={{ color: "#ccc", padding: 24 }}>加载中...</div>;
 
@@ -519,10 +593,80 @@ export default function App() {
         <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
         <button className="btn" onClick={onRemove} disabled={!selected} title="删除 (Del)"><Trash size={16} /></button>
         <button className="btn" onClick={onRippleDelete} disabled={!selected} title="波纹删除"><Waves size={16} /></button>
+        <div style={{ position: "relative" }}>
+          <button className="btn" onClick={() => setFileMenuOpen((v) => !v)}>文件</button>
+          {fileMenuOpen && (
+            <>
+              <div
+                style={{ position: "fixed", inset: 0, zIndex: 100 }}
+                onMouseDown={() => setFileMenuOpen(false)}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  left: 0,
+                  marginTop: 4,
+                  background: "#1e2026",
+                  border: "1px solid #3a3d46",
+                  borderRadius: 8,
+                  padding: 6,
+                  minWidth: 210,
+                  fontSize: 12,
+                  color: "#dfe3ea",
+                  boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
+                  zIndex: 101,
+                }}
+              >
+                {[
+                  { label: "新建工程", fn: onNewProject, hint: "Ctrl+N" },
+                  { label: "打开…", fn: onOpenProject, hint: "Ctrl+O" },
+                  { label: "保存", fn: onSaveProject, hint: "Ctrl+S" },
+                  { label: "另存为…", fn: onSaveAsProject },
+                  { label: "导入剪映草稿…", fn: onImportJianying },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    className="btn"
+                    style={{
+                      width: "100%",
+                      justifyContent: "space-between",
+                      marginBottom: 3,
+                    }}
+                    onClick={item.fn}
+                  >
+                    <span>{item.label}</span>
+                    {item.hint && <span style={{ color: "#667" }}>{item.hint}</span>}
+                  </button>
+                ))}
+                {recentProjects.length > 0 && (
+                  <>
+                    <div style={{ borderTop: "1px solid #2a2c33", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "#667" }}>
+                      最近的工程
+                    </div>
+                    {recentProjects.map((p) => (
+                      <button
+                        key={p}
+                        className="btn"
+                        style={{
+                          width: "100%",
+                          justifyContent: "flex-start",
+                          marginBottom: 2,
+                          textAlign: "left",
+                        }}
+                        title={p}
+                        onClick={() => openProjectPath(p)}
+                      >
+                        {p.split("/").pop()}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </div>
         <button className="btn" onClick={onCreateFileTrack} title="创建文件轨道"><Plus size={14} /> 文件轨道</button>
-        <button className="btn" onClick={onSaveProject} title="保存项目">保存</button>
-        <button className="btn" onClick={onOpenProject} title="打开项目">打开</button>
-        <button className="btn" onClick={onImportJianying} title="导入剪映草稿">剪映导入</button>
         <button className="btn" onClick={onDetectBeats} title="节拍检测">节拍</button>
         <button className="btn" onClick={onRemoveSilence} title="AI 去静音">去静音</button>
         <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> 导出</button>

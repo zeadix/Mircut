@@ -50,6 +50,32 @@ fn autosave_path() -> std::path::PathBuf {
         .join(".veditor/autosave.json")
 }
 
+/// 最近工程列表文件路径。
+fn recent_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join(".veditor/recent.json")
+}
+
+fn load_recent() -> Vec<String> {
+    std::fs::read_to_string(recent_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn push_recent(path: &str) {
+    let mut v = load_recent();
+    v.retain(|p| p != path);
+    v.insert(0, path.to_string());
+    v.truncate(10);
+    if let Some(parent) = recent_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(&v) {
+        let _ = std::fs::write(recent_path(), json);
+    }
+}
+
 impl Inner {
     /// 磁吸推挤:对指定轨道消重叠(moved 保位),生成追加 MoveClip 命令。
     /// 返回是否有变更。
@@ -1579,7 +1605,50 @@ fn save_project(path: String, state: State<'_, AppState>) -> Result<(), String> 
     let mut inner = state.inner.lock().unwrap();
     inner.project_path = Some(PathBuf::from(&path));
     let json = serde_json::to_string_pretty(&inner.doc).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    push_recent(&path);
+    Ok(())
+}
+
+/// 新建工程:清空文档与撤销栈,仅保留一条默认文件轨。
+#[tauri::command]
+fn new_project(state: State<'_, AppState>) -> Result<Document, String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.doc = Document::default();
+    inner.doc.tracks.push(Track {
+        id: "f1".into(),
+        kind: TrackKind::File,
+        name: "文件轨 1".into(),
+        locked: false,
+        hidden: false,
+        muted: false,
+    });
+    inner.project_path = None;
+    inner.stack = CommandStack::new();
+    let snapshot = inner.doc.clone();
+    if let Some(r) = inner.renderer.as_mut() {
+        r.invalidate(&snapshot);
+    }
+    if let Some(rt) = inner.realtime.as_mut() {
+        rt.invalidate(&snapshot);
+    }
+    Ok(inner.doc.clone())
+}
+
+/// 最近工程列表。
+#[tauri::command]
+fn list_recent_projects() -> Vec<String> {
+    load_recent()
+}
+
+/// 当前工程路径(未保存则为空)。
+#[tauri::command]
+fn get_project_path(state: State<'_, AppState>) -> Option<String> {
+    let inner = state.inner.lock().unwrap();
+    inner
+        .project_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -1589,9 +1658,14 @@ fn open_project(path: String, state: State<'_, AppState>) -> Result<Document, St
     let doc: Document = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     inner.doc = doc.clone();
     inner.project_path = Some(PathBuf::from(&path));
+    inner.stack = CommandStack::new();
     if let Some(r) = inner.renderer.as_mut() {
         r.invalidate(&doc);
     }
+    if let Some(rt) = inner.realtime.as_mut() {
+        rt.invalidate(&doc);
+    }
+    push_recent(&path);
     Ok(doc)
 }
 
@@ -2024,6 +2098,9 @@ fn main() {
             tts_synthesize,
             save_project,
             open_project,
+            new_project,
+            list_recent_projects,
+            get_project_path,
             import_jianying,
             cancel_export,
             list_export_presets,
