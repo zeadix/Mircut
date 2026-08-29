@@ -5,7 +5,7 @@
   "identifier": "com.veditor.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:8560",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
