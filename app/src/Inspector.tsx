@@ -27,6 +27,9 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [outSecs, setOutSecs] = useState("0.00");
   // 画中画(上层轨片段)
   const [pip, setPip] = useState({ scale: 0.35, x: 0.72, y: 0.72 });
+  const [mask, setMask] = useState<{ enabled: boolean; x: number; y: number; w: number; h: number }>({
+    enabled: false, x: 0.5, y: 0.5, w: 0.6, h: 0.6,
+  });
 
   useEffect(() => {
     if (clip) {
@@ -81,6 +84,19 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
       });
     }
   }, [clip?.id]);
+
+  /// 蒙版写入 fx.mask(切换开关/参数)。
+  async function applyMask(next?: { enabled: boolean; x: number; y: number; w: number; h: number }) {
+    if (!clip) return;
+    const m = next ?? mask;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const fx = clip.fx ?? emptyFx();
+    fx.mask = m.enabled
+      ? { kind: "Rect", x: m.x, y: m.y, w: m.w, h: m.h, feather: 0, invert: false }
+      : (null as never);
+    await invoke("set_clip_fx", { clipId: clip.id, fx });
+    await onRefresh();
+  }
 
   /// 画中画参数写入(fx 静态单帧)。
   async function applyPip() {
@@ -395,6 +411,44 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
           )
         )}
         <div style={{ color: "#667", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
+      </fieldset>
+
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>蒙版</legend>
+        <label style={{ display: "block", marginBottom: 4 }}>
+          <input
+            type="checkbox"
+            checked={mask.enabled}
+            onChange={(e) => {
+              const next = { ...mask, enabled: e.target.checked };
+              setMask(next);
+              applyMask(next);
+            }}
+          />{" "}
+          启用矩形蒙版
+        </label>
+        {mask.enabled &&
+          ([
+            ["x", "中心X", 0, 1],
+            ["y", "中心Y", 0, 1],
+            ["w", "宽", 0.05, 1],
+            ["h", "高", 0.05, 1],
+          ] as const).map(([key, label, min, max]) => (
+            <label key={key} style={{ display: "block", marginBottom: 3 }}>
+              {label}: {(mask[key] * 100).toFixed(0)}%
+              <input
+                type="range"
+                min={min}
+                max={max}
+                step={0.01}
+                value={mask[key]}
+                onChange={(e) => setMask({ ...mask, [key]: parseFloat(e.target.value) })}
+                onMouseUp={() => applyMask()}
+                onTouchEnd={() => applyMask()}
+                style={{ width: "100%" }}
+              />
+            </label>
+          ))}
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>

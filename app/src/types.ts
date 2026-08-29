@@ -59,6 +59,16 @@ export interface LutApply {
   strength: number;
 }
 
+export interface Mask {
+  kind: "Rect" | "Linear";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  feather: number;
+  invert: boolean;
+}
+
 export interface ClipFx {
   opacity: Animatable;
   scale: Animatable;
@@ -70,6 +80,7 @@ export interface ClipFx {
   chroma_key?: ChromaKey;
   audio_fx?: AudioFx;
   lut?: LutApply;
+  mask?: Mask;
 }
 
 export interface Clip {

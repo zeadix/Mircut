@@ -195,6 +195,45 @@ impl ChromaKey {
     }
 }
 
+/// 蒙版类型。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MaskKind {
+    Rect,
+    Linear,
+}
+
+/// 蒙版(显示区域内画面,区域外透明;关键帧可动画)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Mask {
+    pub kind: MaskKind,
+    /// 中心 x(归一化 0-1)。
+    pub x: f64,
+    /// 中心 y(归一化 0-1)。
+    pub y: f64,
+    /// 宽(归一化 0-1)。
+    pub w: f64,
+    /// 高(归一化 0-1)。
+    pub h: f64,
+    /// 羽化(0-1)。
+    pub feather: f64,
+    /// 反选。
+    pub invert: bool,
+}
+
+impl Default for Mask {
+    fn default() -> Self {
+        Self {
+            kind: MaskKind::Rect,
+            x: 0.5,
+            y: 0.5,
+            w: 0.6,
+            h: 0.6,
+            feather: 0.0,
+            invert: false,
+        }
+    }
+}
+
 /// 片段特效属性(M2 挂在 Clip 的可选扩展)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ClipFx {
@@ -215,6 +254,9 @@ pub struct ClipFx {
     /// LUT(.cube)。
     #[serde(default)]
     pub lut: LutApply,
+    /// 蒙版(矩形/线性,默认无)。
+    #[serde(default)]
+    pub mask: Option<Mask>,
 }
 
 #[cfg(test)]

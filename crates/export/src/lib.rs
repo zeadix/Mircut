@@ -246,6 +246,21 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     params.width, params.height, params.width, params.height
                 );
                 chain.push_str(&format!(",{scale},fps={}", params.fps));
+                // 蒙版(矩形:裁剪区域 + pad 黑边放回原位;线性蒙版 MVP 暂不导出)
+                if let Some(mask) = &c.fx.mask {
+                    let pw = params.width as f64;
+                    let ph = params.height as f64;
+                    if mask.kind == veditor_core::MaskKind::Rect {
+                        let mw = (mask.w * pw).round().max(2.0) as u32;
+                        let mh = (mask.h * ph).round().max(2.0) as u32;
+                        let mx = ((mask.x - mask.w / 2.0) * pw).round().max(0.0) as u32;
+                        let my = ((mask.y - mask.h / 2.0) * ph).round().max(0.0) as u32;
+                        chain.push_str(&format!(
+                            ",crop=w={mw}:h={mh}:x={mx}:y={my},pad={}:{}:{mx}:{my}",
+                            params.width, params.height
+                        ));
+                    }
+                }
                 // 色度抠像(绿幕)
                 if c.fx.chroma_key.enabled() {
                     let ck = &c.fx.chroma_key;
