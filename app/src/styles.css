@@ -86,3 +86,7 @@ body { background: #121317; }
   font-size: 12px;
 }
 .ti::placeholder { color: #556; }
+
+/* 时间轴画布容器:隐藏原生滚动条(纵向滚动用滚轮,横向用自绘条) */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }

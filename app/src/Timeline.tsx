@@ -71,6 +71,10 @@ function TimelineInner({
   const [snap, setSnap] = useState(true);
   const [ripple, setRipple] = useState(false);
   const [scrollX, setScrollX] = useState(0);
+  /// 画布纵向滚动(同步轨道头列,不经 state 重渲染)。
+  const headInnerRef = useRef<HTMLDivElement>(null);
+  const scrollTopRef = useRef(0);
+  /// 轨道头列纵向同步(画布滚动时 translate,不经 React)。
   const [pxPerTick, setPxPerTick] = useState(0.5);
   const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number; laneOff: number; h: number } | null>(null);
   const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; x: number; y: number } | null>(null);
@@ -709,9 +713,36 @@ function TimelineInner({
           {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(contentEndTick, tps)}
         </span>
       </div>
+      {/* 顶部刻度尺(贴编辑窗上边缘,固定) */}
+      <div style={{ display: "flex", flexShrink: 0 }}>
+        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <RulerBar
+            num={doc.timebase.num}
+            pxPerTick={pxPerTick}
+            scrollX={scrollX}
+            viewW={viewWRef.current}
+            contentW={contentW}
+          />
+        </div>
+      </div>
+      {/* 顶部刻度行(固定贴上边) */}
+      <div style={{ display: "flex", flexShrink: 0 }}>
+        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <RulerBar
+            num={doc.timebase.num}
+            pxPerTick={pxPerTick}
+            scrollX={scrollX}
+            viewW={viewWRef.current}
+            contentW={contentW}
+          />
+        </div>
+      </div>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 轨道头 */}
-        <div style={{ width: 132, flexShrink: 0 }}>
+        <div style={{ width: 132, flexShrink: 0, overflow: "hidden" }}>
+          <div ref={headInnerRef}>
           {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
@@ -823,17 +854,25 @@ function TimelineInner({
               ))}
             </div>
           ))}
+          </div>
         </div>
         {/* 时间轴视口:静态层 + 动态层(播放头)分别做 stacking context,各占独立层 */}
         <div
           ref={wrapRef}
+          className="no-scrollbar"
           style={{
             flex: 1,
             overflowX: "auto",
-            overflowY: "hidden",
+            overflowY: "auto",
             position: "relative",
           }}
-          onScroll={(e) => setScrollX((e.target as HTMLDivElement).scrollLeft)}
+          onScroll={(e) => {
+            const el = e.target as HTMLDivElement;
+            setScrollX(el.scrollLeft);
+            if (headInnerRef.current) {
+              headInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`;
+            }
+          }}
           onWheel={(e) => {
             if (e.ctrlKey) {
               e.preventDefault();
@@ -841,7 +880,7 @@ function TimelineInner({
             }
           }}
         >
-          <div style={{ position: "relative", width: contentW }}>
+          <div style={{ position: "relative", width: contentW, height: geo.totalH }}>
             <canvas
               ref={canvasRef}
               style={{ display: "block" }}
@@ -989,6 +1028,71 @@ function TimelineInner({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/// 时间刻度行:固定在编辑窗上/下边缘,横向跟随画布滚动(仅渲染视口内刻度)。
+function RulerBar({
+  num,
+  pxPerTick,
+  scrollX,
+  viewW,
+  contentW,
+}: {
+  num: number;
+  pxPerTick: number;
+  scrollX: number;
+  viewW: number;
+  contentW: number;
+}) {
+  const s0 = Math.max(0, Math.floor(scrollX / pxPerTick / num));
+  const s1 = Math.ceil((scrollX + viewW) / pxPerTick / num);
+  const ticks: JSX.Element[] = [];
+  for (let s = s0; s <= s1; s++) {
+    const x = s * num * pxPerTick - scrollX;
+    ticks.push(
+      <div
+        key={s}
+        style={{
+          position: "absolute",
+          left: x,
+          bottom: 0,
+          width: 1,
+          height: s % 2 === 0 ? 10 : 5,
+          background: "#3a3d46",
+        }}
+      />
+    );
+    if (s % 2 === 0) {
+      ticks.push(
+        <span
+          key={`l${s}`}
+          style={{
+            position: "absolute",
+            left: x + 3,
+            bottom: 1,
+            fontSize: 9,
+            color: "#9aa0ab",
+            userSelect: "none",
+          }}
+        >
+          {s}s
+        </span>
+      );
+    }
+  }
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        height: 18,
+        background: "#1a1b1f",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ position: "absolute", inset: 0, width: contentW }}>{ticks}</div>
     </div>
   );
 }
