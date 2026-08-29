@@ -770,7 +770,9 @@ fn drop_asset(
     //  - 落视频区(lane=video) -> 只生成视频块;素材无视频流则退化音频块
     //  - 落音频区(lane=audio) -> 只生成音频块;素材无音轨则退化视频块
     //  - 无提示(双击追加等) -> 完整视频拆双块
-    let lanes_needed: Vec<veditor_core::Lane> = match lane.as_deref() {
+    // 前端传 "Video"/"Audio"(大写),统一转小写匹配
+    let lane_lc = lane.as_deref().map(|s| s.to_ascii_lowercase());
+    let lanes_needed: Vec<veditor_core::Lane> = match lane_lc.as_deref() {
         Some("video") => {
             if asset.has_video {
                 vec![veditor_core::Lane::Video]
