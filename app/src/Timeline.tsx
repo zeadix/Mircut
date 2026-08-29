@@ -142,6 +142,9 @@ function TimelineInner({
     const dpr = window.devicePixelRatio || 1;
     const viewW = wrap.clientWidth;
     viewWRef.current = viewW;
+    // 真实滚动位置(缩放后 scrollLeft 会被浏览器 clamp,state 可能失同步,
+    // 此处读真实值避免视口裁剪把所有块跳过)
+    const sx = wrap.scrollLeft;
     const w = contentW;
     const h = geo.totalH;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -195,8 +198,8 @@ function TimelineInner({
 
 
     // 片段(视口裁剪)
-    const vx0 = scrollX;
-    const vx1 = scrollX + viewW;
+    const vx0 = sx;
+    const vx1 = sx + viewW;
     doc.clips.forEach((clip) => {
       const row = clipRow(clip);
       if (!row) return;
@@ -252,7 +255,7 @@ function TimelineInner({
         ctx.fillRect(x + Math.max(cw, 2) - 10, laneTop, 10, h);
         ctx.lineWidth = 1;
       }
-      if (x + cw > scrollX && x < scrollX + viewW && h >= 18) {
+      if (x + cw > sx && x < sx + viewW && h >= 18) {
         ctx.fillStyle = "#dfe3ea";
         ctx.font = `${Math.min(11, h - 6)}px sans-serif`;
         const asset = doc.assets.find((a) => a.id === clip.asset.asset_id);
@@ -299,7 +302,7 @@ function TimelineInner({
       const txt = `${label}  时长 ${fmtTicks(trimHint.newDuration, tps)}`;
       ctx.font = "11px sans-serif";
       const tw = ctx.measureText(txt).width + 10;
-      const bx = Math.min(Math.max(scrollX + 4, hx - tw / 2), scrollX + viewW - tw - 4);
+      const bx = Math.min(Math.max(sx + 4, hx - tw / 2), sx + viewW - tw - 4);
       ctx.fillStyle = "rgba(20,21,26,0.92)";
       ctx.fillRect(bx, trimHint.y - 20, tw, 16);
       ctx.strokeStyle = "#ffd75e";
@@ -314,10 +317,10 @@ function TimelineInner({
       const gh = dropHint.h;
       const zoneColor = dropHint.kind === "audio" ? "rgba(126, 168, 255, 0.16)" : "rgba(126, 217, 87, 0.16)";
       ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : zoneColor;
-      ctx.fillRect(scrollX, gy, viewW, gh);
+      ctx.fillRect(sx, gy, viewW, gh);
       ctx.strokeStyle = "#7ed957";
       ctx.lineWidth = 2;
-      ctx.strokeRect(scrollX + 1, gy + 1, viewW - 2, gh - 2);
+      ctx.strokeRect(sx + 1, gy + 1, viewW - 2, gh - 2);
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(dropHint.x, gy);
@@ -326,7 +329,7 @@ function TimelineInner({
       if (dropHint.newLayer) {
         ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
         ctx.font = "11px sans-serif";
-        ctx.fillText("+ 新建文件轨道", scrollX + 8, gy + 16);
+        ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
       }
     }
   }, [doc, selectedClipId, activeTrackId, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps]);
@@ -352,7 +355,7 @@ function TimelineInner({
       const ctx = canvas.getContext("2d")!;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      const headPx = playheadRef.current * pxPerTick - scrollX;
+      const headPx = playheadRef.current * pxPerTick - (wrapRef.current?.scrollLeft ?? 0);
       if (headPx >= -2 && headPx <= w + 2) {
         ctx.strokeStyle = "#ff5f5f";
         ctx.lineWidth = 2;
@@ -370,6 +373,18 @@ function TimelineInner({
       cancelAnimationFrame(rafRef.current);
     };
   }, [scrollX, pxPerTick, geo.totalH]);
+
+  // 缩放(pxPerTick 变化)后,wrap.scrollLeft 可能被浏览器 clamp 但不触发 scroll 事件,
+  // 导致 scrollX state 失同步(刻度尺/播放头错位);此处主动同步。
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      const real = el.scrollLeft;
+      setScrollX((prev) => (prev === real ? prev : real));
+    });
+    return () => cancelAnimationFrame(id);
+  }, [pxPerTick]);
 
   // 鼠标滚轮 = 水平时间帧缩放(与上方缩放 slider 同步同一 pxPerTick);
   // Shift+滚轮 = 纵向滚动(浏览器默认,不拦截)。
