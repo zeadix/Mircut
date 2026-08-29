@@ -87,6 +87,16 @@ impl LutApply {
     }
 }
 
+/// 文字入场动画。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum TextAnimation {
+    #[default]
+    None,
+    FadeIn,
+    SlideUp,
+    Zoom,
+}
+
 /// 文字叠层(时间轴上的标题,导出为 drawtext)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TextOverlay {
@@ -102,6 +112,12 @@ pub struct TextOverlay {
     /// 描边颜色(None = 无)。
     pub outline: Option<String>,
     pub bold: bool,
+    /// 阴影。
+    #[serde(default)]
+    pub shadow: bool,
+    /// 入场动画。
+    #[serde(default)]
+    pub animation: TextAnimation,
     /// 位置:x/y 为 0-1 归一化(相对输出画面)。
     pub x: f64,
     pub y: f64,
@@ -118,6 +134,8 @@ impl Default for TextOverlay {
             color: "#ffffff".into(),
             outline: Some("#000000".into()),
             bold: false,
+            shadow: false,
+            animation: TextAnimation::None,
             x: 0.5,
             y: 0.8,
         }

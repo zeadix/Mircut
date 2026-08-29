@@ -143,6 +143,8 @@ export interface TextOverlay {
   color: string;
   outline: string | null;
   bold: boolean;
+  shadow?: boolean;
+  animation?: "None" | "FadeIn" | "SlideUp" | "Zoom";
   x: number;
   y: number;
 }

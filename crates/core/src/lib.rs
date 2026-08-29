@@ -11,7 +11,7 @@ pub mod subtitle;
 
 pub use scheduler::{resolve_overlaps, Placement, SchedClip};
 
-pub use fx_ext::{AudioFx, LutApply, TextOverlay};
+pub use fx_ext::{AudioFx, LutApply, TextAnimation, TextOverlay};
 pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
 
 pub use commands_m2::{

@@ -504,6 +504,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let has_texts = has_video_out && !doc.text_overlays.is_empty();
     if has_subs || has_texts {
         let mut chain = String::from(&vout);
+        let mut first = true;
         if has_subs {
             for cue in &doc.subtitles.cues {
                 let start = cue.start as f64 / fps_tb;
@@ -516,8 +517,10 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let style = &doc.subtitles.style;
                 let color = &style.color;
                 let border = style.outline.as_deref().unwrap_or("black");
+                let sep = if first { "" } else { "," };
+                first = false;
                 chain.push_str(&format!(
-                    ",drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
+                    "{sep}drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
                     style.font_size
                 ));
             }
@@ -533,8 +536,10 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 .replace("'", "\\'");
             let color = t.color.trim_start_matches('#');
             let font_px = ((t.font_size as f64) * (params.height as f64 / 1080.0)).round() as u32;
+            let sep = if first { "" } else { "," };
+            first = false;
             let mut dt = format!(
-                ",drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2",
+                "{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2",
                 t.x, t.y
             );
             if let Some(oc) = &t.outline {
@@ -543,6 +548,29 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             }
             if t.bold {
                 dt.push_str(":box=0");
+            }
+            if t.shadow {
+                dt.push_str(":shadowcolor=black:shadowx=3:shadowy=3");
+            }
+            // 入场动画(0.5s):淡入/上滑/缩放,基于 (t-start) 表达式
+            match t.animation {
+                veditor_core::TextAnimation::FadeIn => {
+                    dt.push_str(&format!(
+                        ":alpha='if(lt(t,{start:.3}),0,min(1,(t-{start:.3})/0.5))'"
+                    ));
+                }
+                veditor_core::TextAnimation::SlideUp => {
+                    dt.push_str(&format!(
+                        ":y='h*{:.3}-text_h/2+max(0,1-(t-{start:.3})/0.5)*h*0.3'",
+                        t.y
+                    ));
+                }
+                veditor_core::TextAnimation::Zoom => {
+                    dt.push_str(&format!(
+                        ":fontsize='{font_px}*(0.3+0.7*min(1,max(0,(t-{start:.3})/0.5)))'"
+                    ));
+                }
+                veditor_core::TextAnimation::None => {}
             }
             dt.push_str(&format!(":enable='between(t,{start:.3},{end:.3})'"));
             chain.push_str(&dt);
@@ -1011,6 +1039,8 @@ mod tests {
             color: "#ffdd00".into(),
             outline: Some("#000000".into()),
             bold: true,
+            shadow: true,
+            animation: veditor_core::TextAnimation::FadeIn,
             x: 0.5,
             y: 0.2,
         });
@@ -1026,6 +1056,62 @@ mod tests {
         // 96px @ 1080p 基准 -> 输出 1080 时不变
         assert!(fc.contains("fontsize=96"), "fc = {fc}");
         assert!(fc.contains("y=h*0.200"), "fc = {fc}");
+        // 阴影 + 淡入动画
+        assert!(
+            fc.contains("shadowcolor=black:shadowx=3:shadowy=3"),
+            "fc = {fc}"
+        );
+        assert!(fc.contains("alpha='if(lt(t,0.000)"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_text_animations() {
+        let mut d = doc();
+        // SlideUp
+        d.text_overlays.push(veditor_core::TextOverlay {
+            id: "s1".into(),
+            start: 15,
+            end: 45,
+            text: "滑入".into(),
+            font_size: 64,
+            color: "#ffffff".into(),
+            outline: None,
+            bold: false,
+            shadow: false,
+            animation: veditor_core::TextAnimation::SlideUp,
+            x: 0.5,
+            y: 0.5,
+        });
+        // Zoom
+        d.text_overlays.push(veditor_core::TextOverlay {
+            id: "z1".into(),
+            start: 0,
+            end: 30,
+            text: "缩放".into(),
+            font_size: 64,
+            color: "#ffffff".into(),
+            outline: None,
+            bold: false,
+            shadow: false,
+            animation: veditor_core::TextAnimation::Zoom,
+            x: 0.5,
+            y: 0.3,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("y='h*0.500-text_h/2+max(0,1-(t-0.500)/0.5)*h*0.3'"),
+            "fc = {fc}"
+        );
+        assert!(
+            fc.contains("fontsize='64*(0.3+0.7*min(1,max(0,(t-0.000)/0.5)))'"),
+            "fc = {fc}"
+        );
     }
 
     #[test]

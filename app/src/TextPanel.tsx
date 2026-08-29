@@ -33,6 +33,8 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
       color: "#ffffff",
       outline: "#000000",
       bold: false,
+      shadow: true,
+      animation: "FadeIn",
       x: 0.5,
       y: 0.15,
     };
@@ -84,9 +86,20 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
           {editing === i && draft ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <input className="ti" value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} />
-              <div style={{ display: "flex", gap: 4 }}>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                 <input className="ti" type="color" value={draft.color} onChange={(e) => setDraft({ ...draft, color: e.target.value })} />
                 <input className="ti" type="number" value={draft.font_size} style={{ width: 60 }} onChange={(e) => setDraft({ ...draft, font_size: Number(e.target.value) })} />
+                <label><input type="checkbox" checked={draft.bold} onChange={(e) => setDraft({ ...draft, bold: e.target.checked })} /> 粗体</label>
+                <label><input type="checkbox" checked={draft.shadow ?? false} onChange={(e) => setDraft({ ...draft, shadow: e.target.checked })} /> 阴影</label>
+                <label>动画
+                  <select className="ti" value={draft.animation ?? "None"} onChange={(e) => setDraft({ ...draft, animation: e.target.value as TextOverlay["animation"] })}>
+                    {["None", "FadeIn", "SlideUp", "Zoom"].map((a) => (
+                      <option key={a} value={a}>{a === "None" ? "无" : a === "FadeIn" ? "淡入" : a === "SlideUp" ? "上滑" : "缩放"}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
                 <label>位置X <input type="range" min={0} max={1} step={0.05} value={draft.x} onChange={(e) => setDraft({ ...draft, x: Number(e.target.value) })} /></label>
                 <label>Y <input type="range" min={0} max={1} step={0.05} value={draft.y} onChange={(e) => setDraft({ ...draft, y: Number(e.target.value) })} /></label>
               </div>
