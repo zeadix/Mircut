@@ -685,7 +685,15 @@ function TimelineInner({
   return (
     <div
       data-veditor-drop="timeline"
-      style={{ background: "#17181c", userSelect: "none" }}
+      style={{
+        background: "#17181c",
+        userSelect: "none",
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
       onDragOver={onDragOver}
       onDragLeave={() => setDropHint(null)}
       onDrop={onDrop}
@@ -859,10 +867,10 @@ function TimelineInner({
         {/* 时间轴视口:静态层 + 动态层(播放头)分别做 stacking context,各占独立层 */}
         <div
           ref={wrapRef}
-          className="no-scrollbar"
           style={{
             flex: 1,
-            overflowX: "auto",
+            minWidth: 0,
+            overflowX: "hidden",
             overflowY: "auto",
             position: "relative",
           }}

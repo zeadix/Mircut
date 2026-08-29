@@ -626,7 +626,7 @@ export default function App() {
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}
           </div>
-          <div style={{ flex: 1, minHeight: 220, overflow: "auto", display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, minHeight: 220, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <Timeline
               doc={doc}
               playheadTicks={playhead}
