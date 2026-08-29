@@ -80,7 +80,6 @@ function TimelineInner({
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
-  const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
@@ -157,11 +156,6 @@ function TimelineInner({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const selectedClip = doc.clips.find((c) => c.id === selectedClipId);
-    const activeTrackIdx = doc.tracks.findIndex((t) => t.id === activeTrackId);
-    const fallbackIdx = selectedClip ? doc.tracks.findIndex((t) => t.id === selectedClip.track_id) : -1;
-    const focusIdx = activeTrackIdx >= 0 ? activeTrackIdx : fallbackIdx;
-
     // 轨道背景
     doc.tracks.forEach((track, i) => {
       const y = geo.tops[i];
@@ -187,12 +181,6 @@ function TimelineInner({
         ctx.moveTo(0, y + rh);
         ctx.lineTo(w, y + rh);
         ctx.stroke();
-      }
-      if (i === focusIdx) {
-        ctx.strokeStyle = "#ffd75e";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(1, y + 1, w - 2, rh - 2);
-        ctx.lineWidth = 1;
       }
     });
 
@@ -332,7 +320,7 @@ function TimelineInner({
         ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
       }
     }
-  }, [doc, selectedClipId, activeTrackId, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps]);
+  }, [doc, selectedClipId, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -477,11 +465,6 @@ function TimelineInner({
     const target = (e.currentTarget as HTMLElement) ?? (e.target as HTMLElement);
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (rect) {
-      const row = Math.floor((e.clientY - rect.top) / trackH);
-      if (doc.tracks[row]) setActiveTrackId(doc.tracks[row].id);
-    }
     const hit = hitTest(t, e.clientX, e.clientY);
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
@@ -637,7 +620,6 @@ function TimelineInner({
           target.lane ?? null
         );
         onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
-        setActiveTrackId(target.trackId);
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
       if (hint && hint.clipId === d.clipId && hint.newDuration !== d.origDuration) {
@@ -723,7 +705,6 @@ function TimelineInner({
   function onDropMenuMove() {
     if (!dropMenu) return;
     onClipMove?.(dropMenu.clipId, dropMenu.start, dropMenu.trackId);
-    setActiveTrackId(dropMenu.trackId);
     setDropMenu(null);
   }
 
@@ -813,7 +794,6 @@ function TimelineInner({
           {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
-              onMouseDown={() => setActiveTrackId(track.id)}
               style={{
                 height: trackH,
                 display: "flex",
@@ -823,9 +803,6 @@ function TimelineInner({
                 borderBottom: "1px solid #2e3038",
                 background: track.kind === "Audio" ? "#1a211d" : "#1b1d26",
                 position: "relative",
-                outline: (activeTrackId ?? "") === track.id ? "2px solid #ffd75e" : "none",
-                outlineOffset: -2,
-                zIndex: (activeTrackId ?? "") === track.id ? 3 : undefined,
               }}
               onDragOver={(e) => {
                 if (reorderFrom.current !== null) e.preventDefault();
