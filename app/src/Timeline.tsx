@@ -135,7 +135,7 @@ function TimelineInner({
     const viewW = wrap.clientWidth;
     viewWRef.current = viewW;
     const w = contentW;
-    const h = geo.totalH + 24;
+    const h = geo.totalH;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
@@ -185,20 +185,6 @@ function TimelineInner({
       }
     });
 
-    // 时间刻度(仅视口范围)
-    const s0 = Math.max(0, Math.floor(scrollX / pxPerTick / doc.timebase.num));
-    const s1 = Math.ceil((scrollX + viewW) / pxPerTick / doc.timebase.num);
-    ctx.strokeStyle = "#3a3d46";
-    ctx.fillStyle = "#9aa0ab";
-    ctx.font = "10px sans-serif";
-    for (let s = s0; s <= s1; s++) {
-      const x = s * doc.timebase.num * pxPerTick;
-      ctx.beginPath();
-      ctx.moveTo(x, geo.totalH);
-      ctx.lineTo(x, geo.totalH + 6);
-      ctx.stroke();
-      if (s % 2 === 0) ctx.fillText(`${s}s`, x + 2, geo.totalH + 18);
-    }
 
     // 片段(视口裁剪)
     const vx0 = scrollX;
@@ -843,9 +829,8 @@ function TimelineInner({
           ref={wrapRef}
           style={{
             flex: 1,
-            minHeight: 0,
             overflowX: "auto",
-            overflowY: "auto",
+            overflowY: "hidden",
             position: "relative",
           }}
           onScroll={(e) => setScrollX((e.target as HTMLDivElement).scrollLeft)}
@@ -904,16 +889,6 @@ function TimelineInner({
           />
         </div>
       </div>
-
-      {/* 水平模拟滚动条:超宽时显示 */}
-      <ScrollBar
-        total={contentW}
-        viewport={viewWRef.current}
-        offset={scrollX}
-        onScroll={(px: number) => {
-          if (wrapRef.current) wrapRef.current.scrollLeft = px;
-        }}
-      />
 
       {/* 右键拖拽释放菜单 */}
       {dropMenu && (

@@ -676,7 +676,7 @@ export default function App() {
         </aside>
 
         {/* 主区 */}
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, paddingBottom: "50vh" }}>
+        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
             <button className="btn" onClick={() => { setPlaySpeed(1); setPlaying(p => !p); }} title="播放/暂停 (空格)">
               {playing ? `暂停 ${playSpeed}x` : "播放"}
@@ -703,7 +703,7 @@ export default function App() {
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
             {status}
           </div>
-          <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, height: "50vh", minHeight: 220, display: "flex", flexDirection: "column", background: "#121317", borderTop: "1px solid #2a2c33", zIndex: 10 }}>
+          <div style={{ flex: 1, minHeight: 220, overflow: "auto", display: "flex", flexDirection: "column" }}>
             <Timeline
               doc={doc}
               playheadTicks={playhead}
