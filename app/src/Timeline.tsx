@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges } from "./snap";
+import ScrollBar from "./ScrollBar";
 
 interface Props {
   doc: Document;
@@ -722,7 +723,7 @@ function TimelineInner({
           {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(contentEndTick, tps)}
         </span>
       </div>
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 轨道头 */}
         <div style={{ width: 132, flexShrink: 0 }}>
           {doc.tracks.map((track, ti) => (
@@ -902,6 +903,16 @@ function TimelineInner({
           />
         </div>
       </div>
+
+      {/* 水平模拟滚动条:超宽时显示 */}
+      <ScrollBar
+        total={contentW}
+        viewport={viewWRef.current}
+        offset={scrollX}
+        onScroll={(px: number) => {
+          if (wrapRef.current) wrapRef.current.scrollLeft = px;
+        }}
+      />
 
       {/* 右键拖拽释放菜单 */}
       {dropMenu && (
