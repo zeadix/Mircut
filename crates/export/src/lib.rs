@@ -118,6 +118,41 @@ impl ExportPreset {
     }
 }
 
+/// sendcmd 时间戳:去掉尾随零,避免 "x.0" 触发 sendcmd 解析 quirk(FFmpeg 4.4)。
+fn trim_ts(t: f64) -> String {
+    let s = format!("{:.3}", t);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    if s.is_empty() {
+        "0".into()
+    } else {
+        s.to_string()
+    }
+}
+
+/// 不透明度关键帧动画 -> sendcmd 命令列表(时间戳相对 clip 秒,值 0-1)。
+/// 采样步长 0.1s,足够平滑(不透明度变化慢)。
+fn opacity_keyframe_commands(
+    opacity: &veditor_core::Animatable,
+    duration_ticks: veditor_core::Ticks,
+    tb: &veditor_core::Timebase,
+) -> Vec<String> {
+    let kfs = &opacity.keyframes;
+    if kfs.len() < 2 {
+        return vec![];
+    }
+    let dur_secs = tb.secs(duration_ticks);
+    let step = 0.1;
+    let mut cmds = Vec::new();
+    let mut t = 0.0f64;
+    while t <= dur_secs + step {
+        let ticks = (t * tb.num as f64 / tb.den as f64).round() as i64;
+        let v = opacity.value_at(ticks).unwrap_or(1.0);
+        cmds.push(format!("{} colorchannelmixer aa {:.3}", trim_ts(t), v));
+        t += step;
+    }
+    cmds
+}
+
 /// 编译单条 FFmpeg 命令(整条时间轴,顺序 concat 方案)。
 /// 输入策略:每个消费片段一个独立 -i(ffmpeg 4.x 同输入拆多路 trim 会
 /// 共享解码状态导致 concat 时长错误,独立输入实测精确)。
@@ -239,55 +274,28 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     ));
                 }
                 // 不透明度关键帧:
-                // - 首尾帧 != 1.0 时用 fade in/out(逐帧动画 v1.1 后续用 sendcmd)
-                // - 静态单值用 colorchannelmixer
+                // - >=2 关键帧:sendcmd 逐帧动画(支持贝塞尔/线性/保持)
+                // - 单值:静态 colorchannelmixer
                 let kfs = &c.fx.opacity.keyframes;
-                if !kfs.is_empty() {
-                    let dur_secs = doc.timebase.secs(c.duration);
-                    let first = c.fx.opacity.value_at(c.start).unwrap_or(1.0);
-                    let last =
-                        c.fx.opacity
-                            .value_at(c.start + c.duration - 1)
-                            .unwrap_or(1.0);
-                    if (first - 1.0).abs() > 1e-3 || (last - 1.0).abs() > 1e-3 {
-                        // fade:颜色 fade=in_st/fade 通用做法是 alpha 通道 fade
-                        let fade_in = if (first - 1.0).abs() > 1e-3 {
-                            let t = kfs
-                                .iter()
-                                .filter(|k| (k.value - 1.0).abs() <= 1e-3)
-                                .map(|k| k.t)
-                                .min()
-                                .unwrap_or(0);
-                            format!(
-                                ",fade=t=in:st=0:d={:.3}:alpha=1",
-                                doc.timebase.secs(t.max(0))
-                            )
-                        } else {
-                            String::new()
-                        };
-                        let fade_out = if (last - 1.0).abs() > 1e-3 {
-                            let t = kfs
-                                .iter()
-                                .filter(|k| (k.value - 1.0).abs() > 1e-3)
-                                .map(|k| k.t)
-                                .max()
-                                .unwrap_or(c.duration);
-                            format!(
-                                ",fade=t=out:st={:.3}:d={:.3}:alpha=1",
-                                doc.timebase.secs(t),
-                                (dur_secs - doc.timebase.secs(t)).max(0.0)
-                            )
-                        } else {
-                            String::new()
-                        };
-                        if !fade_in.is_empty() || !fade_out.is_empty() {
-                            chain.push_str(&format!(",format=yuva420p{fade_in}{fade_out}"));
-                        }
+                if kfs.len() >= 2 {
+                    let cmds = opacity_keyframe_commands(&c.fx.opacity, c.duration, &doc.timebase);
+                    if !cmds.is_empty() {
+                        let dir = std::env::temp_dir().join("veditor-export");
+                        let _ = std::fs::create_dir_all(&dir);
+                        let fname = dir.join(format!("cmd_{i}.txt"));
+                        // sendcmd 文件:每条命令以分号结尾(否则多行解析失败)
+                        let _ = std::fs::write(&fname, cmds.join(";\n") + ";");
+                        // colorchannelmixer 作为 sendcmd 的 target 必须存在,初始 aa=首帧值
+                        let first_op = c.fx.opacity.value_at(0).unwrap_or(1.0);
+                        chain.push_str(&format!(
+                            ",format=yuva420p,colorchannelmixer=aa={first_op:.3},sendcmd=f={},premultiply=inplace=1",
+                            fname.to_string_lossy()
+                        ));
                     }
                 } else if let Some(op) = c.fx.opacity.value_at(c.start) {
                     if (op - 1.0).abs() > 1e-3 {
                         chain.push_str(&format!(
-                            ",format=yuva420p,colorchannelmixer=aa={op:.3},format=yuv420p"
+                            ",format=yuva420p,colorchannelmixer=aa={op:.3},premultiply=inplace=1"
                         ));
                     }
                 }
@@ -824,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_keyframe_opacity_generates_fade() {
+    fn compile_keyframe_opacity_generates_sendcmd() {
         let mut d = doc();
         use veditor_core::Interpolation;
         // 0-15 帧: 0 -> 1(淡入)
@@ -837,7 +845,46 @@ mod tests {
             .find(|(a, _)| a == &"-filter_complex")
             .map(|(_, b)| b.clone())
             .unwrap();
-        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(
+            fc.contains("sendcmd=f=/tmp/veditor-export/cmd_0.txt"),
+            "fc = {fc}"
+        );
+        // 命令文件存在且含 aa 命令
+        let f = std::env::temp_dir().join("veditor-export/cmd_0.txt");
+        let content = std::fs::read_to_string(&f).unwrap();
+        assert!(
+            content.contains("colorchannelmixer aa 0.000"),
+            "content = {content}"
+        );
+        assert!(
+            content.contains("colorchannelmixer aa 1.000"),
+            "content = {content}"
+        );
+    }
+
+    #[test]
+    fn opacity_keyframe_commands_bezier() {
+        let mut a = veditor_core::Animatable::default();
+        a.set(0, 0.0, veditor_core::Interpolation::ease_in_out());
+        a.set(30, 1.0, veditor_core::Interpolation::ease_in_out());
+        let tb = veditor_core::Timebase { num: 30, den: 1 };
+        let cmds = opacity_keyframe_commands(&a, 30, &tb);
+        assert!(cmds.len() > 5, "应采样多段, got {}", cmds.len());
+        // 首尾值
+        assert!(cmds[0].contains("aa 0.000"), "cmd0 = {}", cmds[0]);
+        assert!(
+            cmds[cmds.len() - 1].contains("aa 1.000"),
+            "last = {}",
+            cmds[cmds.len() - 1]
+        );
+    }
+
+    #[test]
+    fn trim_ts_no_trailing_zero() {
+        assert_eq!(trim_ts(1.0), "1");
+        assert_eq!(trim_ts(1.5), "1.5");
+        assert_eq!(trim_ts(0.0), "0");
+        assert_eq!(trim_ts(1.25), "1.25");
     }
 
     #[test]
