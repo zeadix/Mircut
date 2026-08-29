@@ -23,7 +23,7 @@ interface Props {
 }
 
 const MIN_TRACK_H = 36;
-const EDGE_HIT_PX = 5;
+const EDGE_HIT_PX = 10;
 const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 
 type DragSession =
@@ -237,13 +237,19 @@ function TimelineInner({
         ctx.fillStyle = "#ffd75e";
         ctx.fillRect(x, laneTop, Math.max(cw, 2), 3);
       }
+      // 头尾 2px 颜色条带(所有块,指示 10px 修剪触发区)
+      const edgeCol = clip.id === selectedClipId ? "#ffd75e" : "rgba(255,255,255,0.28)";
+      ctx.fillStyle = edgeCol;
+      ctx.fillRect(x, laneTop, 2, h);
+      ctx.fillRect(x + Math.max(cw, 2) - 2, laneTop, 2, h);
       if (clip.id === selectedClipId) {
         ctx.strokeStyle = "#ffd75e";
         ctx.lineWidth = 2;
         ctx.strokeRect(x, laneTop, Math.max(cw, 2), h);
+        // 选中时把手 10px(修剪触发区),hover 侧高亮
         ctx.fillStyle = hoverEdge ? "#ffd75e" : "rgba(255,215,94,0.45)";
-        ctx.fillRect(x, laneTop, 3, h);
-        ctx.fillRect(x + Math.max(cw, 2) - 3, laneTop, 3, h);
+        ctx.fillRect(x, laneTop, 10, h);
+        ctx.fillRect(x + Math.max(cw, 2) - 10, laneTop, 10, h);
         ctx.lineWidth = 1;
       }
       if (x + cw > scrollX && x < scrollX + viewW && h >= 18) {
