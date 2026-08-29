@@ -124,8 +124,13 @@ function TimelineInner({
     [doc.clips, doc.text_overlays]
   );
   const contentW = useMemo(
-    () => Math.max((contentEndTick + doc.timebase.num * 10) * pxPerTick, 400),
-    [contentEndTick, doc.timebase.num, pxPerTick]
+    () => {
+      // 拖拽虚影范围也计入,避免向右拖出内容末尾时虚影被 canvas 裁掉
+      const ghostEndTick = ghost ? ghost.start + ghost.duration : 0;
+      const endTick = Math.max(contentEndTick, ghostEndTick);
+      return Math.max((endTick + doc.timebase.num * 10) * pxPerTick, 400);
+    },
+    [contentEndTick, doc.timebase.num, pxPerTick, ghost]
   );
 
   const viewWRef = useRef(800);
@@ -498,8 +503,16 @@ function TimelineInner({
           ? (yIn - targetRow * trackH < half ? "Video" : "Audio")
           : rowTrack.kind === "Audio" ? "Audio" : "Video";
         moveTargetRef.current = { trackId: rowTrack.id, row: useRow, lane: targetLane };
+      } else {
+        // 不合法落点:回退原片段,松手不误移
+        moveTargetRef.current = { trackId: clip.track_id, row: ti, lane: clip.lane ?? null };
       }
-      const laneOff = rowTrack?.kind === "File" ? (targetLane === "Audio" ? half : 0) : 0;
+      // 虚影几何必须基于实际绘制行 useRow 的轨道,而非鼠标下的 rowTrack
+      // (否则不合法落点时整行高虚影会盖住原轨上方块)
+      const ghostTrack = doc.tracks[useRow];
+      const ghostLane = ok ? targetLane : (clip.lane ?? null);
+      const laneOff = ghostTrack?.kind === "File" ? (ghostLane === "Audio" ? half : 0) : 0;
+      const gh = ghostTrack?.kind === "File" ? half - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       const rawStart = Math.max(0, t - grab);
       setGhost({
@@ -508,7 +521,7 @@ function TimelineInner({
         duration: clip.duration,
         trackIdx: useRow,
         laneOff,
-        h: rowTrack?.kind === "File" ? half - 4 : trackH - 10,
+        h: gh,
       });
       setTrimHint(null);
     } else if (d.kind === "trimL") {
@@ -921,7 +934,7 @@ function TimelineInner({
               top: 0,
               left: 0,
               width: contentW,
-              height: geo.totalH + 24,
+              height: geo.totalH,
               pointerEvents: "none",
               zIndex: 5,
             }}
