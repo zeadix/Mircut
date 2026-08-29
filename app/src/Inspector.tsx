@@ -14,7 +14,7 @@ interface Props {
 function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [speed, setSpeed] = useState("1.0");
   const [volume, setVolume] = useState("1.0");
-  const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1 });
+  const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1, temperature: 0 });
   const [transKind, setTransKind] = useState("fade");
   const [transDur, setTransDur] = useState("0.5");
   const [ck, setCk] = useState({ similarity: 0, color: "#00ff00", blend: 0.1 });
@@ -41,6 +41,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
           brightness: clip.fx.grade.brightness,
           contrast: clip.fx.grade.contrast,
           saturation: clip.fx.grade.saturation,
+          temperature: clip.fx.grade.temperature ?? 0,
         });
         setCk({
           similarity: clip.fx.chroma_key?.similarity ?? 0,
@@ -186,8 +187,16 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
       brightness: grade.brightness,
       contrast: grade.contrast,
       saturation: grade.saturation,
-      temperature: fx.grade?.temperature ?? 0,
+      temperature: grade.temperature,
     };
+    await invokeSetFx(clip!.id, fx);
+    await onRefresh();
+  }
+
+  async function applyFilterPreset(grade: { brightness: number; contrast: number; saturation: number; temperature: number }) {
+    setGrade(grade);
+    const fx = clip!.fx ?? emptyFx();
+    fx.grade = grade;
     await invokeSetFx(clip!.id, fx);
     await onRefresh();
   }
@@ -479,6 +488,22 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
         <legend>调色</legend>
+        <label style={{ display: "block", marginBottom: 6 }}>
+          预设滤镜:{" "}
+          <select
+            className="ti"
+            defaultValue=""
+            onChange={(e) => {
+              const p = FILTER_PRESETS.find((f) => f.name === e.target.value);
+              if (p) applyFilterPreset(p.grade);
+            }}
+          >
+            <option value="" disabled>选择滤镜…</option>
+            {FILTER_PRESETS.map((f) => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+        </label>
         {(["brightness", "contrast", "saturation"] as const).map((k) => (
           <label key={k} style={{ display: "block", marginBottom: 4 }}>
             {k}:{" "}
@@ -494,6 +519,19 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
             />
           </label>
         ))}
+        <label style={{ display: "block", marginBottom: 4 }}>
+          色温:{" "}
+          <input
+            type="range"
+            min={-1}
+            max={1}
+            step={0.05}
+            value={grade.temperature}
+            onChange={(e) => setGrade({ ...grade, temperature: parseFloat(e.target.value) })}
+            onMouseUp={applyGrade}
+            onTouchEnd={applyGrade}
+          />
+        </label>
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
@@ -605,6 +643,18 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     </div>
   );
 }
+
+/// 预设滤镜(调色 grade 组合,一键应用)。
+const FILTER_PRESETS: { name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[] = [
+  { name: "原片", grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 } },
+  { name: "暖阳", grade: { brightness: 0.05, contrast: 1.05, saturation: 1.15, temperature: 0.4 } },
+  { name: "冷调", grade: { brightness: 0, contrast: 1.1, saturation: 1.05, temperature: -0.4 } },
+  { name: "复古", grade: { brightness: -0.03, contrast: 1.12, saturation: 0.7, temperature: 0.15 } },
+  { name: "日系", grade: { brightness: 0.08, contrast: 0.95, saturation: 0.85, temperature: -0.05 } },
+  { name: "黑白", grade: { brightness: 0, contrast: 1.1, saturation: 0, temperature: 0 } },
+  { name: "鲜明", grade: { brightness: 0.02, contrast: 1.15, saturation: 1.3, temperature: 0 } },
+  { name: "电影", grade: { brightness: -0.05, contrast: 1.25, saturation: 0.9, temperature: 0.1 } },
+];
 
 function emptyFx(): NonNullable<Clip["fx"]> {
   return {

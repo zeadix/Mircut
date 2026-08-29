@@ -281,6 +281,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         g.brightness, g.contrast, g.saturation
                     ));
                 }
+                // 色温(-1 冷~+1 暖)-> 开尔文(10000~3000,0=6500)
+                if (g.temperature - 0.0).abs() > 1e-3 {
+                    let kelvin = (6500.0 - g.temperature * 3500.0).clamp(3000.0, 10000.0) as u32;
+                    chain.push_str(&format!(",colortemperature=temperature={kelvin}"));
+                }
                 // LUT(.cube)
                 if c.fx.lut.enabled() {
                     chain.push_str(&format!(
