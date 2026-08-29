@@ -726,20 +726,7 @@ function TimelineInner({
           {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(contentEndTick, tps)}
         </span>
       </div>
-      {/* 顶部刻度尺(贴编辑窗上边缘,固定) */}
-      <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <RulerBar
-            num={doc.timebase.num}
-            pxPerTick={pxPerTick}
-            scrollX={scrollX}
-            viewW={viewWRef.current}
-            contentW={contentW}
-          />
-        </div>
-      </div>
-      {/* 顶部刻度行(固定贴上边) */}
+      {/* 顶部刻度尺(固定在轨道列表上边缘) */}
       <div style={{ display: "flex", flexShrink: 0 }}>
         <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -937,6 +924,28 @@ function TimelineInner({
               height: geo.totalH,
               pointerEvents: "none",
               zIndex: 5,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* 底部刻度尺(固定在轨道列表下边缘)+ 横向滚动条 */}
+      <div style={{ display: "flex", flexShrink: 0 }}>
+        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderTop: "1px solid #2a2c33" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <RulerBar
+            num={doc.timebase.num}
+            pxPerTick={pxPerTick}
+            scrollX={scrollX}
+            viewW={viewWRef.current}
+            contentW={contentW}
+          />
+          <ScrollBar
+            total={contentW}
+            viewport={viewWRef.current}
+            offset={scrollX}
+            onScroll={(px: number) => {
+              if (wrapRef.current) wrapRef.current.scrollLeft = px;
             }}
           />
         </div>
