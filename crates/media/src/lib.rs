@@ -149,6 +149,30 @@ pub struct Waveform {
 /// 从媒体(视频或音频)提取音频波形峰值。
 /// 用 ffmpeg `astats` + `amerge` 太重;此处用 `aformat` -> `raw f32le` 单声道采样后降采样取峰。
 pub fn waveform(path: &Path, samples_per_sec: u32) -> Result<Waveform> {
+    // 进程内缓存:以 path + 采样率 + 文件 mtime 为键,避免重复解码(性能优化 4.3)。
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let key = (path.to_path_buf(), samples_per_sec, mtime);
+    if let Some(w) = waveform_cache().lock().unwrap().get(&key) {
+        return Ok(w.clone());
+    }
+    let w = waveform_inner(path, samples_per_sec)?;
+    waveform_cache().lock().unwrap().insert(key, w.clone());
+    Ok(w)
+}
+
+type WaveformCache = std::sync::Mutex<std::collections::HashMap<(PathBuf, u32, u64), Waveform>>;
+
+fn waveform_cache() -> &'static WaveformCache {
+    static C: std::sync::OnceLock<WaveformCache> = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn waveform_inner(path: &Path, samples_per_sec: u32) -> Result<Waveform> {
     let info = probe(path)?;
     ensure!(info.audio().is_some(), "媒体不含音频流,无法生成波形");
     let duration = info.duration_secs().unwrap_or(0.0);
@@ -423,6 +447,17 @@ mod tests {
         // 2 秒 * 10/秒 = ~20 个峰值
         assert!(w.peaks.len() >= 15, "peaks = {}", w.peaks.len());
         assert!(w.peaks.iter().all(|p| (0.0..=1.0).contains(p)));
+    }
+
+    #[test]
+    fn waveform_is_cached() {
+        let f = fixture();
+        let w1 = waveform(&f, 10).unwrap();
+        let w2 = waveform(&f, 10).unwrap();
+        assert_eq!(w1.peaks, w2.peaks);
+        // 第二次命中缓存(map 大小应为 1,且不增加)
+        let size = waveform_cache().lock().unwrap().len();
+        assert_eq!(size, 1, "同路径同采样率应命中同一缓存项");
     }
 
     #[test]
