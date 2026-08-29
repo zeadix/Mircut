@@ -20,7 +20,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [ck, setCk] = useState({ similarity: 0, color: "#00ff00", blend: 0.1 });
   // 音频滤镜 / LUT(注意:所有 hooks 必须在条件早退之前——
   // 曾因早退后还有 hooks 导致 "Rendered more hooks" 致命错误,点击片段即崩)
-  const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0 });
+  const [afx, setAfx] = useState({ fade_in: 0, fade_out: 0, denoise: 0, pitch: 0, eq_low: 0, eq_mid: 0, eq_high: 0, stem: "None" as string });
   const [lutPath, setLutPath] = useState("");
   // 入/出点数字编辑(秒)
   const [inSecs, setInSecs] = useState("0.00");
@@ -63,6 +63,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
         eq_low: a.eq_low,
         eq_mid: a.eq_mid,
         eq_high: a.eq_high,
+        stem: (a.stem ?? "None") as string,
       });
     }
     if (clip?.fx?.lut) setLutPath(clip.fx.lut.path);
@@ -234,6 +235,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
         eq_low: afx.eq_low,
         eq_mid: afx.eq_mid,
         eq_high: afx.eq_high,
+        stem: afx.stem,
       },
     });
     await onRefresh();
@@ -395,6 +397,21 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
             />
           </label>
         ))}
+        <label style={{ display: "block", marginBottom: 3 }}>
+          人声分离:
+          <select
+            className="ti"
+            value={afx.stem}
+            onChange={(e) => {
+              setAfx({ ...afx, stem: e.target.value });
+              applyAudioFx();
+            }}
+          >
+            <option value="None">无</option>
+            <option value="Vocals">人声增强</option>
+            <option value="Instrumental">伴奏提取</option>
+          </select>
+        </label>
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
@@ -674,6 +691,7 @@ function emptyFx(): NonNullable<Clip["fx"]> {
       eq_low: 0,
       eq_mid: 0,
       eq_high: 0,
+      stem: "None",
     },
     lut: { path: "", strength: 0 },
   };

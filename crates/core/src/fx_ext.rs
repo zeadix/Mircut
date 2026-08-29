@@ -2,6 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 人声分离模式(降级:FFmpeg 频段滤波近似)。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum StemMode {
+    #[default]
+    None,
+    /// 人声增强(带通 300~3400Hz)。
+    Vocals,
+    /// 伴奏提取(带阻 300~3400Hz)。
+    Instrumental,
+}
+
 /// 音频滤镜(挂在 Clip.fx 上,导出时编译为 ffmpeg 音频链)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AudioFx {
@@ -17,6 +28,9 @@ pub struct AudioFx {
     pub eq_low: f64,
     pub eq_mid: f64,
     pub eq_high: f64,
+    /// 人声分离(默认无)。
+    #[serde(default)]
+    pub stem: StemMode,
 }
 
 impl Default for AudioFx {
@@ -29,6 +43,7 @@ impl Default for AudioFx {
             eq_low: 0.0,
             eq_mid: 0.0,
             eq_high: 0.0,
+            stem: StemMode::None,
         }
     }
 }
@@ -67,6 +82,12 @@ impl AudioFx {
             parts.push(format!(
                 "equalizer=f=200:t=q:w=1:g={l:.1},equalizer=f=1000:t=q:w=1:g={m:.1},equalizer=f=5000:t=q:w=1:g={h:.1}"
             ));
+        }
+        // 人声分离:带通/带阻近似
+        match self.stem {
+            StemMode::None => {}
+            StemMode::Vocals => parts.push("lowpass=f=3400,highpass=f=300".to_string()),
+            StemMode::Instrumental => parts.push("bandreject=f=1500:w=3100".to_string()),
         }
         parts
     }

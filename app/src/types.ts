@@ -52,6 +52,7 @@ export interface AudioFx {
   eq_low: number;
   eq_mid: number;
   eq_high: number;
+  stem?: "None" | "Vocals" | "Instrumental";
 }
 
 export interface LutApply {
