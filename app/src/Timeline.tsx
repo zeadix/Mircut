@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
+import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
 
 interface Props {
   doc: Document;
@@ -30,8 +31,7 @@ const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 type DragSession =
   | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
-  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number }
-  | { kind: "seek" };
+  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
 
 /// 稳定渐变(模块级缓存,避免每片段每帧新建)。
 const GRAD_VIDEO: [string, string] = ["#3f9d5a", "#2c7040"];
@@ -481,12 +481,8 @@ function TimelineInner({
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const hit = hitTest(t, e.clientX, e.clientY);
-    // 播放头(帧指示器)拖拽:鼠标在播放头红线 ±10px 内按下 -> scrub,优先于块命中
-    const headHit = Math.abs(t - playheadRef.current) * pxPerTick <= 10;
-    if (headHit) {
-      dragRef.current = { kind: "seek" };
-      onSeek(t);
-    } else if (hit) {
+    // 时间帧操作全部在上下刻度尺上(画布内不再拖拽/切换播放头)
+    if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
       if (track?.locked) return;
@@ -494,7 +490,6 @@ function TimelineInner({
       if (hit.edge === "left" || hit.edge === "right") {
         dragRef.current = { kind: hit.edge === "left" ? "trimL" : "trimR", clipId: hit.clipId, origStart: clip.start, origDuration: clip.duration };
       } else {
-        onSeek(Math.min(Math.max(t, clip.start), clip.start + clip.duration - 1));
         const grabTicks = Math.round(t - clip.start);
         const fromRow = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
         dragRef.current = {
@@ -509,9 +504,9 @@ function TimelineInner({
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
       }
     } else {
+      // 空白处不切换播放头(时间帧只在刻度尺上操作)
       setGhost(null);
       setTrimHint(null);
-      onSeek(snapTicks(t));
     }
   }
 
@@ -521,11 +516,6 @@ function TimelineInner({
       const t = ticksFromClientX(e.clientX);
       const hit = hitTest(t, e.clientX, e.clientY);
       setHoverEdge(hit?.edge === "left" || hit?.edge === "right" ? hit.edge : null);
-      return;
-    }
-    if (d.kind === "seek") {
-      const st = Math.max(0, Math.floor(ticksFromClientX(e.clientX)));
-      onSeek(st);
       return;
     }
     const clip = doc.clips.find((c) => c.id === d.clipId);
@@ -818,6 +808,7 @@ function TimelineInner({
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
+            onSeekTicks={onSeek}
           />
         </div>
       </div>
@@ -987,23 +978,32 @@ function TimelineInner({
                   </span>
                 )}
               </div>
-              {(["locked", "hidden", "muted"] as const).map((f) => (
-                <button
-                  key={f}
-                  className="btn"
-                  style={{
-                    alignSelf: "center",
-                    padding: "2px 4px",
-                    fontSize: 10,
-                    opacity: track[f] ? 1 : 0.35,
-                    borderColor: track[f] ? "#ffd75e" : undefined,
-                  }}
-                  onClick={() => onToggleTrack?.(track.id, f)}
-                  title={f}
-                >
-                  {f === "locked" ? "锁" : f === "hidden" ? "眼" : "音"}
-                </button>
-              ))}
+              {(["locked", "hidden", "muted"] as const).map((f) => {
+                const on = track[f];
+                return (
+                  <button
+                    key={f}
+                    className="btn"
+                    style={{
+                      alignSelf: "center",
+                      padding: "2px 4px",
+                      display: "flex",
+                      alignItems: "center",
+                      opacity: on ? 1 : 0.4,
+                      borderColor: on ? "#ffd75e" : undefined,
+                      color: on ? "#ffd75e" : "#8b93a1",
+                    }}
+                    onClick={() => onToggleTrack?.(track.id, f)}
+                    title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}
+                  >
+                    {f === "locked"
+                      ? (on ? <Lock size={12} weight="fill" /> : <LockOpen size={12} />)
+                      : f === "hidden"
+                        ? (on ? <EyeSlash size={12} /> : <Eye size={12} />)
+                        : (on ? <SpeakerSlash size={12} /> : <SpeakerHigh size={12} />)}
+                  </button>
+                );
+              })}
             </div>
           ))}
           </div>
@@ -1126,6 +1126,7 @@ function TimelineInner({
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
+            onSeekTicks={onSeek}
           />
         </div>
       </div>
@@ -1240,13 +1241,23 @@ function RulerBar({
   scrollX,
   viewW,
   contentW,
+  onSeekTicks,
 }: {
   num: number;
   pxPerTick: number;
   scrollX: number;
   viewW: number;
   contentW: number;
+  /// 时间帧交互:单击/拖拽连续 seek(刻度尺是播放头唯一操作区)。
+  onSeekTicks?: (t: number) => void;
 }) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const scrubbing = useRef(false);
+  const toTicks = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect) return 0;
+    return Math.max(0, Math.round((clientX - rect.left + scrollX) / pxPerTick));
+  };
   const s0 = Math.max(0, Math.floor(scrollX / pxPerTick / num));
   const s1 = Math.ceil((scrollX + viewW) / pxPerTick / num);
   const ticks: JSX.Element[] = [];
@@ -1285,13 +1296,31 @@ function RulerBar({
   }
   return (
     <div
+      ref={barRef}
       style={{
         position: "relative",
         width: "100%",
         height: 18,
         background: "#1a1b1f",
         overflow: "hidden",
+        cursor: onSeekTicks ? "ew-resize" : undefined,
+        userSelect: "none",
       }}
+      onPointerDown={(e) => {
+        if (!onSeekTicks) return;
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        scrubbing.current = true;
+        onSeekTicks(toTicks(e.clientX));
+      }}
+      onPointerMove={(e) => {
+        if (!scrubbing.current || !onSeekTicks) return;
+        onSeekTicks(toTicks(e.clientX));
+      }}
+      onPointerUp={(e) => {
+        scrubbing.current = false;
+        (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+      }}
+      onPointerCancel={() => { scrubbing.current = false; }}
     >
       <div style={{ position: "absolute", inset: 0, width: contentW }}>{ticks}</div>
     </div>
