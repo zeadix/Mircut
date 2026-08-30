@@ -81,15 +81,15 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
 
   useEffect(() => {
     if (clip?.fx) {
-      const kf = (a?: { keyframes: { value: number }[] }) =>
-        a?.keyframes?.[0]?.value;
+      const r = clip.fx.rect;
+      const kf0 = (a?: { keyframes: { value: number }[] }) => a?.keyframes?.[0]?.value;
       setPip({
-        scale: kf(clip.fx.scale) ?? 0.35,
-        x: kf(clip.fx.x_offset) ?? 0.72,
-        y: kf(clip.fx.y_offset) ?? 0.72,
+        scale: r?.w ?? kf0(clip.fx.scale) ?? 0.35,
+        x: r?.x ?? kf0(clip.fx.x_offset) ?? 0.72,
+        y: r?.y ?? kf0(clip.fx.y_offset) ?? 0.72,
       });
     }
-  }, [clip?.id]);
+  }, [clip?.id, clip?.fx?.rect]);
 
   /// 混合模式写入 fx.blend_mode。
   async function applyBlend(mode: string) {
@@ -120,14 +120,22 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     await onRefresh();
   }
 
-  /// 画中画参数写入(fx 静态单帧)。
+  /// 画中画参数写入:有 rect 时改矩形(高不变);否则写单帧关键帧。
+  /// 已有 ≥2 帧关键帧动画时不覆盖(交给关键帧编辑器)。
   async function applyPip() {
     if (!clip) return;
     const { invoke } = await import("@tauri-apps/api/core");
     const fx = clip.fx ?? emptyFx();
-    fx.scale = { keyframes: [{ t: 0, value: pip.scale, interp: "Smooth" }] };
-    fx.x_offset = { keyframes: [{ t: 0, value: pip.x, interp: "Smooth" }] };
-    fx.y_offset = { keyframes: [{ t: 0, value: pip.y, interp: "Smooth" }] };
+    type Anim = NonNullable<Clip["fx"]>["scale"];
+    const write = (a: Anim | undefined, v: number): Anim =>
+      a && a.keyframes.length >= 2 ? a : { keyframes: [{ t: 0, value: v, interp: "Smooth" }] };
+    if (fx.rect) {
+      fx.rect = { x: pip.x, y: pip.y, w: pip.scale, h: fx.rect.h };
+    } else {
+      fx.scale = write(fx.scale, pip.scale);
+      fx.x_offset = write(fx.x_offset, pip.x);
+      fx.y_offset = write(fx.y_offset, pip.y);
+    }
     await invoke("set_clip_fx", { clipId: clip.id, fx });
     await onRefresh();
   }
@@ -215,8 +223,8 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     return invoke("set_clip_fx", { clipId, fx });
   }
 
-  async function addKeyframe(prop: "opacity" | "volume") {
-    await api.setKeyframe(clip!.id, prop, playheadTicks - clip!.start, 1.0, "smooth");
+  async function addKeyframe(prop: api.KeyframeProp, value = 1.0) {
+    await api.setKeyframe(clip!.id, prop, playheadTicks - clip!.start, value, "smooth");
     await onRefresh();
   }
 
@@ -645,12 +653,36 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
 
       <fieldset style={{ borderColor: "#2a2c33" }}>
         <legend>关键帧</legend>
-        <button className="btn" onClick={() => addKeyframe("opacity")}>
-          + 不透明度帧
-        </button>{" "}
-        <button className="btn" onClick={() => addKeyframe("volume")}>
-          + 音量帧
-        </button>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+          <button className="btn" onClick={() => addKeyframe("opacity")}>
+            + 不透明度帧
+          </button>{" "}
+          <button className="btn" onClick={() => addKeyframe("volume")}>
+            + 音量帧
+          </button>
+          <button className="btn" onClick={() => addKeyframe("scale", 0.5)} title="缩放关键帧(0.5 = 一半大小)">
+            + 缩放帧
+          </button>
+          <button className="btn" onClick={() => addKeyframe("rotate", 0)} title="旋转关键帧(度)">
+            + 旋转帧
+          </button>
+          <button
+            className="btn"
+            onClick={async () => {
+              // 位移帧:x/y 同一时刻成对添加(保持位置连续)
+              const t = playheadTicks - clip!.start;
+              const xk = clip!.fx?.x_offset?.keyframes ?? [];
+              const yk = clip!.fx?.y_offset?.keyframes ?? [];
+              const cur = xk.length >= 2 || yk.length >= 2 ? 0 : 0.72;
+              await api.setKeyframe(clip!.id, "x_offset", t, cur, "smooth");
+              await api.setKeyframe(clip!.id, "y_offset", t, cur, "smooth");
+              await onRefresh();
+            }}
+            title="位置关键帧(X/Y 成对)"
+          >
+            + 位移帧
+          </button>
+        </div>
         <KeyframeEditor
           clipId={clip.id}
           prop="opacity"
@@ -667,6 +699,53 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
           tps={tps}
           onRefresh={onRefresh}
         />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="scale"
+          label="缩放"
+          keyframes={clip.fx?.scale.keyframes ?? []}
+          tps={tps}
+          min={0.02}
+          max={4}
+          step={0.01}
+          onRefresh={onRefresh}
+        />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="rotate"
+          label="旋转(度)"
+          keyframes={clip.fx?.rotate.keyframes ?? []}
+          tps={tps}
+          min={-180}
+          max={180}
+          step={1}
+          onRefresh={onRefresh}
+        />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="x_offset"
+          label="X 位移"
+          keyframes={clip.fx?.x_offset.keyframes ?? []}
+          tps={tps}
+          min={-2}
+          max={3}
+          step={0.01}
+          onRefresh={onRefresh}
+        />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="y_offset"
+          label="Y 位移"
+          keyframes={clip.fx?.y_offset.keyframes ?? []}
+          tps={tps}
+          min={-2}
+          max={3}
+          step={0.01}
+          onRefresh={onRefresh}
+        />
+        <div style={{ color: "#667", marginTop: 2 }}>
+          关键帧按播放头位置添加;缩放/位移 ≥2 帧时优先于画中画静态参数
+        </div>
       </fieldset>
 
       <fieldset style={{ borderColor: "#2a2c33" }}>

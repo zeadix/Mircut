@@ -1,42 +1,60 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Keyframe } from "./types";
+import type { KeyframeProp } from "./api";
 
 interface Props {
   clipId: string;
-  prop: "opacity" | "scale" | "volume";
+  prop: KeyframeProp;
   label: string;
   keyframes: Keyframe[];
   tps: number;
+  /// 数值输入范围(不同属性值域不同:缩放 0-4,旋转 -180~180)。
+  min?: number;
+  max?: number;
+  step?: number;
   onRefresh: () => Promise<void>;
 }
 
 /// 关键帧曲线编辑器:SVG 曲线预览 + 关键帧列表(时间/值/插值/删除)。
 /// 贝塞尔插值用 cubic-bezier 采样绘制。
-export default function KeyframeEditor({ clipId, prop, label, keyframes, tps, onRefresh }: Props) {
+export default function KeyframeEditor({
+  clipId,
+  prop,
+  label,
+  keyframes,
+  tps,
+  min = 0,
+  max = 1,
+  step = 0.05,
+  onRefresh,
+}: Props) {
   const [draft, setDraft] = useState<Keyframe[]>(keyframes);
 
   useEffect(() => {
     setDraft(keyframes);
   }, [keyframes]);
 
-  // 采样曲线(0..1 归一化 x,值 0..1 归一化 y)
+  // 采样曲线(0..1 归一化 x;y 按值域 min/max 归一化,支持负值/超 1 属性)
   const curvePoints = useMemo(() => {
     const sorted = [...draft].sort((a, b) => a.t - b.t);
     if (sorted.length === 0) return "";
     const minT = sorted[0].t;
     const maxT = sorted[sorted.length - 1].t;
     const span = Math.max(1, maxT - minT);
+    const lo = Math.min(min, ...draft.map((k) => k.value));
+    const hi = Math.max(max, ...draft.map((k) => k.value));
+    const range = Math.max(1e-6, hi - lo);
     const pts: string[] = [];
     for (let i = 0; i <= 60; i++) {
       const x = i / 60;
       const t = minT + x * span;
       const v = sampleValue(sorted, t);
       const px = (x * 100).toFixed(1);
-      const py = (100 - v * 100).toFixed(1);
+      const py = (100 - ((v - lo) / range) * 100).toFixed(1);
       pts.push(`${px},${py}`);
     }
     return pts.join(" ");
-  }, [draft]);
+  }, [draft, min, max]);
 
   function sampleValue(sorted: Keyframe[], t: number): number {
     if (sorted.length === 0) return 0;
@@ -140,9 +158,9 @@ export default function KeyframeEditor({ clipId, prop, label, keyframes, tps, on
           <input
             className="ti"
             type="number"
-            step="0.05"
-            min="0"
-            max="1"
+            step={step}
+            min={min}
+            max={max}
             style={{ width: 52 }}
             value={k.value}
             onChange={(e) => changeValue(idx, parseFloat(e.target.value))}

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Document, FxRect } from "./types";
+import type { Clip, ColorGrade, Document, FxRect, Mask, Transition } from "./types";
+import { valueAt } from "./anim";
 import { Magnet } from "@phosphor-icons/react";
+
+/// 转场类型(types.ts 未单独导出,从 Transition 派生)。
+type TransitionKind = Transition["kind"];
 
 interface Props {
   playheadTicks: number;
@@ -24,8 +28,79 @@ function frameUrl(path: string): string {
   return `veditor://preview/${encodeURIComponent(path)}`;
 }
 
-/// 默认画面矩形(铺满)。
-const FULL: FxRect = { x: 0.5, y: 0.5, w: 1.0, h: 1.0 };
+/// 混合模式 -> CSS mix-blend-mode(与导出 blend=all_mode 对应)。
+const BLEND_CSS: Record<string, string> = {
+  Normal: "normal",
+  Multiply: "multiply",
+  Screen: "screen",
+  Overlay: "overlay",
+  Darken: "darken",
+  Lighten: "lighten",
+  Difference: "difference",
+  Addition: "plus-lighter",
+};
+
+/// 调色 -> CSS filter 近似(导出为 eq/colortemperature,此处目测近似)。
+function gradeFilter(g?: ColorGrade): string | undefined {
+  if (!g) return undefined;
+  const b = g.brightness ?? 0;
+  const c = g.contrast ?? 1;
+  const s = g.saturation ?? 1;
+  const t = g.temperature ?? 0;
+  if (b === 0 && c === 1 && s === 1 && t === 0) return undefined;
+  const parts = [
+    `brightness(${(1 + b).toFixed(3)})`,
+    `contrast(${c.toFixed(3)})`,
+    `saturate(${s.toFixed(3)})`,
+  ];
+  if (t > 0.01) parts.push(`sepia(${Math.min(1, t * 0.35).toFixed(3)})`);
+  if (t < -0.01) {
+    parts.push(`hue-rotate(${(t * 18).toFixed(1)}deg) saturate(${(1 + -t * 0.15).toFixed(3)})`);
+  }
+  return parts.join(" ");
+}
+
+/// 矩形蒙版 -> CSS clip-path inset(线性蒙版/反选暂不预览)。
+function maskClip(mask?: Mask): string | undefined {
+  if (!mask || mask.kind !== "Rect" || mask.invert) return undefined;
+  const l = (mask.x - mask.w / 2) * 100;
+  const tp = (mask.y - mask.h / 2) * 100;
+  return `inset(${tp.toFixed(2)}% ${(100 - l - mask.w * 100).toFixed(2)}% ${(100 - tp - mask.h * 100).toFixed(2)}% ${l.toFixed(2)}%)`;
+}
+
+/// 片段画布矩形:关键帧(>=2 帧)动画优先,回退静态 rect / 旧模型单帧语义。
+/// 与导出 compile 的取值规则对齐(export fallback:x/y 为剩余空间系数)。
+function deriveRect(c: Clip, tLocal: number): { rect: FxRect; rotate: number } {
+  const fx = c.fx;
+  const rect = fx?.rect;
+  const sk = fx?.scale?.keyframes ?? [];
+  const xk = fx?.x_offset?.keyframes ?? [];
+  const yk = fx?.y_offset?.keyframes ?? [];
+  const anim = sk.length >= 2 || xk.length >= 2 || yk.length >= 2;
+  const rotate = valueAt(fx?.rotate?.keyframes, tLocal) ?? 0;
+  let r: FxRect;
+  if (!anim && rect) {
+    r = rect;
+  } else if (!anim) {
+    const w = valueAt(sk, 0) ?? 0.35;
+    const px = valueAt(xk, 0) ?? 0.72;
+    const py = valueAt(yk, 0) ?? 0.72;
+    r = { x: px * (1 - w) + w / 2, y: py * (1 - w) + w / 2, w, h: w };
+  } else if (rect) {
+    r = {
+      x: valueAt(xk, tLocal) ?? rect.x,
+      y: valueAt(yk, tLocal) ?? rect.y,
+      w: valueAt(sk, tLocal) ?? rect.w,
+      h: valueAt(sk, tLocal) ?? rect.h,
+    };
+  } else {
+    const w = valueAt(sk, tLocal) ?? 0.35;
+    const px = valueAt(xk, tLocal) ?? 0.72;
+    const py = valueAt(yk, tLocal) ?? 0.72;
+    r = { x: px * (1 - w) + w / 2, y: py * (1 - w) + w / 2, w, h: w };
+  }
+  return { rect: r, rotate };
+}
 
 interface Layer {
   clipId: string;
@@ -33,6 +108,20 @@ interface Layer {
   secs: number;
   rect: FxRect;
   z: number;
+  /// 不透明度(关键帧 value_at,默认 1)。
+  opacity: number;
+  /// CSS mix-blend-mode(未设置 = 正常)。
+  blend?: string;
+  /// CSS filter(调色近似)。
+  filter?: string;
+  /// 旋转角度(度,关键帧 value_at)。
+  rotate: number;
+  /// 矩形蒙版 clip-path。
+  clipPath?: string;
+  /// 转场窗口内的淡出系数(1 = 无)。
+  fade: number;
+  /// 右片段转场提前入场的模拟参数。
+  trans?: { kind: TransitionKind; p: number };
 }
 
 /// 拖拽会话:中心移动 / 边缩放(水平/垂直) / 角缩放(双维)。
@@ -112,6 +201,33 @@ export default function Preview({
     doneRef.current?.();
   }, []);
 
+  /// 单个片段 -> 合成层(取出帧时刻与全部视觉属性)。
+  const buildLayer = useCallback(
+    (c: Clip, doc: Document, t: number, forcedSecs: number | null, trans?: { kind: TransitionKind; p: number }): Layer | null => {
+      const asset = doc.assets.find((a) => a.id === c.asset.asset_id);
+      if (!asset || !asset.has_video) return null;
+      const tps = doc.timebase.num / doc.timebase.den;
+      const tLocal = (t - c.start) / tps;
+      const rawSecs = forcedSecs ?? c.asset.source_in + tLocal * (c.speed || 1);
+      const { rect, rotate } = deriveRect(c, tLocal);
+      return {
+        clipId: c.id,
+        path: asset.path,
+        secs: Math.max(0, Math.min(rawSecs, asset.duration_secs - 0.05)),
+        rect,
+        z: 0,
+        opacity: valueAt(c.fx?.opacity?.keyframes, tLocal) ?? 1,
+        blend: c.fx?.blend_mode ? BLEND_CSS[c.fx.blend_mode] : undefined,
+        filter: gradeFilter(c.fx?.grade),
+        rotate,
+        clipPath: maskClip(c.fx?.mask),
+        fade: 1,
+        trans,
+      };
+    },
+    []
+  );
+
   /// 当前时刻的可见层(自下而上 = DOM 顺序,后画遮前画)。
   const layers: Layer[] = useMemo(() => {
     if (!doc) return [];
@@ -122,29 +238,38 @@ export default function Preview({
     // tracks 数组自上而下(上层在前);DOM 顺序底层先,故倒序
     const ordered = [...visible].reverse();
     const out: Layer[] = [];
-    let z = 0;
     for (const tr of ordered) {
       for (const c of doc.clips) {
         if (c.track_id !== tr.id) continue;
         if (c.lane === "Audio") continue;
         if (!(c.start <= t && t < c.start + c.duration)) continue;
-        const asset = doc.assets.find((a) => a.id === c.asset.asset_id);
-        if (!asset || !asset.has_video) continue;
-        const tps = doc.timebase.num / doc.timebase.den;
-        const offset = (t - c.start) / tps;
-        const secs = c.asset.source_in + offset * (c.speed || 1);
-        out.push({
-          clipId: c.id,
-          path: asset.path,
-          secs: Math.max(0, Math.min(secs, asset.duration_secs - 0.05)),
-          rect: c.fx?.rect ?? FULL,
-          z,
-        });
-        z += 1;
+        const l = buildLayer(c, doc, t, null);
+        if (l) out.push(l);
+      }
+    }
+    // 转场窗口 [b-d, b):右片段提前入场 + 左片段淡出(与导出 xfade 窗口一致)
+    const tps = doc.timebase.num / doc.timebase.den;
+    for (const tr of doc.transitions ?? []) {
+      const lc = doc.clips.find((c) => c.id === tr.left_clip_id);
+      const rc = doc.clips.find((c) => c.id === tr.right_clip_id);
+      if (!lc || !rc) continue;
+      const d = Math.max(tr.duration_secs, 0.05) * tps;
+      const b = lc.start + lc.duration;
+      if (!(t >= b - d && t < b)) continue;
+      const p = Math.min(1, Math.max(0, (t - (b - d)) / d));
+      for (const l of out) {
+        if (l.clipId === lc.id) l.fade = Math.min(l.fade, 1 - p);
+      }
+      if (!out.some((l) => l.clipId === rc.id)) {
+        const rTrack = doc.tracks.find((x) => x.id === rc.track_id);
+        if (rTrack && !rTrack.hidden && rTrack.kind !== "Audio" && rc.lane !== "Audio") {
+          const l = buildLayer(rc, doc, t, Math.max(0, rc.asset.source_in), { kind: tr.kind, p });
+          if (l) out.push(l);
+        }
       }
     }
     return out;
-  }, [doc, playheadTicks]);
+  }, [doc, playheadTicks, buildLayer]);
 
   /// 播放头所在层(选中层显示变换框)。
   const selected = layers.find((l) => l.clipId === selectedClipId) ?? null;
@@ -518,15 +643,37 @@ export default function Preview({
           {layers.map((l) => {
             const r = l.clipId === selectedClipId ? (liveRect ?? l.rect) : l.rect;
             const img = layerUrls[l.clipId];
+            const op = Math.max(0, Math.min(1, l.opacity * l.fade));
+            let tf = l.rotate ? `rotate(${l.rotate.toFixed(2)}deg)` : "";
+            if (l.trans) {
+              if (l.trans.kind === "SlideLeft") tf += ` translateX(${((1 - l.trans.p) * 100).toFixed(1)}%)`;
+              if (l.trans.kind === "SlideRight") tf += ` translateX(${(-(1 - l.trans.p) * 100).toFixed(1)}%)`;
+              if (l.trans.kind === "Zoom") tf += ` scale(${(1.2 - 0.2 * l.trans.p).toFixed(3)})`;
+            }
             return (
-              <div key={l.clipId} style={stageRectStyle(r)}>
+              <div
+                key={l.clipId}
+                style={{
+                  ...stageRectStyle(r),
+                  opacity: op,
+                  mixBlendMode: (l.blend as React.CSSProperties["mixBlendMode"]) ?? undefined,
+                  clipPath: l.clipPath,
+                  transform: tf || undefined,
+                }}
+              >
                 {img ? (
                   <img
                     src={img}
                     alt=""
                     decoding="async"
                     draggable={false}
-                    style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none" }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "contain",
+                      pointerEvents: "none",
+                      filter: l.filter,
+                    }}
                   />
                 ) : (
                   <div
@@ -547,6 +694,67 @@ export default function Preview({
               </div>
             );
           })}
+
+          {/* 文字叠层(与导出 drawtext 样式/动画对齐) */}
+          {(doc?.text_overlays ?? [])
+            .filter((o) => playheadTicks >= o.start && playheadTicks < o.end)
+            .map((o) => {
+              const tpsL = doc!.timebase.num / doc!.timebase.den;
+              const p = Math.min(1, Math.max(0, (playheadTicks - o.start) / tpsL / 0.5));
+              const style: React.CSSProperties = {
+                position: "absolute",
+                left: `${o.x * 100}%`,
+                top: `${o.y * 100}%`,
+                transform: `translate(-50%, -50%)`,
+                color: o.color,
+                fontSize: Math.max(10, (o.font_size * panelH) / 1080),
+                fontWeight: o.bold ? 700 : 500,
+                whiteSpace: "pre",
+                pointerEvents: "none",
+                zIndex: 4,
+              };
+              if (o.outline) style.WebkitTextStroke = `1.5px ${o.outline}`;
+              if (o.shadow) style.textShadow = "2px 2px 4px rgba(0,0,0,0.8)";
+              if (o.animation === "FadeIn") style.opacity = p;
+              if (o.animation === "SlideUp") style.transform += ` translateY(${((1 - p) * panelH * 0.3).toFixed(1)}px)`;
+              if (o.animation === "Zoom") style.transform += ` scale(${(0.3 + 0.7 * p).toFixed(3)})`;
+              return (
+                <div key={o.id} style={style}>
+                  {o.text}
+                </div>
+              );
+            })}
+
+          {/* 字幕(与导出 drawtext 位置/样式对齐) */}
+          {(doc?.subtitles?.cues ?? [])
+            .filter((cue) => {
+              const tpsL = doc!.timebase.num / doc!.timebase.den;
+              const s = playheadTicks / tpsL;
+              return s >= cue.start / tpsL && s < cue.end / tpsL;
+            })
+            .map((cue, i) => {
+              const st = doc!.subtitles!.style;
+              return (
+                <div
+                  key={`${cue.start}-${i}`}
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    bottom: 60 * (panelH / 1080) + 12,
+                    transform: "translateX(-50%)",
+                    color: st.color,
+                    fontSize: Math.max(10, (st.font_size * panelH) / 1080),
+                    fontWeight: st.bold ? 700 : 500,
+                    WebkitTextStroke: st.outline ? `1px ${st.outline}` : undefined,
+                    whiteSpace: "pre",
+                    pointerEvents: "none",
+                    zIndex: 4,
+                  }}
+                >
+                  {cue.text}
+                </div>
+              );
+            })}
 
           {/* 变换框 + 手柄 */}
           {showTransform && activeRect && (

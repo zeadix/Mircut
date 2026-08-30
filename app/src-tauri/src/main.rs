@@ -1283,6 +1283,9 @@ fn set_keyframe(
     match prop.as_str() {
         "opacity" => fx.opacity.set(t, value, interp),
         "scale" => fx.scale.set(t, value, interp),
+        "rotate" => fx.rotate.set(t, value, interp),
+        "x_offset" => fx.x_offset.set(t, value, interp),
+        "y_offset" => fx.y_offset.set(t, value, interp),
         "volume" => fx.volume.set(t, value, interp),
         _ => return false,
     }
@@ -1301,6 +1304,9 @@ fn remove_keyframe(clip_id: String, prop: String, t: Ticks, state: State<'_, App
     let target: &mut veditor_core::Animatable = match prop.as_str() {
         "opacity" => &mut fx.opacity,
         "scale" => &mut fx.scale,
+        "rotate" => &mut fx.rotate,
+        "x_offset" => &mut fx.x_offset,
+        "y_offset" => &mut fx.y_offset,
         "volume" => &mut fx.volume,
         _ => return false,
     };

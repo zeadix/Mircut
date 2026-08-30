@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
-import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash } from "@phosphor-icons/react";
+import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash, X } from "@phosphor-icons/react";
 
 interface Props {
   doc: Document;
@@ -21,12 +21,15 @@ interface Props {
   onClipRangeEdit?: (clipId: string) => void;
   onClipRangeSet?: (clipId: string, startSecs: number, durSecs: number, srcInSecs: number) => void;
   onRenameTrack?: (trackId: string, name: string) => void;
+  onRemoveTrack?: (trackId: string) => void;
   onDuplicateClip?: (clipId: string, trackId: string, start: number) => void;
 }
 
 const MIN_TRACK_H = 36;
 const EDGE_HIT_PX = 10;
 const VIEWPAD_RIGHT_PX = 600; // 内容右余量
+/// 文字叠层 lane 高度(有文字块时画布底部追加)。
+const TEXT_LANE_H = 26;
 
 type DragSession =
   | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean }
@@ -62,6 +65,7 @@ function TimelineInner({
   onClipRangeEdit,
   onClipRangeSet,
   onRenameTrack,
+  onRemoveTrack,
   onDuplicateClip,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -117,6 +121,9 @@ function TimelineInner({
     return { rowH, tops, totalH: acc };
   }, [doc.tracks, trackH]);
 
+  /// 画布高度:轨道区 + 文字块 lane(有文字叠层时)。
+  const canvasH = geo.totalH + ((doc.text_overlays?.length ?? 0) > 0 ? TEXT_LANE_H : 0);
+
   function clipRow(clip: { track_id: string; lane?: string | null }): { top: number; laneTop: number; h: number } | null {
     const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
     if (ti < 0) return null;
@@ -160,7 +167,7 @@ function TimelineInner({
     const sx = wrap.scrollLeft;
     scrollTopRef.current = wrap.scrollTop;
     const w = contentW;
-    const h = geo.totalH;
+    const h = canvasH;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
@@ -267,13 +274,61 @@ function TimelineInner({
       }
     });
 
-    // 文字叠层标记
-    doc.text_overlays?.forEach((t) => {
-      const x = t.start * pxPerTick;
-      const cw = (t.end - t.start) * pxPerTick;
-      ctx.fillStyle = "#a86ecb";
-      ctx.fillRect(x, geo.totalH + 10, Math.max(cw, 2), 6);
-    });
+    // 转场带:窗口 [左片段出点-时长, 出点](与导出 xfade 窗口一致),
+    // 画在左片段行,紫色沙漏形。
+    for (const tr of doc.transitions ?? []) {
+      const lc = doc.clips.find((c) => c.id === tr.left_clip_id);
+      if (!lc) continue;
+      const row = clipRow(lc);
+      if (!row) continue;
+      const b = (lc.start + lc.duration) * pxPerTick;
+      const tw = Math.max(tr.duration_secs * tps * pxPerTick, 6);
+      if (b < vx0 - tw || b - tw > vx1) continue;
+      const y0 = row.laneTop;
+      const y1 = row.laneTop + row.h;
+      ctx.fillStyle = "rgba(168, 110, 203, 0.85)";
+      ctx.beginPath();
+      // 上三角 + 下三角(中心收窄 = 交叉暗示)
+      ctx.moveTo(b - tw, y0);
+      ctx.lineTo(b, y0);
+      ctx.lineTo(b - tw / 2, (y0 + y1) / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(b - tw, y1);
+      ctx.lineTo(b, y1);
+      ctx.lineTo(b - tw / 2, (y0 + y1) / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "#c9a0ff";
+      ctx.strokeRect(b - tw, y0, tw, row.h);
+    }
+
+    // 文字叠层块(底部 lane,单击跳转到块起点)
+    if (canvasH > geo.totalH) {
+      ctx.fillStyle = "#1d1e25";
+      ctx.fillRect(0, geo.totalH, w, TEXT_LANE_H);
+      ctx.strokeStyle = "#2e3038";
+      ctx.beginPath();
+      ctx.moveTo(0, geo.totalH);
+      ctx.lineTo(w, geo.totalH);
+      ctx.stroke();
+      for (const t of doc.text_overlays ?? []) {
+        const x = t.start * pxPerTick;
+        const cw = Math.max((t.end - t.start) * pxPerTick, 4);
+        if (x + cw < vx0 || x > vx1) continue;
+        ctx.fillStyle = "#6b4a8a";
+        ctx.fillRect(x + 1, geo.totalH + 4, Math.max(cw - 2, 4), TEXT_LANE_H - 9);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x + 1, geo.totalH, Math.max(cw - 2, 4), TEXT_LANE_H);
+        ctx.clip();
+        ctx.fillStyle = "#e6d9f2";
+        ctx.font = "10px sans-serif";
+        ctx.fillText(t.text.slice(0, 16), x + 5, geo.totalH + 16);
+        ctx.restore();
+      }
+    }
 
     // 拖拽虚影
     if (ghost) {
@@ -480,6 +535,13 @@ function TimelineInner({
     const target = (e.currentTarget as HTMLElement) ?? (e.target as HTMLElement);
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
+    // 文字块 lane:点击跳转到该文字块起点
+    const yIn = e.clientY - canvasRef.current!.getBoundingClientRect().top;
+    if (canvasH > geo.totalH && yIn >= geo.totalH) {
+      const block = (doc.text_overlays ?? []).find((o) => t >= o.start && t < o.end);
+      if (block) onSeek(block.start);
+      return;
+    }
     const hit = hitTest(t, e.clientX, e.clientY);
     // 时间帧操作全部在上下刻度尺上(画布内不再拖拽/切换播放头)
     if (hit) {
@@ -1004,6 +1066,20 @@ function TimelineInner({
                   </button>
                 );
               })}
+              <button
+                className="btn"
+                style={{
+                  alignSelf: "center",
+                  padding: "2px 4px",
+                  display: "flex",
+                  alignItems: "center",
+                  color: "#a05a5a",
+                }}
+                onClick={() => onRemoveTrack?.(track.id)}
+                title={`删除轨道 ${track.name}(可撤销)`}
+              >
+                <X size={12} />
+              </button>
             </div>
           ))}
           </div>
@@ -1067,7 +1143,7 @@ function TimelineInner({
             }
           }}
         >
-          <div style={{ position: "relative", width: contentW, height: geo.totalH }}>
+          <div style={{ position: "relative", width: contentW, height: canvasH }}>
             <canvas
               ref={canvasRef}
               style={{ display: "block" }}
@@ -1108,7 +1184,7 @@ function TimelineInner({
               top: 0,
               left: 0,
               width: contentW,
-              height: geo.totalH,
+              height: canvasH,
               pointerEvents: "none",
               zIndex: 5,
             }}

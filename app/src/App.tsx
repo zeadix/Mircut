@@ -12,6 +12,7 @@ import SubtitlePanel from "./SubtitlePanel";
 import TextPanel from "./TextPanel";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
+import AudioBus from "./AudioBus";
 import {
   FilmSlate,
   FolderOpen,
@@ -443,6 +444,18 @@ export default function App() {
     await refresh();
   }
 
+  async function onRemoveTrack(trackId: string) {
+    try {
+      await api.removeTrack(trackId);
+      if (selected && doc?.clips.find((c) => c.id === selected)?.track_id === trackId) {
+        setSelected(null);
+      }
+    } catch (e) {
+      setStatus(`删除轨道失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   async function onReorderTrack(fromIdx: number, toIdx: number) {
     await api.reorderTrack(fromIdx, toIdx);
     await refresh();
@@ -540,63 +553,105 @@ export default function App() {
     }
   }
 
-  // 键盘快捷键(含 JKL 变速播放)
+  // 键盘快捷键(含 JKL 变速播放)。修饰键组合与单键逻辑互斥:
+  // Ctrl/Meta 只走文件/撤销分支(修复 Ctrl+S 误触发分割、Ctrl+O 误设出点)。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      if (e.key === "s") onSplit();
-      if (e.key === "Delete") onRemove();
-      if (e.key === " ") {
-        e.preventDefault();
-        setPlaying((p) => !p);
-      }
-      if (e.key === "j") {
-        setPlaying(true);
-        setPlaySpeed((s) => (s > 0 ? -1 : s === -1 ? -2 : -1));
-      }
-      if (e.key === "k") {
-        setPlaying(false);
-        setPlaySpeed(1);
-      }
-      if (e.key === "l") {
-        setPlaying(true);
-        setPlaySpeed((s) => (s < 0 ? 1 : s === 1 ? 2 : s >= 2 ? 4 : 1));
-      }
-      if (e.key === "i" || e.key === "I") {
-        // 播放头设为选中片段入点(剪映/PR 习惯)
-        if (selected && doc) {
-          const c = doc.clips.find((x) => x.id === selected);
-          if (c && playhead > c.start) {
-            const delta = playhead - c.start;
-            api.trimClip(selected, "left", playhead, Math.max(1, c.duration - delta), false)
-              .then(refresh)
-              .catch(() => setStatus("入点设置失败"));
-          }
-        }
-      }
-      if (e.key === "o" || e.key === "O") {
-        if (selected && doc) {
-          const c = doc.clips.find((x) => x.id === selected);
-          if (c && playhead > c.start) {
-            api.trimClip(selected, "right", c.start, Math.max(1, playhead - c.start), false)
-              .then(refresh)
-              .catch(() => setStatus("出点设置失败"));
-          }
-        }
-      }
-      if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
-        e.shiftKey ? onRedo() : onUndo();
-      }
-      // 文件菜单快捷键
+      const seekTo = (t: number) => {
+        playheadRef.current = Math.max(0, t);
+        setPlayhead(playheadRef.current);
+      };
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === "n") { e.preventDefault(); onNewProject(); }
-        else if (e.key === "o") { e.preventDefault(); onOpenProject(); }
-        else if (e.key === "s") { e.preventDefault(); onSaveProject(); }
+        const k = e.key.toLowerCase();
+        if (k === "z") {
+          e.shiftKey ? onRedo() : onUndo();
+        } else if (k === "n") {
+          e.preventDefault();
+          onNewProject();
+        } else if (k === "o") {
+          e.preventDefault();
+          onOpenProject();
+        } else if (k === "s") {
+          e.preventDefault();
+          onSaveProject();
+        }
+        return;
+      }
+      if (e.altKey) return;
+      switch (e.key) {
+        case "s":
+          onSplit();
+          break;
+        case "Delete":
+        case "Backspace":
+          onRemove();
+          break;
+        case " ":
+          e.preventDefault();
+          setPlaying((p) => !p);
+          break;
+        case "j":
+          setPlaying(true);
+          setPlaySpeed((s) => (s > 0 ? -1 : s === -1 ? -2 : -1));
+          break;
+        case "k":
+          setPlaying(false);
+          setPlaySpeed(1);
+          break;
+        case "l":
+          setPlaying(true);
+          setPlaySpeed((s) => (s < 0 ? 1 : s === 1 ? 2 : s >= 2 ? 4 : 1));
+          break;
+        case "i":
+        case "I": {
+          // 播放头设为选中片段入点(剪映/PR 习惯)
+          if (selected && doc) {
+            const c = doc.clips.find((x) => x.id === selected);
+            if (c && playhead > c.start) {
+              const delta = playhead - c.start;
+              api
+                .trimClip(selected, "left", playhead, Math.max(1, c.duration - delta), false)
+                .then(refresh)
+                .catch(() => setStatus("入点设置失败"));
+            }
+          }
+          break;
+        }
+        case "o":
+        case "O": {
+          if (selected && doc) {
+            const c = doc.clips.find((x) => x.id === selected);
+            if (c && playhead > c.start) {
+              api
+                .trimClip(selected, "right", c.start, Math.max(1, playhead - c.start), false)
+                .then(refresh)
+                .catch(() => setStatus("出点设置失败"));
+            }
+          }
+          break;
+        }
+        case "ArrowLeft":
+          e.preventDefault();
+          seekTo(playheadRef.current - (e.shiftKey ? Math.round(fps) : 1));
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          seekTo(playheadRef.current + (e.shiftKey ? Math.round(fps) : 1));
+          break;
+        case "Home":
+          seekTo(0);
+          break;
+        case "End": {
+          const end = doc?.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0) ?? 0;
+          seekTo(end);
+          break;
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, playhead, doc, projectPath]);
+  }, [selected, playhead, doc, projectPath, fps]);
 
   if (!doc) return <div style={{ color: "#ccc", padding: 24 }}>加载中...</div>;
 
@@ -825,6 +880,7 @@ export default function App() {
               onReorderTrack={onReorderTrack}
               onClipRangeSet={onClipRangeSet}
               onRenameTrack={onRenameTrack}
+              onRemoveTrack={onRemoveTrack}
               onDuplicateClip={onDuplicateClip}
             />
           </div>
@@ -878,6 +934,9 @@ export default function App() {
       {exportDialog && doc && (
         <ExportDialog doc={doc} fps={fps} onClose={() => setExportDialog(false)} onStatus={setStatus} />
       )}
+
+      {/* 预览音频监听(隐藏 <video> 混音,与导出混音语义对齐) */}
+      <AudioBus doc={doc} playing={playing} playheadRef={playheadRef} />
     </div>
   );
 }

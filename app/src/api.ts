@@ -155,9 +155,11 @@ export async function detachAudio(clipId: string): Promise<boolean> {
   return invoke("detach_audio", { clipId });
 }
 
+export type KeyframeProp = "opacity" | "scale" | "rotate" | "x_offset" | "y_offset" | "volume";
+
 export async function setKeyframe(
   clipId: string,
-  prop: "opacity" | "scale" | "volume",
+  prop: KeyframeProp,
   t: number,
   value: number,
   interp: "linear" | "hold" | "smooth" | "bezier",
@@ -175,7 +177,7 @@ export async function setKeyframe(
 
 export async function removeKeyframe(
   clipId: string,
-  prop: "opacity" | "scale" | "volume",
+  prop: KeyframeProp,
   t: number
 ): Promise<boolean> {
   return invoke("remove_keyframe", { clipId, prop, t });
