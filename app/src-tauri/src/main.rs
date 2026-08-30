@@ -1700,6 +1700,7 @@ fn article_to_video(text: String, state: State<'_, AppState>) -> Result<usize, S
             outline: Some("#000000".into()),
             bold: true,
             shadow: true,
+            bg_color: None,
             animation: veditor_core::TextAnimation::FadeIn,
             x: 0.5,
             y: 0.5,
@@ -1885,6 +1886,28 @@ fn export_srt(path: String, state: State<'_, AppState>) -> Result<(), String> {
     let tps = tb.num / tb.den.max(1);
     let srt = veditor_core::to_srt(&inner.doc.subtitles.cues, tps);
     std::fs::write(&path, srt).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_ass(path: String, state: State<'_, AppState>) -> Result<usize, String> {
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let cues = veditor_core::parse_ass(&content, tps);
+    let n = cues.len();
+    inner.doc.subtitles.cues = cues;
+    Ok(n)
+}
+
+#[tauri::command(async)]
+fn export_ass(path: String, state: State<'_, AppState>) -> Result<(), String> {
+    let inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let style = inner.doc.subtitles.style.clone();
+    let ass = veditor_core::to_ass(&inner.doc.subtitles.cues, &style, tps, (1920, 1080));
+    std::fs::write(&path, ass).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -2471,6 +2494,8 @@ fn main() {
             remove_subtitle_cue,
             import_srt,
             export_srt,
+            import_ass,
+            export_ass,
             tts_synthesize,
             save_project,
             open_project,

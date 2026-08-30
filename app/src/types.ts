@@ -162,6 +162,7 @@ export interface TextOverlay {
   outline: string | null;
   bold: boolean;
   shadow?: boolean;
+  bg_color?: string | null;
   animation?: "None" | "FadeIn" | "SlideUp" | "Zoom";
   x: number;
   y: number;

@@ -12,7 +12,9 @@ pub mod subtitle;
 pub use scheduler::{resolve_overlaps, Placement, SchedClip};
 
 pub use fx_ext::{AudioFx, LutApply, StemMode, TextAnimation, TextOverlay};
-pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack};
+pub use subtitle::{
+    parse_ass, parse_srt, to_ass, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack,
+};
 
 pub use commands_m2::{
     AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, ReorderTrack, RippleDelete,

@@ -966,7 +966,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let oc = oc.trim_start_matches('#');
                 dt.push_str(&format!(":bordercolor=0x{oc}:borderw=3"));
             }
-            if t.bold {
+            if let Some(bg) = &t.bg_color {
+                // 文字背景框(半透明底)
+                let bg = bg.trim_start_matches('#');
+                dt.push_str(&format!(":box=1:boxcolor=0x{bg}@0.6:boxborderw=12"));
+            } else if t.bold {
                 dt.push_str(":box=0");
             }
             if t.shadow {
@@ -1659,6 +1663,7 @@ mod tests {
             outline: Some("#000000".into()),
             bold: true,
             shadow: true,
+            bg_color: None,
             animation: veditor_core::TextAnimation::FadeIn,
             x: 0.5,
             y: 0.2,
@@ -1697,6 +1702,7 @@ mod tests {
             outline: None,
             bold: false,
             shadow: false,
+            bg_color: None,
             animation: veditor_core::TextAnimation::SlideUp,
             x: 0.5,
             y: 0.5,
@@ -1712,6 +1718,7 @@ mod tests {
             outline: None,
             bold: false,
             shadow: false,
+            bg_color: None,
             animation: veditor_core::TextAnimation::Zoom,
             x: 0.5,
             y: 0.3,

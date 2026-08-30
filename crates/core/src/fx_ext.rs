@@ -136,6 +136,9 @@ pub struct TextOverlay {
     /// 阴影。
     #[serde(default)]
     pub shadow: bool,
+    /// 文字背景色(#RRGGBB,None = 无)。
+    #[serde(default)]
+    pub bg_color: Option<String>,
     /// 入场动画。
     #[serde(default)]
     pub animation: TextAnimation,
@@ -156,6 +159,7 @@ impl Default for TextOverlay {
             outline: Some("#000000".into()),
             bold: false,
             shadow: false,
+            bg_color: None,
             animation: TextAnimation::None,
             x: 0.5,
             y: 0.8,

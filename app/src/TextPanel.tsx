@@ -35,6 +35,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
       outline: "#000000",
       bold: false,
       shadow: true,
+      bg_color: null,
       animation: "FadeIn",
       x: 0.5,
       y: 0.15,
@@ -109,6 +110,15 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
                 <input className="ti" type="number" value={draft.font_size} style={{ width: 60 }} onChange={(e) => setDraft({ ...draft, font_size: Number(e.target.value) })} />
                 <label><input type="checkbox" checked={draft.bold} onChange={(e) => setDraft({ ...draft, bold: e.target.checked })} /> 粗体</label>
                 <label><input type="checkbox" checked={draft.shadow ?? false} onChange={(e) => setDraft({ ...draft, shadow: e.target.checked })} /> 阴影</label>
+                <label>背景
+                  <input
+                    className="ti"
+                    type="color"
+                    value={draft.bg_color ?? "#000000"}
+                    onChange={(e) => setDraft({ ...draft, bg_color: e.target.value })}
+                  />
+                </label>
+                <label><input type="checkbox" checked={draft.bg_color != null} onChange={(e) => setDraft({ ...draft, bg_color: e.target.checked ? draft.bg_color ?? "#000000" : null })} /> 启用</label>
                 <label>动画
                   <select className="ti" value={draft.animation ?? "None"} onChange={(e) => setDraft({ ...draft, animation: e.target.value as TextOverlay["animation"] })}>
                     {["None", "FadeIn", "SlideUp", "Zoom"].map((a) => (

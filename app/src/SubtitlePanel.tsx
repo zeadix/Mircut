@@ -77,6 +77,37 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
     }
   }
 
+  async function onImportAss() {
+    const picked = await openDialog({
+      multiple: false,
+      filters: [{ name: "ASS 字幕", extensions: ["ass", "ssa"] }],
+    });
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    if (!path) return;
+    try {
+      const n = await invoke<number>("import_ass", { path });
+      await load();
+      await onRefresh();
+      setStatus(`导入 ${n} 条(ASS 样式仅保留文本/时间)`);
+    } catch (e) {
+      setStatus(`导入失败: ${e}`);
+    }
+  }
+
+  async function onExportAss() {
+    const picked = await saveDialog({
+      defaultPath: "subtitles.ass",
+      filters: [{ name: "ASS 字幕", extensions: ["ass"] }],
+    });
+    if (!picked) return;
+    try {
+      await invoke("export_ass", { path: picked });
+      setStatus("已导出 ASS(含样式头)");
+    } catch (e) {
+      setStatus(`导出失败: ${e}`);
+    }
+  }
+
   async function saveCue(i: number) {
     if (!track) return;
     const cue = { ...track.cues[i], text: draft };
@@ -98,6 +129,8 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
         <button className="btn" onClick={onAsr}>AI 识别字幕</button>
         <button className="btn" onClick={onImportSrt}>导入 SRT</button>
         <button className="btn" onClick={onExportSrt}>导出 SRT</button>
+        <button className="btn" onClick={onImportAss}>导入 ASS</button>
+        <button className="btn" onClick={onExportAss}>导出 ASS</button>
       </div>
       <div style={{ color: "#8b93a1" }}>{status}</div>
       <div style={{ overflowY: "auto", maxHeight: 300 }}>

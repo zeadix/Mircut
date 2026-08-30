@@ -719,6 +719,11 @@ export default function Preview({
               };
               if (o.outline) style.WebkitTextStroke = `1.5px ${o.outline}`;
               if (o.shadow) style.textShadow = "2px 2px 4px rgba(0,0,0,0.8)";
+              if (o.bg_color) {
+                style.background = `${o.bg_color}99`;
+                style.padding = "0.1em 0.4em";
+                style.borderRadius = 4;
+              }
               if (o.animation === "FadeIn") style.opacity = p;
               if (o.animation === "SlideUp") style.transform += ` translateY(${((1 - p) * panelH * 0.3).toFixed(1)}px)`;
               if (o.animation === "Zoom") style.transform += ` scale(${(0.3 + 0.7 * p).toFixed(3)})`;
