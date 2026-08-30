@@ -531,6 +531,7 @@ fn import_media(path: String, state: State<'_, AppState>) -> Result<ImportResult
         has_audio: info.audio().is_some(),
         width: info.video().and_then(|v| v.width),
         height: info.video().and_then(|v| v.height),
+        fps: info.video().and_then(|v| v.fps),
         tags: vec![],
     };
     {
@@ -2145,6 +2146,9 @@ struct ExportRequest {
     height: u32,
     fps: u32,
     crf: u32,
+    /// 视频编码器(libx264/h264_nvenc/h264_qsv;默认 libx264)。
+    #[serde(default)]
+    vcodec: Option<String>,
     #[serde(default)]
     loudness_normalize: bool,
 }
@@ -2164,6 +2168,7 @@ fn export_video(
             height: req.height,
             fps: req.fps,
             crf: req.crf,
+            vcodec: req.vcodec.unwrap_or_else(|| "libx264".into()),
             loudness_normalize: req.loudness_normalize,
             ..Default::default()
         };
@@ -2240,6 +2245,25 @@ fn list_export_presets() -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+/// 硬件编码器探测:ffmpeg -encoders 里找 nvenc/qsv(vaapi 需滤镜图配合暂不暴露)。
+#[tauri::command(async)]
+fn detect_hw_encoders() -> Vec<String> {
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-encoders"])
+        .output();
+    let Ok(out) = out else {
+        return vec![];
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut found = Vec::new();
+    for name in ["h264_nvenc", "h264_qsv", "hevc_nvenc", "hevc_qsv"] {
+        if text.contains(name) {
+            found.push(name.to_string());
+        }
+    }
+    found
 }
 
 /// 插件(滤镜包/调色预设/文字样式)清单。
@@ -2325,6 +2349,7 @@ fn main() {
                     has_audio: true,
                     width: Some(320),
                     height: Some(240),
+                    fps: None,
                     tags: vec![],
                 });
                 inner.doc.clips.push(Clip {
@@ -2516,6 +2541,7 @@ fn main() {
             cancel_export,
             open_browser,
             list_export_presets,
+            detect_hw_encoders,
             list_plugins,
             set_chroma_key,
             auto_chroma_key,
@@ -2591,6 +2617,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             for id in ["c1", "c2"] {
@@ -2694,6 +2721,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             inner.doc.clips.push(Clip {
@@ -2756,6 +2784,7 @@ mod tests {
                 has_audio: true,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             // 1. 音频素材拖到视频轨 trackId=Some("v1") -> 应自动建音频轨并落入
@@ -2839,6 +2868,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             // 已有片段 A [0,60)
@@ -2929,6 +2959,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             let mk = |id: &str, start: i64, dur: i64| Clip {
@@ -3065,6 +3096,7 @@ mod tests {
                 has_audio: true,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             inner.doc.clips.push(Clip {
@@ -3221,6 +3253,7 @@ mod tests {
             has_audio: true,
             width: info.video().and_then(|v| v.width),
             height: info.video().and_then(|v| v.height),
+            fps: None,
             tags: vec![],
         };
         {
@@ -3332,6 +3365,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                fps: None,
                 tags: vec![],
             });
             let clip = Clip {

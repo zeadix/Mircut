@@ -1037,11 +1037,16 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         args.push("-map".into());
         args.push("[aout]".into());
     }
+    args.extend(["-c:v".into(), params.vcodec.clone()]);
+    if params.vcodec == "libx264" {
+        // 软编:CRF 质量模式
+        args.extend(["-crf".into(), params.crf.to_string()]);
+    } else {
+        // nvenc/qsv:qp 模式(nvenc/qsv 直接接受软帧输入;
+        // vaapi 需滤镜图 hwupload 配合,暂不暴露,见路线图批次 4)
+        args.extend(["-qp".into(), params.crf.to_string()]);
+    }
     args.extend([
-        "-c:v".into(),
-        params.vcodec.clone(),
-        "-crf".into(),
-        params.crf.to_string(),
         "-c:a".into(),
         params.acodec.clone(),
         "-b:a".into(),
@@ -1191,6 +1196,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            fps: None,
             tags: vec![],
         });
         doc.clips.push(Clip {

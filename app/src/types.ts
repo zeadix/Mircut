@@ -164,6 +164,7 @@ export interface Asset {
   has_audio: boolean;
   width: number | null;
   height: number | null;
+  fps?: number | null;
   tags?: string[];
 }
 

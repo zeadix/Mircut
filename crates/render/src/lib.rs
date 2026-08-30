@@ -265,7 +265,8 @@ impl RealtimeRenderer {
             .unwrap_or_else(|| PathBuf::from(&asset.path));
         let offset_secs = self.doc.timebase.secs(t - clip.start) * clip.speed;
         let source_start = clip.asset.source_in + offset_secs;
-        let src_fps = 30.0; // fixture/代理默认;精确值可后续从 probe 获取
+        // 真实帧率(导入时 ffprobe;缺失回退 30)
+        let src_fps = asset.fps.filter(|f| *f > 1.0).unwrap_or(30.0);
         let mut child = Command::new("ffmpeg")
             .args([
                 "-ss",
@@ -428,6 +429,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            fps: None,
             tags: vec![],
         });
         doc.clips.push(Clip {

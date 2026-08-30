@@ -248,6 +248,8 @@ export interface ExportRequest {
   height: number;
   fps: number;
   crf: number;
+  /// 视频编码器(libx264/h264_nvenc/h264_qsv)。
+  vcodec?: string;
   loudnessNormalize?: boolean;
 }
 
@@ -259,6 +261,7 @@ export async function exportVideo(req: ExportRequest): Promise<string> {
       height: req.height,
       fps: req.fps,
       crf: req.crf,
+      vcodec: req.vcodec ?? null,
       loudness_normalize: req.loudnessNormalize ?? false,
     },
   };
@@ -286,6 +289,11 @@ export async function listExportPresets(): Promise<ExportPresetInfo[]> {
   return invoke("list_export_presets");
 }
 
+/// 硬件编码器探测(nvenc/qsv)。
+export async function detectHwEncoders(): Promise<string[]> {
+  return invoke("detect_hw_encoders");
+}
+
 export async function previewExportCmd(req: ExportRequest): Promise<string> {
   const payload = {
     req: {
@@ -294,6 +302,7 @@ export async function previewExportCmd(req: ExportRequest): Promise<string> {
       height: req.height,
       fps: req.fps,
       crf: req.crf,
+      vcodec: req.vcodec ?? null,
       loudness_normalize: req.loudnessNormalize ?? false,
     },
   };

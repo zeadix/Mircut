@@ -23,6 +23,9 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const [presetIdx, setPresetIdx] = useState(0);
   const [busy, setBusy] = useState(false);
   const [loudness, setLoudness] = useState(false);
+  /// 视频编码器(默认软编 libx264;探测到硬编后可选)。
+  const [vcodec, setVcodec] = useState("libx264");
+  const [hwEncoders, setHwEncoders] = useState<string[]>([]);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -48,9 +51,10 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
       height: preset?.height ?? 720,
       fps: preset?.fps ?? Math.round(fps),
       crf: preset?.crf ?? 20,
+      vcodec,
       loudnessNormalize: loudness,
     }),
-    [exportPath, preset, fps, loudness]
+    [exportPath, preset, fps, loudness, vcodec]
   );
 
   async function onPickSavePath() {
@@ -177,6 +181,23 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           </select>
         </label>
 
+        {/* 视频编码器(硬编探测) */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          编码器:
+          <select
+            className="ti"
+            value={vcodec}
+            onChange={(e) => setVcodec(e.target.value)}
+            title="硬件编码可大幅提速;不可用时 ffmpeg 会报错,请回退 libx264"
+          >
+            <option value="libx264">软件 libx264</option>
+            {hwEncoders.map((c) => (
+              <option key={c} value={c}>
+                硬件 {c}
+              </option>
+            ))}
+          </select>
+        </label>
         {/* 响度标准化 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input

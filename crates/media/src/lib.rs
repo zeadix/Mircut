@@ -20,6 +20,13 @@ pub struct Stream {
     /// 音频采样率(Hz;ffprobe 输出字符串,此处兼容转换)。
     #[serde(default, deserialize_with = "de_opt_u32_from_maybe_string")]
     pub sample_rate: Option<u32>,
+    /// 视频帧率(来自 r_frame_rate 分数,如 "30000/1001")。
+    #[serde(
+        default,
+        alias = "r_frame_rate",
+        deserialize_with = "de_opt_f64_from_fraction"
+    )]
+    pub fps: Option<f64>,
 }
 
 /// 兼容 ffprobe 数字字段有时输出为字符串的情况。
@@ -34,6 +41,32 @@ where
         serde_json::Value::Number(n) => Ok(n.as_u64().map(|x| x as u32)),
         serde_json::Value::String(s) => s.parse::<u32>().map(Some).map_err(D::Error::custom),
         other => Err(D::Error::custom(format!("无法解析为 u32: {other}"))),
+    }
+}
+
+/// 解析 ffprobe 分数帧率("30000/1001" -> 29.97;数字/字符串皆容)。
+fn de_opt_f64_from_fraction<'de, D>(d: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let v = serde_json::Value::deserialize(d)?;
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => Ok(n.as_f64()),
+        serde_json::Value::String(s) => {
+            if let Some((a, b)) = s.split_once('/') {
+                let a: f64 = a.parse().map_err(D::Error::custom)?;
+                let b: f64 = b.parse().map_err(D::Error::custom)?;
+                if b <= 0.0 {
+                    return Ok(None);
+                }
+                Ok(Some(a / b))
+            } else {
+                s.parse::<f64>().map(Some).map_err(D::Error::custom)
+            }
+        }
+        other => Err(D::Error::custom(format!("无法解析为 f64: {other}"))),
     }
 }
 
@@ -149,7 +182,7 @@ pub struct Waveform {
 /// 从媒体(视频或音频)提取音频波形峰值。
 /// 用 ffmpeg `astats` + `amerge` 太重;此处用 `aformat` -> `raw f32le` 单声道采样后降采样取峰。
 pub fn waveform(path: &Path, samples_per_sec: u32) -> Result<Waveform> {
-    // 进程内缓存:以 path + 采样率 + 文件 mtime 为键,避免重复解码(性能优化 4.3)。
+    // 进程内缓存 + 磁盘持久化:以 path + 采样率 + 文件 mtime 为键,重启免重算。
     let mtime = std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -160,9 +193,47 @@ pub fn waveform(path: &Path, samples_per_sec: u32) -> Result<Waveform> {
     if let Some(w) = waveform_cache().lock().unwrap().get(&key) {
         return Ok(w.clone());
     }
-    let w = waveform_inner(path, samples_per_sec)?;
+    let cache_file = waveform_cache_file(path, samples_per_sec, mtime);
+    let w = if let Some(w) = load_waveform_cache(&cache_file) {
+        w
+    } else {
+        let w = waveform_inner(path, samples_per_sec)?;
+        let _ = save_waveform_cache(&cache_file, &w);
+        w
+    };
     waveform_cache().lock().unwrap().insert(key, w.clone());
     Ok(w)
+}
+
+/// 波形磁盘缓存文件($TMPDIR/veditor-media-cache/waves/{hash}.json)。
+fn waveform_cache_file(path: &Path, samples_per_sec: u32, mtime: u64) -> std::path::PathBuf {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut feed = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    feed(path.to_string_lossy().as_bytes());
+    feed(&samples_per_sec.to_le_bytes());
+    feed(&mtime.to_le_bytes());
+    std::env::temp_dir()
+        .join("veditor-media-cache/waves")
+        .join(format!("{h:016x}.json"))
+}
+
+fn load_waveform_cache(file: &std::path::Path) -> Option<Waveform> {
+    let text = std::fs::read_to_string(file).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn save_waveform_cache(file: &std::path::Path, w: &Waveform) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = file.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec(w).unwrap_or_default())?;
+    std::fs::rename(&tmp, file)
 }
 
 type WaveformCache = std::sync::Mutex<std::collections::HashMap<(PathBuf, u32, u64), Waveform>>;
@@ -414,6 +485,9 @@ mod tests {
         let v = info.video().expect("应存在视频流");
         assert_eq!(v.width, Some(320));
         assert_eq!(v.height, Some(240));
+        // r_frame_rate 分数解析(实时引擎解码管道依赖;fixture 为 10fps)
+        let fps = v.fps.expect("应有帧率");
+        assert!(fps > 0.0 && fps < 1000.0, "fps = {fps}");
     }
 
     #[test]

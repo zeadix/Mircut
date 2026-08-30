@@ -262,6 +262,9 @@ pub struct Asset {
     pub has_audio: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// 视频帧率(实时引擎解码管道用;None = 未知回退 30)。
+    #[serde(default)]
+    pub fps: Option<f64>,
     /// 用户标签(媒体库筛选)。
     #[serde(default)]
     pub tags: Vec<String>,
@@ -1007,6 +1010,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            fps: None,
             tags: vec![],
         });
         let json = serde_json::to_string(&doc).unwrap();

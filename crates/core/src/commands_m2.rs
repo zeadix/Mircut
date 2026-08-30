@@ -737,6 +737,7 @@ mod tests {
             has_audio: false,
             width: None,
             height: None,
+            fps: None,
             tags: vec![],
         });
         let mut stack = CommandStack::new();
