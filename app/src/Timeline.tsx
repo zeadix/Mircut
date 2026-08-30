@@ -19,6 +19,10 @@ interface Props {
   onSetVolumeKeyframe?: (clipId: string, tLocal: number, value: number) => void;
   /// 滚动修剪提交(切点移动 ticks)。
   onRollEdit?: (leftId: string, rightId: string, delta: number) => void;
+  /// 移除标记(精确刻度)。
+  onRemoveMarker?: (t: number) => void;
+  /// 批量移动提交(组合命令)。
+  onMoveClips?: (entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[]) => void;
   /// 淡入淡出手柄提交(秒)。
   onSetAudioFade?: (clipId: string, fadeIn: number, fadeOut: number) => void;
   selectedClipIds: string[];
@@ -91,6 +95,8 @@ function TimelineInner({
   onSetVolumeKeyframe,
   onSetAudioFade,
   onRollEdit,
+  onRemoveMarker,
+  onMoveClips,
   selectedClipIds,
   onClipMove,
   onClipTrim,
@@ -152,6 +158,10 @@ function TimelineInner({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; clipId: string | null } | null>(null);
   /// 淡入淡出手柄拖拽实时值(秒)。
   const [fadeLive, setFadeLive] = useState<{ clipId: string; edge: "in" | "out"; secs: number } | null>(null);
+  /// 标记列表面板开关。
+  const [showMarkers, setShowMarkers] = useState(false);
+  /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
+  const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
   const tps = doc.timebase.num / doc.timebase.den;
   /// 选中集合(绘制/命中判断用)。
@@ -778,6 +788,16 @@ function TimelineInner({
           fromRow,
           rightBtn: e.button === 2,
         };
+        // 多选组拖拽:拖拽块在选中集合内时,整组统一位移
+        moveGroupRef.current =
+          selectedClipIds.length > 1 && selectedClipIds.includes(clip.id)
+            ? {
+                ids: selectedClipIds.filter((id) => id !== clip.id),
+                origStarts: Object.fromEntries(
+                  doc.clips.filter((c) => selectedClipIds.includes(c.id)).map((c) => [c.id, c.start])
+                ),
+              }
+            : null;
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
       }
     } else {
@@ -1040,7 +1060,7 @@ function TimelineInner({
         return;
       }
       const clip = doc.clips.find((c) => c.id === d.clipId);
-      if (clip && onClipMove && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
+      if (clip && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const rawT = ticksFromClientX(e.clientX) - grab;
         const magStart = computeMagneticStart(
@@ -1051,7 +1071,26 @@ function TimelineInner({
           target.trackId,
           target.lane ?? null
         );
-        onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
+        const group = moveGroupRef.current;
+        moveGroupRef.current = null;
+        if (group && group.ids.length > 0 && onMoveClips) {
+          // 组移动:主块换轨/磁吸落点,组员统一平移同位移
+          const delta = magStart - clip.start;
+          const entries = [
+            { clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null },
+            ...group.ids
+              .filter((id) => id !== d.clipId)
+              .map((id) => ({
+                clipId: id,
+                newStart: Math.max(0, (group.origStarts[id] ?? 0) + delta),
+                newTrackId: doc.clips.find((c) => c.id === id)?.track_id ?? target.trackId,
+                lane: null,
+              })),
+          ];
+          onMoveClips(entries);
+        } else if (onClipMove) {
+          onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
+        }
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
       if (hint && hint.clipId === d.clipId && hint.newDuration !== d.origDuration) {
@@ -1186,6 +1225,14 @@ function TimelineInner({
         <label title="修剪/删除后后方片段自动前移填补">
           <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
         </label>
+        <button
+          className="btn"
+          style={{ padding: "1px 6px", fontSize: 10 }}
+          onClick={() => setShowMarkers((v) => !v)}
+          title="标记列表(跳转/删除)"
+        >
+          ⚑ 标记 {doc.markers?.length ?? 0}
+        </button>
         <label>
           轨高
           <input
@@ -1572,6 +1619,69 @@ function TimelineInner({
           />
         </div>
       </div>
+
+      {/* 标记列表面板 */}
+      {showMarkers && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 850,
+          }}
+          onMouseDown={() => setShowMarkers(false)}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: 8,
+              top: 26,
+              background: "#1e2026",
+              border: "1px solid #3a3d46",
+              borderRadius: 8,
+              padding: 8,
+              minWidth: 220,
+              maxWidth: 320,
+              maxHeight: 260,
+              overflowY: "auto",
+              fontSize: 11,
+              color: "#dfe3ea",
+              boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontWeight: "bold", marginBottom: 6 }}>
+              标记({doc.markers?.length ?? 0})
+            </div>
+            {(doc.markers ?? []).length === 0 && (
+              <div style={{ color: "#667" }}>无标记:M 键在播放头打点</div>
+            )}
+            {(doc.markers ?? [])
+              .slice()
+              .sort((a, b) => a.t - b.t)
+              .map((m) => (
+                <div key={m.t} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
+                  <span style={{ color: "#4ec9ff", width: 58, flexShrink: 0 }}>
+                    {(m.t / tps).toFixed(2)}s
+                  </span>
+                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {m.label || "(无标签)"}
+                  </span>
+                  <button className="btn" style={{ padding: "1px 6px" }} onClick={() => onSeek(m.t)}>
+                    跳转
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ padding: "1px 6px" }}
+                    title="删除标记"
+                    onClick={() => onRemoveMarker?.(m.t)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* 框选矩形 */}
       {marquee && (

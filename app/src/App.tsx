@@ -488,6 +488,35 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     );
   }, []);
 
+  /// 移除标记。
+  async function onRemoveMarker(t: number) {
+    try {
+      await api.removeMarker(t);
+    } catch (e) {
+      setStatus(`移除标记失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
+  /// 批量移动提交(组合命令,一次撤销)。
+  async function onMoveClips(
+    entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[]
+  ) {
+    try {
+      await api.moveClips(
+        entries.map((e) => ({
+          clipId: e.clipId,
+          newStart: e.newStart,
+          newTrackId: e.newTrackId,
+          lane: e.lane as "Video" | "Audio" | null,
+        }))
+      );
+    } catch (e) {
+      setStatus(`批量移动失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   /// 滚动修剪提交(Timeline Ctrl+边缘拖拽)。
   async function onRollEdit(leftId: string, rightId: string, delta: number) {
     try {
@@ -1103,6 +1132,8 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
               onSetVolumeKeyframe={onSetVolumeKeyframe}
               onSetAudioFade={onSetAudioFade}
               onRollEdit={onRollEdit}
+              onRemoveMarker={onRemoveMarker}
+              onMoveClips={onMoveClips}
               selectedClipIds={selected}
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}

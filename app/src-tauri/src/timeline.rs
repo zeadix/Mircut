@@ -264,6 +264,44 @@ pub(crate) fn move_clip(
     true
 }
 
+/// 批量移动(组合命令):多选组拖拽,一次撤销整体回退。
+/// 每项可带目标轨道(主拖拽块换轨)与 lane(文件轨半区);随后逐轨调度消重叠。
+#[tauri::command]
+pub(crate) fn move_clips(entries: Vec<MoveEntry>, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let mut cmds: Vec<Box<dyn Command>> = Vec::new();
+    let mut tracks: Vec<String> = Vec::new();
+    for e in &entries {
+        let mut cmd =
+            veditor_core::MoveClip::new(e.clip_id.clone(), e.new_start, e.new_track_id.clone());
+        if let Some(l) = &e.lane {
+            let lv = match l.as_str() {
+                "Audio" => veditor_core::Lane::Audio,
+                _ => veditor_core::Lane::Video,
+            };
+            cmd = cmd.with_lane(Some(lv));
+        }
+        if !tracks.contains(&e.new_track_id) {
+            tracks.push(e.new_track_id.clone());
+        }
+        cmds.push(Box::new(cmd));
+    }
+    inner.exec(Box::new(veditor_core::Compound::new("批量移动片段", cmds)));
+    for t in &tracks {
+        inner.schedule_track(t, None);
+    }
+    true
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct MoveEntry {
+    pub clip_id: String,
+    pub new_start: Ticks,
+    pub new_track_id: String,
+    #[serde(default)]
+    pub lane: Option<String>,
+}
+
 #[tauri::command]
 pub(crate) fn drop_asset(
     asset_id: String,

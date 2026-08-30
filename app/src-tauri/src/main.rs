@@ -242,6 +242,7 @@ fn main() {
             move_clip,
             trim_clip,
             roll_edit,
+            move_clips,
             drop_asset,
             duplicate_clip,
             create_file_track,

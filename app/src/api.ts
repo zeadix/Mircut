@@ -167,6 +167,24 @@ export async function setTrackFlags(
 }
 
 /// 滚动修剪(Roll):相邻两片段共享切点整体移动(组合命令,一次撤销)。
+/// 批量移动(组合命令,一次撤销)。
+export interface MoveEntry {
+  clipId: string;
+  newStart: number;
+  newTrackId: string;
+  lane?: "Video" | "Audio" | null;
+}
+export async function moveClips(entries: MoveEntry[]): Promise<boolean> {
+  return invoke("move_clips", {
+    entries: entries.map((e) => ({
+      clip_id: e.clipId,
+      new_start: e.newStart,
+      new_track_id: e.newTrackId,
+      lane: e.lane ?? null,
+    })),
+  });
+}
+
 export async function rollEdit(leftId: string, rightId: string, delta: number): Promise<void> {
   await invoke("roll_edit", { leftId, rightId, delta });
 }
