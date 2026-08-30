@@ -630,6 +630,66 @@ pub(crate) fn trim_clip(
     Ok(())
 }
 
+/// 滚动修剪(Roll):两相邻片段的共享切点整体移动,时间轴总长不变。
+/// delta 正 = 切点右移(左片段加长、右片段缩短);一次撤销整体回退。
+#[tauri::command]
+pub(crate) fn roll_edit(
+    left_id: String,
+    right_id: String,
+    delta: Ticks,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut inner = state.inner.lock().unwrap();
+    let tb = inner.doc.timebase;
+    let tps = tb.num / tb.den.max(1);
+    let min_ticks = tps.max(1);
+    let Some(left) = inner.doc.clip(&left_id).cloned() else {
+        return Err("左片段不存在".into());
+    };
+    let Some(right) = inner.doc.clip(&right_id).cloned() else {
+        return Err("右片段不存在".into());
+    };
+    if left.track_id != right.track_id {
+        return Err("滚动修剪要求两片段在同一轨道".into());
+    }
+    let Some(l_asset) = inner.doc.asset(&left.asset.asset_id).cloned() else {
+        return Err("素材不存在".into());
+    };
+    if inner.doc.asset(&right.asset.asset_id).is_none() {
+        return Err("素材不存在".into());
+    }
+    // 钳制:左片段源余量(切点右移上限)、右片段源起点(切点左移下限)
+    let l_used_secs = tb.secs(left.duration) * left.speed;
+    let l_remain_secs = (l_asset.duration_secs - left.asset.source_in - l_used_secs).max(0.0);
+    let max_right = if left.speed > 1e-3 {
+        (l_remain_secs / left.speed * tps as f64).floor() as i64
+    } else {
+        0
+    };
+    let max_left = ((right.asset.source_in) / right.speed.max(1e-3) * tps as f64).floor() as i64;
+    let delta = delta.clamp(
+        -(right.duration - min_ticks).min(max_left),
+        max_right.min(left.duration - min_ticks),
+    );
+    if delta == 0 {
+        return Ok(());
+    }
+    // 左:尾修剪(时长变化);右:头修剪(起点 + source_in 同步移动)
+    let l_cmd =
+        veditor_core::TrimClip::new(left_id.clone(), left.start, left.duration + delta, 0.0);
+    let r_cmd = veditor_core::TrimClip::new(
+        right_id.clone(),
+        right.start + delta,
+        right.duration - delta,
+        tb.secs(delta) * right.speed,
+    );
+    let cmds: Vec<Box<dyn Command>> = vec![Box::new(l_cmd), Box::new(r_cmd)];
+    inner.exec(Box::new(veditor_core::Compound::new("滚动修剪", cmds)));
+    let track_id = left.track_id.clone();
+    inner.schedule_track(&track_id, Some(&left_id));
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn add_track(
     kind: String,

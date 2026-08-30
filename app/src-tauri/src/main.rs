@@ -241,6 +241,7 @@ fn main() {
             auto_split_scenes,
             move_clip,
             trim_clip,
+            roll_edit,
             drop_asset,
             duplicate_clip,
             create_file_track,

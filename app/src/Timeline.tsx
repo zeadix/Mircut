@@ -17,6 +17,8 @@ interface Props {
   onClipAction?: (action: string, clipId: string) => void;
   /// 音量包络拖拽提交(片段本地 ticks + 0~1.5 增益)。
   onSetVolumeKeyframe?: (clipId: string, tLocal: number, value: number) => void;
+  /// 滚动修剪提交(切点移动 ticks)。
+  onRollEdit?: (leftId: string, rightId: string, delta: number) => void;
   /// 淡入淡出手柄提交(秒)。
   onSetAudioFade?: (clipId: string, fadeIn: number, fadeOut: number) => void;
   selectedClipIds: string[];
@@ -52,7 +54,11 @@ type DragSession =
   /// 音频块音量包络拖拽。
   | { kind: "envelope"; clipId: string }
   /// 淡入/淡出手柄拖拽(afade 秒数)。
-  | { kind: "fade"; clipId: string; edge: "in" | "out" };
+  | { kind: "fade"; clipId: string; edge: "in" | "out" }
+  /// 滚动修剪(共享切点):left/right 为相邻片段。
+  | { kind: "roll"; leftId: string; rightId: string; origBoundary: number; origDurL: number; origDurR: number }
+  /// 滑切(Slip):片段原位,源窗口平移。
+  | { kind: "slip"; clipId: string; origSourceIn: number; downT: number };
 
 /// 包络值(0~ENV_MAX) -> 行内 y 像素。
 function envY(v: number, laneTop: number, h: number): number {
@@ -84,6 +90,7 @@ function TimelineInner({
   onClipAction,
   onSetVolumeKeyframe,
   onSetAudioFade,
+  onRollEdit,
   selectedClipIds,
   onClipMove,
   onClipTrim,
@@ -727,14 +734,38 @@ function TimelineInner({
           return;
         }
       }
+      // Ctrl/Cmd + 边缘 = 滚动修剪(优先于增选:边缘处 Ctrl 语义让位 Roll)
+      const isEdge = hit.edge === "left" || hit.edge === "right";
+      if (isEdge && (e.ctrlKey || e.metaKey)) {
+        const sameTrack = doc.clips.filter((c) => c.track_id === clip.track_id);
+        const neighbor =
+          hit.edge === "right"
+            ? sameTrack.find((c) => c.start === clip.start + clip.duration)
+            : sameTrack.find((c) => c.start + c.duration === clip.start);
+        if (neighbor) {
+          const boundary = hit.edge === "right" ? clip.start + clip.duration : clip.start;
+          dragRef.current = {
+            kind: "roll",
+            leftId: hit.edge === "right" ? clip.id : neighbor.id,
+            rightId: hit.edge === "right" ? neighbor.id : clip.id,
+            origBoundary: boundary,
+            origDurL: hit.edge === "right" ? clip.duration : neighbor.duration,
+            origDurR: hit.edge === "right" ? neighbor.duration : clip.duration,
+          };
+          return;
+        }
+      }
       // 增选(Shift/Ctrl):切换选中,不进入拖拽
       if (additive) {
         onClipClick(clip.id, true);
         return;
       }
       onClipClick(clip.id, false);
-      if (hit.edge === "left" || hit.edge === "right") {
+      if (isEdge) {
         dragRef.current = { kind: hit.edge === "left" ? "trimL" : "trimR", clipId: hit.clipId, origStart: clip.start, origDuration: clip.duration };
+      } else if (e.altKey) {
+        // Alt + 主体 = 滑切(Slip):原位改源窗口
+        dragRef.current = { kind: "slip", clipId: clip.id, origSourceIn: clip.asset.source_in, downT: t };
       } else {
         const grabTicks = Math.round(t - clip.start);
         const fromRow = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
@@ -762,6 +793,41 @@ function TimelineInner({
     const d = dragRef.current;
     if (d?.kind === "marquee") {
       setMarquee((m) => (m ? { ...m, x1: e.clientX, y1: e.clientY } : m));
+      return;
+    }
+    if (d?.kind === "roll") {
+      const t = snapTicks(ticksFromClientX(e.clientX));
+      const delta = t - d.origBoundary;
+      const rectC = canvasRef.current?.getBoundingClientRect();
+      const row = doc.clips.find((c) => c.id === d.leftId) && clipRow(doc.clips.find((c) => c.id === d.leftId)!);
+      setTrimHint({
+        clipId: d.leftId,
+        edge: "right",
+        newStart: d.origBoundary - d.origDurL,
+        newDuration: d.origDurL + delta,
+        x: e.clientX - (rectC?.left ?? 0),
+        y: row?.laneTop ?? 0,
+      });
+      return;
+    }
+    if (d?.kind === "slip") {
+      const t = ticksFromClientX(e.clientX);
+      const delta = t - d.downT;
+      if (delta !== 0) {
+        const clip = doc.clips.find((c) => c.id === d.clipId);
+        const row = clip && clipRow(clip);
+        const rectC = canvasRef.current?.getBoundingClientRect();
+        if (row && clip) {
+          setTrimHint({
+            clipId: d.clipId,
+            edge: "left",
+            newStart: clip.start,
+            newDuration: clip.duration,
+            x: e.clientX - (rectC?.left ?? 0),
+            y: row.laneTop,
+          });
+        }
+      }
       return;
     }
     if (d?.kind === "fade") {
@@ -914,6 +980,26 @@ function TimelineInner({
         }
       }
       onSelectMany?.(ids);
+      return;
+    }
+    if (d.kind === "roll") {
+      const delta = hint && hint.clipId === d.leftId ? hint.newDuration - d.origDurL : 0;
+      setTrimHint(null);
+      if (delta !== 0 && onRollEdit) {
+        onRollEdit(d.leftId, d.rightId, delta);
+      }
+      return;
+    }
+    if (d.kind === "slip") {
+      const clip = doc.clips.find((c) => c.id === d.clipId);
+      const t = ticksFromClientX(e.clientX);
+      const deltaTicks = t - d.downT;
+      setTrimHint(null);
+      if (clip && deltaTicks !== 0 && onClipRangeSet) {
+        const tpsL = tps;
+        const newSrcIn = Math.max(0, d.origSourceIn + (deltaTicks / tpsL) * clip.speed);
+        onClipRangeSet(clip.id, clip.start / tpsL, clip.duration / tpsL, newSrcIn);
+      }
       return;
     }
     if (d.kind === "fade") {

@@ -488,6 +488,16 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     );
   }, []);
 
+  /// 滚动修剪提交(Timeline Ctrl+边缘拖拽)。
+  async function onRollEdit(leftId: string, rightId: string, delta: number) {
+    try {
+      await api.rollEdit(leftId, rightId, delta);
+    } catch (e) {
+      setStatus(`滚动修剪失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   /// 淡入淡出手柄提交(保留其余音频滤镜)。
   async function onSetAudioFade(clipId: string, fadeIn: number, fadeOut: number) {
     const c = doc?.clips.find((x) => x.id === clipId);
@@ -1092,6 +1102,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
               onClipAction={onClipAction}
               onSetVolumeKeyframe={onSetVolumeKeyframe}
               onSetAudioFade={onSetAudioFade}
+              onRollEdit={onRollEdit}
               selectedClipIds={selected}
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}

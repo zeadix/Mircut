@@ -166,6 +166,11 @@ export async function setTrackFlags(
   return invoke("set_track_flags", { trackId, locked, hidden, muted });
 }
 
+/// 滚动修剪(Roll):相邻两片段共享切点整体移动(组合命令,一次撤销)。
+export async function rollEdit(leftId: string, rightId: string, delta: number): Promise<void> {
+  await invoke("roll_edit", { leftId, rightId, delta });
+}
+
 export async function rippleDelete(clipId: string): Promise<boolean> {
   return invoke("ripple_delete", { clipId });
 }
