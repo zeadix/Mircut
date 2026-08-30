@@ -718,7 +718,8 @@ export default function Preview({
                 zIndex: 4,
               };
               if (o.outline) style.WebkitTextStroke = `1.5px ${o.outline}`;
-              if (o.shadow) style.textShadow = "2px 2px 4px rgba(0,0,0,0.8)";
+              if (o.outline2) style.textShadow = `0 0 4px ${o.outline2}, 0 0 4px ${o.outline2}`;
+              else if (o.shadow) style.textShadow = "2px 2px 4px rgba(0,0,0,0.8)";
               if (o.bg_color) {
                 style.background = `${o.bg_color}99`;
                 style.padding = "0.1em 0.4em";

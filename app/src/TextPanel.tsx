@@ -36,6 +36,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
       bold: false,
       shadow: true,
       bg_color: null,
+      outline2: null,
       animation: "FadeIn",
       x: 0.5,
       y: 0.15,
@@ -105,6 +106,13 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
           {editing === i && draft ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <input className="ti" value={draft.text} onChange={(e) => setDraft({ ...draft, text: e.target.value })} />
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {TEXT_STYLES.map(([n, st]) => (
+                  <button key={n} className="btn" style={{ padding: "2px 6px", fontSize: 11 }} onClick={() => setDraft({ ...draft, ...st })}>
+                    {n}
+                  </button>
+                ))}
+              </div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                 <input className="ti" type="color" value={draft.color} onChange={(e) => setDraft({ ...draft, color: e.target.value })} />
                 <input className="ti" type="number" value={draft.font_size} style={{ width: 60 }} onChange={(e) => setDraft({ ...draft, font_size: Number(e.target.value) })} />
@@ -119,6 +127,23 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
                   />
                 </label>
                 <label><input type="checkbox" checked={draft.bg_color != null} onChange={(e) => setDraft({ ...draft, bg_color: e.target.checked ? draft.bg_color ?? "#000000" : null })} /> 启用</label>
+                <label>描边
+                  <input
+                    className="ti"
+                    type="color"
+                    value={draft.outline ?? "#000000"}
+                    onChange={(e) => setDraft({ ...draft, outline: e.target.value })}
+                  />
+                </label>
+                <label>外描边
+                  <input
+                    className="ti"
+                    type="color"
+                    value={draft.outline2 ?? "#e03131"}
+                    onChange={(e) => setDraft({ ...draft, outline2: e.target.value })}
+                  />
+                </label>
+                <label><input type="checkbox" checked={draft.outline2 != null} onChange={(e) => setDraft({ ...draft, outline2: e.target.checked ? draft.outline2 ?? "#e03131" : null })} /> 双层</label>
                 <label>动画
                   <select className="ti" value={draft.animation ?? "None"} onChange={(e) => setDraft({ ...draft, animation: e.target.value as TextOverlay["animation"] })}>
                     {["None", "FadeIn", "SlideUp", "Zoom"].map((a) => (
@@ -174,6 +199,15 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
     </div>
   );
 }
+
+/// 花字样式包(一键套用到编辑中的文字)。
+const TEXT_STYLES: [string, Partial<TextOverlay>][] = [
+  ["黄字黑边", { color: "#ffd75e", outline: "#000000", outline2: null, bg_color: null, bold: true }],
+  ["白字黑边", { color: "#ffffff", outline: "#000000", outline2: null, bg_color: null }],
+  ["白字红双层", { color: "#ffffff", outline: "#000000", outline2: "#e03131", bold: true }],
+  ["字幕条", { color: "#ffffff", outline: null, outline2: null, bg_color: "#000000", bold: false }],
+  ["综艺大标题", { color: "#ffd75e", outline: "#7a2e00", outline2: "#ffffff", bold: true, font_size: 96, shadow: true, bg_color: null }],
+];
 
 const TextPanel = memo(TextPanelInner);
 export default TextPanel;

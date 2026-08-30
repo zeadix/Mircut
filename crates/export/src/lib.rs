@@ -966,6 +966,16 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 .replace("'", "\\'");
             let color = t.color.trim_start_matches('#');
             let font_px = ((t.font_size as f64) * (params.height as f64 / 1080.0)).round() as u32;
+            // 双层描边(花字):先画加粗外层,再画正常主层
+            if let Some(oc2) = &t.outline2 {
+                let oc2 = oc2.trim_start_matches('#');
+                let sep2 = if first { "" } else { "," };
+                first = false;
+                chain.push_str(&format!(
+                    "{sep2}drawtext=text='{text}':fontcolor=0x{color}:bordercolor=0x{oc2}:borderw=8:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2:enable='between(t,{start:.3},{end:.3})'",
+                    t.x, t.y
+                ));
+            }
             let sep = if first { "" } else { "," };
             first = false;
             let mut dt = format!(
@@ -1196,6 +1206,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            name: None,
             fps: None,
             tags: vec![],
         });
@@ -1680,6 +1691,7 @@ mod tests {
             bold: true,
             shadow: true,
             bg_color: None,
+            outline2: None,
             animation: veditor_core::TextAnimation::FadeIn,
             x: 0.5,
             y: 0.2,
@@ -1719,6 +1731,7 @@ mod tests {
             bold: false,
             shadow: false,
             bg_color: None,
+            outline2: None,
             animation: veditor_core::TextAnimation::SlideUp,
             x: 0.5,
             y: 0.5,
@@ -1735,6 +1748,7 @@ mod tests {
             bold: false,
             shadow: false,
             bg_color: None,
+            outline2: None,
             animation: veditor_core::TextAnimation::Zoom,
             x: 0.5,
             y: 0.3,

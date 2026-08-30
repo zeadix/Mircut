@@ -17,6 +17,8 @@ interface Props {
   onClipAction?: (action: string, clipId: string) => void;
   /// 音量包络拖拽提交(片段本地 ticks + 0~1.5 增益)。
   onSetVolumeKeyframe?: (clipId: string, tLocal: number, value: number) => void;
+  /// 淡入淡出手柄提交(秒)。
+  onSetAudioFade?: (clipId: string, fadeIn: number, fadeOut: number) => void;
   selectedClipIds: string[];
   onClipMove?: (clipId: string, newStart: number, trackId: string, laneHint?: "Video" | "Audio") => void;
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
@@ -48,7 +50,9 @@ type DragSession =
   /// 空白处左键拖拽:框选。
   | { kind: "marquee" }
   /// 音频块音量包络拖拽。
-  | { kind: "envelope"; clipId: string };
+  | { kind: "envelope"; clipId: string }
+  /// 淡入/淡出手柄拖拽(afade 秒数)。
+  | { kind: "fade"; clipId: string; edge: "in" | "out" };
 
 /// 包络值(0~ENV_MAX) -> 行内 y 像素。
 function envY(v: number, laneTop: number, h: number): number {
@@ -79,6 +83,7 @@ function TimelineInner({
   onSelectMany,
   onClipAction,
   onSetVolumeKeyframe,
+  onSetAudioFade,
   selectedClipIds,
   onClipMove,
   onClipTrim,
@@ -138,6 +143,8 @@ function TimelineInner({
   const [envLive, setEnvLive] = useState<{ clipId: string; tLocal: number; v: number } | null>(null);
   /// 片段/画布右键菜单(clipId null = 画布级)。
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; clipId: string | null } | null>(null);
+  /// 淡入淡出手柄拖拽实时值(秒)。
+  const [fadeLive, setFadeLive] = useState<{ clipId: string; edge: "in" | "out"; secs: number } | null>(null);
 
   const tps = doc.timebase.num / doc.timebase.den;
   /// 选中集合(绘制/命中判断用)。
@@ -330,6 +337,39 @@ function TimelineInner({
           ctx.fill();
         }
       }
+      // 淡入淡出手柄(音频块):楔形可视化 + 顶边手柄(拖拽改 afade)
+      if (isAudioBlock && h >= 18 && cw > 24) {
+        const afx = clip.fx?.audio_fx;
+        const finLive = fadeLive?.clipId === clip.id && fadeLive.edge === "in" ? fadeLive.secs : null;
+        const foutLive = fadeLive?.clipId === clip.id && fadeLive.edge === "out" ? fadeLive.secs : null;
+        const maxFade = (clip.duration / tps) * 0.9;
+        const fin = Math.min(maxFade, finLive ?? afx?.fade_in ?? 0);
+        const fout = Math.min(maxFade, foutLive ?? afx?.fade_out ?? 0);
+        const finX = Math.max(fin * tps * pxPerTick, 8);
+        const foutX = Math.max(fout * tps * pxPerTick, 8);
+        if (finX > 8.5) {
+          ctx.fillStyle = "rgba(126, 217, 87, 0.30)";
+          ctx.beginPath();
+          ctx.moveTo(x, laneTop);
+          ctx.lineTo(x + finX, laneTop);
+          ctx.lineTo(x, laneTop + h);
+          ctx.closePath();
+          ctx.fill();
+        }
+        if (foutX > 8.5) {
+          ctx.fillStyle = "rgba(126, 217, 87, 0.30)";
+          ctx.beginPath();
+          ctx.moveTo(x + cw, laneTop);
+          ctx.lineTo(x + cw - foutX, laneTop);
+          ctx.lineTo(x + cw, laneTop + h);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.fillStyle = finLive !== null || (afx?.fade_in ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
+        ctx.fillRect(x + finX - 3, laneTop + 1, 6, 5);
+        ctx.fillStyle = foutLive !== null || (afx?.fade_out ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
+        ctx.fillRect(x + cw - foutX - 3, laneTop + 1, 6, 5);
+      }
       // 头尾 2px 颜色条带(所有块,指示 10px 修剪触发区)
       const edgeCol = selectedSet.has(clip.id) ? "#ffd75e" : "rgba(255,255,255,0.28)";
       ctx.fillStyle = edgeCol;
@@ -349,7 +389,7 @@ function TimelineInner({
         ctx.fillStyle = "#dfe3ea";
         ctx.font = `${Math.min(11, h - 6)}px sans-serif`;
         const asset = doc.assets.find((a) => a.id === clip.asset.asset_id);
-        const name = asset?.path.split("/").pop() ?? clip.id;
+        const name = asset?.name ?? asset?.path.split("/").pop() ?? clip.id;
         ctx.fillText(name.slice(0, 18), x + 4, laneTop + h - 3, Math.max(cw - 8, 2));
       }
     });
@@ -489,7 +529,7 @@ function TimelineInner({
         ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
       }
     }
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -660,6 +700,24 @@ function TimelineInner({
       // 音频块音量包络:靠近音量线时进入包络拖拽(优先于移动)
       const isAudioBlock = clip.lane === "Audio" || track?.kind === "Audio";
       const row = clipRow(clip);
+      if (isAudioBlock && row && hit.edge === "body" && yIn - row.laneTop <= 7) {
+        // 淡入/淡出手柄:顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
+        const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
+        const maxFade = (clip.duration / tps) * 0.9;
+        const afx = clip.fx?.audio_fx;
+        const finX = clip.start * pxPerTick + Math.max(Math.min(maxFade, afx?.fade_in ?? 0) * tps * pxPerTick, 8);
+        const foutX = (clip.start + clip.duration) * pxPerTick - Math.max(Math.min(maxFade, afx?.fade_out ?? 0) * tps * pxPerTick, 8);
+        if (Math.abs(px - finX) <= 6) {
+          dragRef.current = { kind: "fade", clipId: clip.id, edge: "in" };
+          setFadeLive({ clipId: clip.id, edge: "in", secs: afx?.fade_in ?? 0 });
+          return;
+        }
+        if (Math.abs(px - foutX) <= 6) {
+          dragRef.current = { kind: "fade", clipId: clip.id, edge: "out" };
+          setFadeLive({ clipId: clip.id, edge: "out", secs: afx?.fade_out ?? 0 });
+          return;
+        }
+      }
       if (isAudioBlock && row && hit.edge === "body") {
         const vAt = valueAt(clip.fx?.volume?.keyframes ?? [], t - clip.start) ?? clip.volume;
         if (Math.abs(yIn - envY(vAt, row.laneTop, row.h)) <= 6) {
@@ -704,6 +762,19 @@ function TimelineInner({
     const d = dragRef.current;
     if (d?.kind === "marquee") {
       setMarquee((m) => (m ? { ...m, x1: e.clientX, y1: e.clientY } : m));
+      return;
+    }
+    if (d?.kind === "fade") {
+      const clip = doc.clips.find((c) => c.id === d.clipId);
+      if (clip) {
+        const tc = ticksFromClientX(e.clientX);
+        const maxFade = (clip.duration / tps) * 0.9;
+        const secs =
+          d.edge === "in"
+            ? Math.max(0, Math.min(maxFade, (tc - clip.start) / tps))
+            : Math.max(0, Math.min(maxFade, (clip.start + clip.duration - tc) / tps));
+        setFadeLive({ clipId: d.clipId, edge: d.edge, secs });
+      }
       return;
     }
     if (d?.kind === "envelope") {
@@ -843,6 +914,20 @@ function TimelineInner({
         }
       }
       onSelectMany?.(ids);
+      return;
+    }
+    if (d.kind === "fade") {
+      const f = fadeLive;
+      setFadeLive(null);
+      if (f && f.clipId === d.clipId) {
+        const clip = doc.clips.find((c) => c.id === d.clipId);
+        if (clip) {
+          const afx = clip.fx?.audio_fx;
+          const fin = d.edge === "in" ? f.secs : afx?.fade_in ?? 0;
+          const fout = d.edge === "out" ? f.secs : afx?.fade_out ?? 0;
+          onSetAudioFade?.(d.clipId, Math.round(fin * 100) / 100, Math.round(fout * 100) / 100);
+        }
+      }
       return;
     }
     if (d.kind === "envelope") {

@@ -48,6 +48,15 @@ export async function setClipsAudio(
   return invoke("set_clips_audio", { clipIds, volume, muted });
 }
 
+/// 素材元数据(显示名/标签,可撤销)。
+export async function setAssetMeta(
+  assetId: string,
+  name: string | null,
+  tags: string[] | null
+): Promise<boolean> {
+  return invoke("set_asset_meta", { assetId, name, tags });
+}
+
 export async function addMarker(t: number, label: string): Promise<boolean> {
   return invoke("add_marker", { t, label });
 }

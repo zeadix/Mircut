@@ -139,6 +139,9 @@ pub struct TextOverlay {
     /// 文字背景色(#RRGGBB,None = 无)。
     #[serde(default)]
     pub bg_color: Option<String>,
+    /// 双层描边外层颜色(花字;None = 单层)。
+    #[serde(default)]
+    pub outline2: Option<String>,
     /// 入场动画。
     #[serde(default)]
     pub animation: TextAnimation,
@@ -160,6 +163,7 @@ impl Default for TextOverlay {
             bold: false,
             shadow: false,
             bg_color: None,
+            outline2: None,
             animation: TextAnimation::None,
             x: 0.5,
             y: 0.8,

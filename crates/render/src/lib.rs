@@ -429,6 +429,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            name: None,
             fps: None,
             tags: vec![],
         });

@@ -142,6 +142,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 has_audio: true,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });

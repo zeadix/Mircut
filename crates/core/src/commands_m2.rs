@@ -205,6 +205,54 @@ impl Command for SetSpeed {
     }
 }
 
+/// 素材元数据(显示名/标签整体覆写;undo 回滚)。
+pub struct SetAssetMeta {
+    pub asset_id: String,
+    pub name: Option<String>,
+    pub tags: Option<Vec<String>>,
+    old: Option<(Option<String>, Vec<String>)>,
+}
+
+impl SetAssetMeta {
+    pub fn new(
+        asset_id: impl Into<String>,
+        name: Option<String>,
+        tags: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            asset_id: asset_id.into(),
+            name,
+            tags,
+            old: None,
+        }
+    }
+}
+
+impl Command for SetAssetMeta {
+    fn label(&self) -> &str {
+        "素材信息"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let Some(a) = doc.assets.iter_mut().find(|a| a.id == self.asset_id) {
+            self.old = Some((a.name.clone(), a.tags.clone()));
+            if let Some(n) = &self.name {
+                a.name = if n.is_empty() { None } else { Some(n.clone()) };
+            }
+            if let Some(t) = &self.tags {
+                a.tags = t.clone();
+            }
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some((name, tags)) = self.old.take() {
+            if let Some(a) = doc.assets.iter_mut().find(|a| a.id == self.asset_id) {
+                a.name = name;
+                a.tags = tags;
+            }
+        }
+    }
+}
+
 /// 速度关键帧命令:写入 fx.speed 并按源区间反解时间轴时长
 /// (变速曲线改变播放耗时;undo 同时回滚关键帧与时长)。
 pub struct SetSpeedAnim {
@@ -737,6 +785,7 @@ mod tests {
             has_audio: false,
             width: None,
             height: None,
+            name: None,
             fps: None,
             tags: vec![],
         });
@@ -809,6 +858,43 @@ mod tests {
         assert_eq!(doc.clip("c1").unwrap().speed, 2.0);
         stack.undo(&mut doc);
         assert_eq!(doc.clip("c1").unwrap().speed, 1.0);
+    }
+
+    #[test]
+    fn set_asset_meta_rename_tags_undo() {
+        use crate::Asset;
+        let mut doc = Document::default();
+        doc.assets.push(Asset {
+            id: "a1".into(),
+            path: "/tmp/v.mp4".into(),
+            duration_secs: 2.0,
+            has_video: true,
+            has_audio: true,
+            width: None,
+            height: None,
+            fps: None,
+            name: None,
+            tags: vec!["原始".into()],
+        });
+        let mut cmd = SetAssetMeta::new(
+            "a1",
+            Some("我的视频".into()),
+            Some(vec!["旅行".into(), "vlog".into()]),
+        );
+        cmd.apply(&mut doc);
+        let a = doc.asset("a1").unwrap();
+        assert_eq!(a.name.as_deref(), Some("我的视频"));
+        assert_eq!(a.tags, vec!["旅行".to_string(), "vlog".to_string()]);
+        // 空名回退 None
+        let mut cmd2 = SetAssetMeta::new("a1", Some("".into()), None);
+        cmd2.apply(&mut doc);
+        assert!(doc.asset("a1").unwrap().name.is_none());
+        // undo 双层回滚
+        cmd2.undo(&mut doc);
+        cmd.undo(&mut doc);
+        let a = doc.asset("a1").unwrap();
+        assert!(a.name.is_none());
+        assert_eq!(a.tags, vec!["原始".to_string()]);
     }
 
     #[test]

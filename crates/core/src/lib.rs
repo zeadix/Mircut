@@ -18,8 +18,8 @@ pub use subtitle::{
 
 pub use commands_m2::{
     AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, ReorderTrack, RippleDelete,
-    SetClipAudio, SetClipRange, SetFx, SetSpeed, SetSpeedAnim, SetTrackFlags, SetTransition,
-    TagAsset,
+    SetAssetMeta, SetClipAudio, SetClipRange, SetFx, SetSpeed, SetSpeedAnim, SetTrackFlags,
+    SetTransition, TagAsset,
 };
 pub use fx::{
     bezier_eval, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect, Interpolation,
@@ -265,6 +265,9 @@ pub struct Asset {
     /// 视频帧率(实时引擎解码管道用;None = 未知回退 30)。
     #[serde(default)]
     pub fps: Option<f64>,
+    /// 显示名(None = 用文件名)。
+    #[serde(default)]
+    pub name: Option<String>,
     /// 用户标签(媒体库筛选)。
     #[serde(default)]
     pub tags: Vec<String>,
@@ -1010,6 +1013,7 @@ mod tests {
             has_audio: true,
             width: Some(320),
             height: Some(240),
+            name: None,
             fps: None,
             tags: vec![],
         });

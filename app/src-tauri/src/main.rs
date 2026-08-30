@@ -10,9 +10,9 @@ use veditor_ai::Transcriber;
 use veditor_core::{
     AddClip, AddMarker, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, Compound,
     DetachAudio, Document, FreezeFrame, Interpolation, Marker, RemoveClip, RemoveMarker,
-    RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed, SetSpeedAnim,
-    SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind, Transition,
-    TransitionKind,
+    RemoveTrack, ReorderTrack, RippleDelete, SetAssetMeta, SetClipAudio, SetFx, SetSpeed,
+    SetSpeedAnim, SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind,
+    Transition, TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
@@ -531,6 +531,7 @@ fn import_media(path: String, state: State<'_, AppState>) -> Result<ImportResult
         has_audio: info.audio().is_some(),
         width: info.video().and_then(|v| v.width),
         height: info.video().and_then(|v| v.height),
+        name: None,
         fps: info.video().and_then(|v| v.fps),
         tags: vec![],
     };
@@ -1712,6 +1713,7 @@ fn article_to_video(text: String, state: State<'_, AppState>) -> Result<usize, S
             bold: true,
             shadow: true,
             bg_color: None,
+            outline2: None,
             animation: veditor_core::TextAnimation::FadeIn,
             x: 0.5,
             y: 0.5,
@@ -2247,6 +2249,19 @@ fn list_export_presets() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// 设置素材元数据(显示名/标签,可撤销)。
+#[tauri::command]
+fn set_asset_meta(
+    asset_id: String,
+    name: Option<String>,
+    tags: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(SetAssetMeta::new(asset_id, name, tags)));
+    true
+}
+
 /// 硬件编码器探测:ffmpeg -encoders 里找 nvenc/qsv(vaapi 需滤镜图配合暂不暴露)。
 #[tauri::command(async)]
 fn detect_hw_encoders() -> Vec<String> {
@@ -2349,6 +2364,7 @@ fn main() {
                     has_audio: true,
                     width: Some(320),
                     height: Some(240),
+                    name: None,
                     fps: None,
                     tags: vec![],
                 });
@@ -2542,6 +2558,7 @@ fn main() {
             open_browser,
             list_export_presets,
             detect_hw_encoders,
+            set_asset_meta,
             list_plugins,
             set_chroma_key,
             auto_chroma_key,
@@ -2617,6 +2634,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -2721,6 +2739,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -2784,6 +2803,7 @@ mod tests {
                 has_audio: true,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -2868,6 +2888,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -2959,6 +2980,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -3096,6 +3118,7 @@ mod tests {
                 has_audio: true,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });
@@ -3253,6 +3276,7 @@ mod tests {
             has_audio: true,
             width: info.video().and_then(|v| v.width),
             height: info.video().and_then(|v| v.height),
+            name: None,
             fps: None,
             tags: vec![],
         };
@@ -3365,6 +3389,7 @@ mod tests {
                 has_audio: false,
                 width: None,
                 height: None,
+                name: None,
                 fps: None,
                 tags: vec![],
             });

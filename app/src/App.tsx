@@ -64,6 +64,10 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
   const [tcDraft, setTcDraft] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
+  /// 媒体库:网格视图 + 重命名/标签编辑。
+  const [mediaGrid, setMediaGrid] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<string | null>(null);
+  const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
   // 拖拽中的素材类型(缝隙建轨提示用)
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
@@ -484,6 +488,31 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     );
   }, []);
 
+  /// 淡入淡出手柄提交(保留其余音频滤镜)。
+  async function onSetAudioFade(clipId: string, fadeIn: number, fadeOut: number) {
+    const c = doc?.clips.find((x) => x.id === clipId);
+    if (!c) return;
+    const a = c.fx?.audio_fx;
+    try {
+      await invoke("set_audio_fx", {
+        clipId,
+        fx: {
+          fade_in: fadeIn,
+          fade_out: fadeOut,
+          denoise: a?.denoise ?? 0,
+          pitch_semitones: a?.pitch_semitones ?? 0,
+          eq_low: a?.eq_low ?? 0,
+          eq_mid: a?.eq_mid ?? 0,
+          eq_high: a?.eq_high ?? 0,
+          stem: a?.stem ?? "None",
+        },
+      });
+    } catch (e) {
+      setStatus(`淡入淡出设置失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   /// 音量包络拖拽提交(Timeline 音频块音量线)。
   async function onSetVolumeKeyframe(clipId: string, tLocal: number, value: number) {
     try {
@@ -858,6 +887,14 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
         <aside style={{ width: 220, background: "#17181c", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
+            <span style={{ flex: 1 }} />
+            <button
+              className="btn"
+              title={mediaGrid ? "切换为列表视图" : "切换为网格视图"}
+              onClick={() => setMediaGrid((v) => !v)}
+            >
+              {mediaGrid ? "☰" : "▦"}
+            </button>
             <input
               ref={fileRef}
               type="file"
@@ -873,12 +910,14 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
             onChange={(e) => setMediaQuery(e.target.value)}
             style={{ width: "100%", marginBottom: 8 }}
           />
+          <div style={{ display: mediaGrid ? "grid" : "block", gridTemplateColumns: mediaGrid ? "1fr 1fr" : undefined, gap: 6 }}>
           {doc.assets
             .filter((a) => {
               if (!mediaQuery.trim()) return true;
               const q = mediaQuery.trim().toLowerCase();
               return (
                 a.path.toLowerCase().includes(q) ||
+                (a.name ?? "").toLowerCase().includes(q) ||
                 (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
               );
             })
@@ -906,9 +945,23 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
                   {a.has_video ? "视频" : "音频"}
                 </div>
               )}
-              <div style={{ fontSize: 11, marginTop: 4, color: "#aab" }}>
-                {a.path.split("/").pop()}
-                <div style={{ color: "#667" }}>{a.duration_secs.toFixed(1)}s</div>
+              <div style={{ fontSize: 11, marginTop: 4, color: "#aab", display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {a.name ?? a.path.split("/").pop()}
+                </span>
+                <button
+                  className="btn"
+                  style={{ padding: "1px 4px", fontSize: 10, flexShrink: 0 }}
+                  title="重命名/标签"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingAsset(editingAsset === a.id ? null : a.id);
+                    setAssetDraft({ name: a.name ?? "", tags: (a.tags ?? []).join(", ") });
+                  }}
+                >
+                  ✎
+                </button>
+                <div style={{ color: "#667", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
                 {(a.tags ?? []).length > 0 && (
                   <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {a.tags!.map((t) => (
@@ -918,9 +971,46 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
                     ))}
                   </div>
                 )}
+                {editingAsset === a.id && (
+                  <div
+                    style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      className="ti"
+                      placeholder="显示名(空 = 文件名)"
+                      value={assetDraft.name}
+                      onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })}
+                    />
+                    <input
+                      className="ti"
+                      placeholder="标签,逗号分隔"
+                      value={assetDraft.tags}
+                      onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
+                    />
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="btn"
+                        onClick={async () => {
+                          await api.setAssetMeta(
+                            a.id,
+                            assetDraft.name.trim() || null,
+                            assetDraft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
+                          );
+                          setEditingAsset(null);
+                        }}
+                      >
+                        保存
+                      </button>
+                      <button className="btn" onClick={() => setEditingAsset(null)}>取消</button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           ))}
+          </div>
         </aside>
 
         {/* 主区 */}
@@ -1001,6 +1091,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
               onSelectMany={setSelected}
               onClipAction={onClipAction}
               onSetVolumeKeyframe={onSetVolumeKeyframe}
+              onSetAudioFade={onSetAudioFade}
               selectedClipIds={selected}
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}

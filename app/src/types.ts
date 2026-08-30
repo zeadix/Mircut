@@ -165,6 +165,8 @@ export interface Asset {
   width: number | null;
   height: number | null;
   fps?: number | null;
+  /// 显示名(None = 文件名)。
+  name?: string | null;
   tags?: string[];
 }
 
@@ -179,6 +181,7 @@ export interface TextOverlay {
   bold: boolean;
   shadow?: boolean;
   bg_color?: string | null;
+  outline2?: string | null;
   animation?: "None" | "FadeIn" | "SlideUp" | "Zoom";
   x: number;
   y: number;
