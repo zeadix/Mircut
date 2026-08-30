@@ -1,7 +1,7 @@
 # VEditor v1.3 产品迭代路线图（对标剪映）
 
 - **日期**: 2026-08-30
-- **状态**: 批次 1 全部 + 批次 2 仅余 Slide/批量拖拽/标记列表 + 批次 3 三项 + 批次 4 两场 + 贯穿项 main.rs 拆分/死代码 已执行(2026-08-30,提交 f5f23b0..fb68934)
+- **状态**: 批次 1 全部 + 批次 2 仅余 Slide 滑移(标注暂缓) + 批次 3 三项 + 批次 4 两场 + 贯穿项 main.rs 拆分/死代码/CI 发布流水线 已执行(2026-08-30,提交 f5f23b0..a1b49d8)
 - **依据**: v1.2 全仓代码探索(前端 21 源文件 + crates 全部 + git 130 commits) + `docs/superpowers/specs/2026-08-27-veditor-prd-design.md` + `docs/superpowers/plans/2026-08-28-veditor-capcut-parity-roadmap.md`
 - **定位**: 08-28 路线图的对标项已基本落地(见第 3 节状态校准),本路线图回答"下一阶段做什么、为什么是这个顺序"。
 
@@ -120,6 +120,8 @@
 - [x] **Roll 滚动修剪**(Ctrl/Cmd+边缘拖拽,切点整体移动,组合命令一次撤销,双向钳制)
 - [x] **Slip 滑切**(Alt+主体拖拽,原位平移源窗口,走 set_clip_range)
 - [ ] Slide 滑移(邻居填充语义复杂,低频操作,暂缓)
+- [x] **批量拖拽移动**:多选组整体位移(拖拽块磁吸+换轨,组员同位移),move_clips 组合命令一次撤销,逐轨调度消重叠
+- [x] **标记列表面板**:工具栏 ⚑ 弹层(时间/标签/跳转/单条删除),与 M 打点/菱形点击/右键开关闭环
 - 另完成批次 1 遗留:**时间码输入跳转**(播放条时间码框,支持 ss.s/mm:ss/hh:mm:ss 回车跳转)
 - 验收：多选批量操作可撤销；右键菜单覆盖高频操作；变速曲线导出正确。
 
@@ -160,7 +162,7 @@
 - [ ] Timeline.tsx 1332 行 / App.tsx 883 行 / Inspector.tsx 750 行拆分；状态管理 Zustand 化（PRD 原规划），消除选中态三处穿透与全量 refresh
 - [ ] Playwright 冒烟测试（导入→剪辑→导出主链路）
 - [ ] i18n 框架 + 设计 token（CSS 变量），为国际版/亮色主题铺路
-- [ ] CI 发布流水线（AppImage/deb 自动构建发布）；[x] README 测试数刷新；[x] 删除 ScrollBar.tsx 死代码与 VEDITOR_AUTO_CLICK 诊断代码
+- [x] CI 发布流水线(release.yml:tag v* 触发 Linux 质量门禁+构建→AppImage/deb→GitHub Release,支持手动触发);[x] README 测试数刷新;[x] 删除 ScrollBar.tsx 死代码与 VEDITOR_AUTO_CLICK 诊断代码
 - [ ] 路线图 checkbox 回填机制（本文档起，完成即勾选）
 
 ## 10. 执行顺序与依赖
