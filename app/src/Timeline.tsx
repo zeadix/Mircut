@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
+import { isDropYValid, resolveDropTarget } from "./drop";
 
 interface Props {
   doc: Document;
@@ -82,6 +83,9 @@ function TimelineInner({
   const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
   const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
+  /// 拖放落点缓存:dragover 坐标可靠(提示正常),drop 事件 clientY 在 WebKitGTK
+  /// 可能异常(0 或不变),drop 时优先用缓存的 dragover 落点。
+  const dropTargetRef = useRef<{ trackId: string | null; start: number; lane: "Video" | "Audio" | null } | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
   const [rangeDraft, setRangeDraft] = useState({ start: "", duration: "", sourceIn: "" });
@@ -673,9 +677,12 @@ function TimelineInner({
     const rect = canvas.getBoundingClientRect();
     const target = dropTargetFromEvent(e);
     if (!target) {
+      dropTargetRef.current = null;
       setDropHint(null);
       return;
     }
+    // 缓存可靠落点(drop 事件坐标在 WebKitGTK 不可靠)
+    dropTargetRef.current = target;
     const yIn = e.clientY - rect.top;
     const row = Math.floor(yIn / trackH);
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
@@ -700,18 +707,15 @@ function TimelineInner({
     const assetId = e.dataTransfer.getData("application/x-veditor-asset");
     setDropHint(null);
     if (!assetId) return;
-    const target = dropTargetFromEvent(e);
-    // 诊断:定位"拖到音频区却生成视频块"
-    import("@tauri-apps/api/core")
-      .then(({ invoke }) =>
-        invoke("log_js_error", {
-          kind: "drop",
-          detail: `clientY=${e.clientY} rectTop=${canvasRef.current?.getBoundingClientRect().top} trackId=${target?.trackId} lane=${target?.lane}`,
-        }).catch(() => {})
-      )
-      .catch(() => {});
-    if (!target) return;
     e.preventDefault();
+    // drop 事件坐标在 WebKitGTK 可能异常:优先用 dragover 缓存的可靠落点,
+    // drop 坐标有效时以 drop 为准(终值)。
+    const fromEvent = dropTargetFromEvent(e);
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const dropYValid = !!rect && isDropYValid(e.clientY, rect.top, rect.bottom);
+    const target = resolveDropTarget(fromEvent, dropTargetRef.current, dropYValid);
+    dropTargetRef.current = null;
+    if (!target) return;
     onDropAsset?.(assetId, target.trackId, target.start, target.lane);
   }
 
@@ -755,7 +759,7 @@ function TimelineInner({
         overflow: "hidden",
       }}
       onDragOver={onDragOver}
-      onDragLeave={() => setDropHint(null)}
+      onDragLeave={() => { setDropHint(null); dropTargetRef.current = null; }}
       onDrop={onDrop}
     >
       <div style={{ display: "flex", fontSize: 10, color: "#667", padding: "2px 8px", gap: 10, alignItems: "center" }}>

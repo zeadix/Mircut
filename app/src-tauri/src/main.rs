@@ -839,10 +839,6 @@ fn drop_asset(
     };
 
     let lanes_needed = lanes_for_drop(asset.has_video, asset.has_audio, lane.as_deref());
-    diag::log_cmd(
-        "drop_asset",
-        &format!("lane={lane:?} track={target_track} lanes={lanes_needed:?}"),
-    );
     if lanes_needed.is_empty() {
         return Err("素材既无视频也无音频".into());
     }
@@ -2186,6 +2182,7 @@ fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>) -> String 
         height: req.height,
         fps: req.fps,
         crf: req.crf,
+        loudness_normalize: req.loudness_normalize,
         ..Default::default()
     };
     let args = veditor_export::compile_ffmpeg_cmd(&inner.doc, &params);
@@ -2422,7 +2419,7 @@ fn main() {
         .on_window_event(|_window, event| {
             // 捕获窗口销毁:记录诊断(区分用户关闭与崩溃)。
             if let tauri::WindowEvent::Destroyed = event {
-                diag::log_cmd("window", "Destroyed");
+                diag::log_event("window", "Destroyed");
             }
         })
         .setup(|app| {

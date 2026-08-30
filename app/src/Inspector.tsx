@@ -12,6 +12,7 @@ interface Props {
 
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
 function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
+  const tps = doc.timebase.num / doc.timebase.den;
   const [speed, setSpeed] = useState("1.0");
   const [volume, setVolume] = useState("1.0");
   const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1, temperature: 0 });
@@ -95,7 +96,11 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     if (!clip) return;
     const { invoke } = await import("@tauri-apps/api/core");
     const fx = clip.fx ?? emptyFx();
-    fx.blend_mode = (mode === "Normal" ? null : mode) as never;
+    if (mode === "Normal") {
+      delete fx.blend_mode;
+    } else {
+      fx.blend_mode = mode as NonNullable<NonNullable<Clip["fx"]>["blend_mode"]>;
+    }
     await invoke("set_clip_fx", { clipId: clip.id, fx });
     await onRefresh();
   }
@@ -106,9 +111,11 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
     const m = next ?? mask;
     const { invoke } = await import("@tauri-apps/api/core");
     const fx = clip.fx ?? emptyFx();
-    fx.mask = m.enabled
-      ? { kind: "Rect", x: m.x, y: m.y, w: m.w, h: m.h, feather: 0, invert: false }
-      : (null as never);
+    if (m.enabled) {
+      fx.mask = { kind: "Rect", x: m.x, y: m.y, w: m.w, h: m.h, feather: 0, invert: false };
+    } else {
+      delete fx.mask;
+    }
     await invoke("set_clip_fx", { clipId: clip.id, fx });
     await onRefresh();
   }
@@ -129,7 +136,6 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   async function applyTrimByNumbers(edge: "left" | "right", secsStr: string) {
     const secs = parseFloat(secsStr);
     if (!Number.isFinite(secs) || secs < 0 || !clip) return;
-    const tps = 30;
     const { invoke } = await import("@tauri-apps/api/core");
     try {
       if (edge === "left") {
@@ -210,7 +216,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   }
 
   async function addKeyframe(prop: "opacity" | "volume") {
-    await api.setKeyframe(clip!.id, prop, playheadTicks - clip!.start, prop === "opacity" ? 1 : 1, "smooth");
+    await api.setKeyframe(clip!.id, prop, playheadTicks - clip!.start, 1.0, "smooth");
     await onRefresh();
   }
 
@@ -650,7 +656,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
           prop="opacity"
           label="不透明度"
           keyframes={clip.fx?.opacity.keyframes ?? []}
-          tps={30}
+          tps={tps}
           onRefresh={onRefresh}
         />
         <KeyframeEditor
@@ -658,7 +664,7 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
           prop="volume"
           label="音量"
           keyframes={clip.fx?.volume.keyframes ?? []}
-          tps={30}
+          tps={tps}
           onRefresh={onRefresh}
         />
       </fieldset>

@@ -254,10 +254,15 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     let pw = params.width as f64;
                     let ph = params.height as f64;
                     if mask.kind == veditor_core::MaskKind::Rect {
-                        let mw = (mask.w * pw).round().max(2.0) as u32;
-                        let mh = (mask.h * ph).round().max(2.0) as u32;
-                        let mx = ((mask.x - mask.w / 2.0) * pw).round().max(0.0) as u32;
-                        let my = ((mask.y - mask.h / 2.0) * ph).round().max(0.0) as u32;
+                        // 钳制到画面内:宽高不超画面,位置不越界(边缘蒙版不变形)
+                        let mw = ((mask.w * pw).round() as u32).clamp(2, params.width);
+                        let mh = ((mask.h * ph).round() as u32).clamp(2, params.height);
+                        let mx = (((mask.x - mask.w / 2.0) * pw).round() as i64)
+                            .clamp(0, (params.width - mw) as i64)
+                            as u32;
+                        let my = (((mask.y - mask.h / 2.0) * ph).round() as i64)
+                            .clamp(0, (params.height - mh) as i64)
+                            as u32;
                         chain.push_str(&format!(
                             ",crop=w={mw}:h={mh}:x={mx}:y={my},pad={}:{}:{mx}:{my}",
                             params.width, params.height
@@ -315,7 +320,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                             fname.to_string_lossy()
                         ));
                     }
-                } else if let Some(op) = c.fx.opacity.value_at(c.start) {
+                } else if let Some(op) = c.fx.opacity.value_at(0) {
                     if (op - 1.0).abs() > 1e-3 {
                         chain.push_str(&format!(
                             ",format=yuva420p,colorchannelmixer=aa={op:.3},premultiply=inplace=1"
@@ -388,17 +393,25 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             // 混合模式:上层全尺寸画面与下层像素混合(blend 滤镜)
             if let Some(blend) = c.fx.blend_mode {
                 if blend != veditor_core::BlendMode::Normal {
-                    let chain = format!(
-                        "[{input_idx}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,scale={}:{},format=yuva420p[pip{ov_n}]",
+                    let mut chain = format!(
+                        "[{input_idx}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,scale={}:{},format=yuva420p",
                         c.asset.source_in,
                         c.source_span_secs(&doc.timebase),
                         params.width,
                         params.height
                     );
+                    // 不透明度(静态,经 alpha 参与 blend 混合)
+                    if let Some(op) = c.fx.opacity.value_at(0) {
+                        if (op - 1.0).abs() > 1e-3 {
+                            chain.push_str(&format!(",colorchannelmixer=aa={op:.3}"));
+                        }
+                    }
+                    let pip_label = format!("[pip{ov_n}]");
+                    chain.push_str(&pip_label);
                     filters.push(chain);
                     let out_label = format!("[vov{ov_n}]");
                     filters.push(format!(
-                        "{vout}[pip{ov_n}]blend=all_mode={}:enable='between(t,{st:.3},{en:.3})'{out_label}",
+                        "{vout}{pip_label}blend=all_mode={}:enable='between(t,{st:.3},{en:.3})'{out_label}",
                         blend.ffmpeg()
                     ));
                     vout = out_label;
@@ -407,21 +420,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 }
             }
             // 画中画尺寸:fx.scale 静态值(默认 0.35);位置:x/y_offset(0-1,默认 0.72/0.72 右下)
-            let pip_scale =
-                c.fx.scale
-                    .value_at(c.start)
-                    .unwrap_or(0.35)
-                    .clamp(0.05, 1.0);
-            let pip_x =
-                c.fx.x_offset
-                    .value_at(c.start)
-                    .unwrap_or(0.72)
-                    .clamp(0.0, 1.0);
-            let pip_y =
-                c.fx.y_offset
-                    .value_at(c.start)
-                    .unwrap_or(0.72)
-                    .clamp(0.0, 1.0);
+            let pip_scale = c.fx.scale.value_at(0).unwrap_or(0.35).clamp(0.05, 1.0);
+            let pip_x = c.fx.x_offset.value_at(0).unwrap_or(0.72).clamp(0.0, 1.0);
+            let pip_y = c.fx.y_offset.value_at(0).unwrap_or(0.72).clamp(0.0, 1.0);
             let pw = (params.width as f64 * pip_scale).round() as u32;
             let ph = (params.height as f64 * pip_scale).round() as u32;
             let ox = ((params.width - pw) as f64 * pip_x).round() as i32;
@@ -434,7 +435,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 c.source_span_secs(&doc.timebase),
             );
             // 透明度(静态)
-            if let Some(op) = c.fx.opacity.value_at(c.start) {
+            if let Some(op) = c.fx.opacity.value_at(0) {
                 if (op - 1.0).abs() > 1e-3 {
                     chain.push_str(&format!(",colorchannelmixer=aa={op:.3}"));
                 }
