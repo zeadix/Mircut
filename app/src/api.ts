@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Document, Asset, Clip, Waveform, Track as TrackT } from "./types";
+import type { Document, Asset, Clip, ImageOverlay, Waveform, Track as TrackT } from "./types";
 
 export async function getDocument(): Promise<Document> {
   return invoke("get_document");
@@ -46,6 +46,20 @@ export async function setClipsAudio(
   muted: boolean | null
 ): Promise<boolean> {
   return invoke("set_clips_audio", { clipIds, volume, muted });
+}
+
+// ---------- 贴纸(图片叠层) ----------
+export async function listImageOverlays(): Promise<ImageOverlay[]> {
+  return invoke("list_image_overlays");
+}
+export async function addImageOverlay(o: ImageOverlay): Promise<ImageOverlay> {
+  return invoke("add_image_overlay", { overlay: o });
+}
+export async function updateImageOverlay(index: number, o: ImageOverlay): Promise<boolean> {
+  return invoke("update_image_overlay", { index, overlay: o });
+}
+export async function removeImageOverlay(index: number): Promise<boolean> {
+  return invoke("remove_image_overlay", { index });
 }
 
 /// 素材元数据(显示名/标签,可撤销)。

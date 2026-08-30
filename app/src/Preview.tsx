@@ -699,6 +699,27 @@ export default function Preview({
             );
           })}
 
+          {/* 贴纸(图片叠层,与导出 overlay 语义对齐:中心定位/宽度比例) */}
+          {(doc?.image_overlays ?? [])
+            .filter((o) => playheadTicks >= o.start && playheadTicks < o.end)
+            .map((o) => (
+              <img
+                key={o.id}
+                src={`veditor://preview/${encodeURIComponent(o.path)}`}
+                alt=""
+                style={{
+                  position: "absolute",
+                  left: `${o.x * 100}%`,
+                  top: `${o.y * 100}%`,
+                  width: `${o.scale * 100}%`,
+                  transform: `translate(-50%, -50%) rotate(${o.rotate}deg)`,
+                  opacity: o.opacity,
+                  pointerEvents: "none",
+                  zIndex: 3,
+                }}
+              />
+            ))}
+
           {/* 文字叠层(与导出 drawtext 样式/动画对齐) */}
           {(doc?.text_overlays ?? [])
             .filter((o) => playheadTicks >= o.start && playheadTicks < o.end)

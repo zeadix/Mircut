@@ -11,7 +11,7 @@ pub mod subtitle;
 
 pub use scheduler::{resolve_overlaps, Placement, SchedClip};
 
-pub use fx_ext::{AudioFx, LutApply, StemMode, TextAnimation, TextOverlay};
+pub use fx_ext::{AudioFx, ImageOverlay, LutApply, StemMode, TextAnimation, TextOverlay};
 pub use subtitle::{
     parse_ass, parse_srt, to_ass, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack,
 };
@@ -292,6 +292,9 @@ pub struct Document {
     /// 时间轴标记(打点/跳转)。
     #[serde(default)]
     pub markers: Vec<Marker>,
+    /// 贴纸(图片叠层)。
+    #[serde(default)]
+    pub image_overlays: Vec<ImageOverlay>,
 }
 
 impl Default for Document {
@@ -305,6 +308,7 @@ impl Default for Document {
             subtitles: SubtitleTrack::default(),
             text_overlays: Vec::new(),
             markers: Vec::new(),
+            image_overlays: Vec::new(),
         }
     }
 }
@@ -1078,6 +1082,31 @@ mod tests {
         let stripped = json.replace(",\"markers\":[]", "");
         let back: Document = serde_json::from_str(&stripped).unwrap();
         assert!(back.markers.is_empty());
+    }
+
+    #[test]
+    fn image_overlays_serialize_and_backward_compatible_load() {
+        let mut doc = Document::default();
+        doc.image_overlays.push(crate::ImageOverlay {
+            id: "st1".into(),
+            start: 0,
+            end: 90,
+            path: "/tmp/s.png".into(),
+            x: 0.5,
+            y: 0.5,
+            scale: 0.3,
+            rotate: 0.0,
+            opacity: 1.0,
+        });
+        let json = serde_json::to_string(&doc).unwrap();
+        let back: Document = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.image_overlays.len(), 1);
+        // 旧工程无 image_overlays 字段可加载(serde default)
+        doc.image_overlays.clear();
+        let json = serde_json::to_string(&doc).unwrap();
+        let stripped = json.replace(",\"image_overlays\":[]", "");
+        let back: Document = serde_json::from_str(&stripped).unwrap();
+        assert!(back.image_overlays.is_empty());
     }
 
     #[test]

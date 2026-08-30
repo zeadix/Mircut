@@ -306,6 +306,49 @@ pub(crate) fn remove_text_overlay(index: usize, state: State<'_, AppState>) -> b
 }
 
 #[tauri::command]
+pub(crate) fn list_image_overlays(state: State<'_, AppState>) -> Vec<veditor_core::ImageOverlay> {
+    let inner = state.inner.lock().unwrap();
+    inner.doc.image_overlays.clone()
+}
+
+#[tauri::command]
+pub(crate) fn add_image_overlay(
+    overlay: veditor_core::ImageOverlay,
+    state: State<'_, AppState>,
+) -> Result<veditor_core::ImageOverlay, String> {
+    let mut inner = state.inner.lock().unwrap();
+    let mut o = overlay;
+    if o.id.is_empty() {
+        o.id = format!("st{}", inner.doc.image_overlays.len() + 1);
+    }
+    inner.doc.image_overlays.push(o.clone());
+    inner.autosave();
+    Ok(o)
+}
+
+#[tauri::command]
+pub(crate) fn update_image_overlay(
+    index: usize,
+    overlay: veditor_core::ImageOverlay,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(o) = inner.doc.image_overlays.get_mut(index) {
+        *o = overlay;
+    }
+    true
+}
+
+#[tauri::command]
+pub(crate) fn remove_image_overlay(index: usize, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if index < inner.doc.image_overlays.len() {
+        inner.doc.image_overlays.remove(index);
+    }
+    true
+}
+
+#[tauri::command]
 pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Result<usize, String> {
     let sentences = split_sentences(&text);
     if sentences.is_empty() {

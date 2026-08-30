@@ -150,6 +150,19 @@ export interface SubtitleTrack {
   style: SubtitleStyle;
 }
 
+/// 贴纸(图片叠层)。
+export interface ImageOverlay {
+  id: string;
+  start: number;
+  end: number;
+  path: string;
+  x: number;
+  y: number;
+  scale: number;
+  rotate: number;
+  opacity: number;
+}
+
 /// 时间轴标记(M 键打点)。
 export interface Marker {
   t: number;
@@ -196,6 +209,7 @@ export interface Document {
   subtitles?: SubtitleTrack;
   text_overlays?: TextOverlay[];
   markers?: Marker[];
+  image_overlays?: ImageOverlay[];
 }
 
 export interface Waveform {

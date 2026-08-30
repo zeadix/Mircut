@@ -108,6 +108,42 @@ impl LutApply {
     }
 }
 
+/// 贴纸(图片叠层):漂浮在视频上方,不占轨道。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImageOverlay {
+    pub id: String,
+    /// 起止(ticks)。
+    pub start: i64,
+    pub end: i64,
+    /// 图片绝对路径。
+    pub path: String,
+    /// 中心位置(归一化 0-1,相对输出画面)。
+    pub x: f64,
+    pub y: f64,
+    /// 宽度(相对输出画面宽,0.05-2)。
+    pub scale: f64,
+    /// 旋转角度(度)。
+    pub rotate: f64,
+    /// 不透明度(0-1)。
+    pub opacity: f64,
+}
+
+impl Default for ImageOverlay {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            start: 0,
+            end: 90,
+            path: String::new(),
+            x: 0.5,
+            y: 0.5,
+            scale: 0.3,
+            rotate: 0.0,
+            opacity: 1.0,
+        }
+    }
+}
+
 /// 文字入场动画。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TextAnimation {

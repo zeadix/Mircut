@@ -808,6 +808,46 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         }
     }
 
+    // 贴纸(图片叠层):每张图独立输入(-i 追加在片段输入后),
+    // 单帧输入经 overlay 默认 eof_action=repeat 重复,enable 控制时间窗。
+    if !doc.image_overlays.is_empty() && video_track.is_some() {
+        let base_idx = uses.len();
+        for io in &doc.image_overlays {
+            args.push("-i".into());
+            args.push(io.path.clone());
+        }
+        for (si, io) in doc.image_overlays.iter().enumerate() {
+            let idx = base_idx + si;
+            let st = io.start as f64 / fps_tb;
+            let en = io.end as f64 / fps_tb;
+            let w = (io.scale.clamp(0.02, 2.0) * params.width as f64)
+                .round()
+                .max(2.0) as u32;
+            let mut chain = format!("[{idx}:v]scale={w}:-1,format=rgba");
+            if io.rotate.abs() > 0.01 {
+                chain.push_str(&format!(
+                    ",rotate=a='({:.4})*PI/180':c=black@0:ow=iw:oh=ih",
+                    io.rotate
+                ));
+            }
+            if (io.opacity - 1.0).abs() > 1e-3 {
+                chain.push_str(&format!(
+                    ",colorchannelmixer=aa={:.3}",
+                    io.opacity.clamp(0.0, 1.0)
+                ));
+            }
+            let slabel = format!("[stk{si}]");
+            chain.push_str(&slabel);
+            filters.push(chain);
+            let out_label = format!("[vstk{si}]");
+            filters.push(format!(
+                "{vout}{slabel}overlay=x='({:.4})*main_w-overlay_w/2':y='({:.4})*main_h-overlay_h/2':enable='between(t,{st:.3},{en:.3})'{out_label}",
+                io.x, io.y
+            ));
+            vout = out_label;
+        }
+    }
+
     // 音频:各轨片段 trim 后 concat,再 amix
     let mut audio_labels: Vec<String> = Vec::new();
     for (ti, at) in audio_tracks.iter().enumerate() {
@@ -1557,6 +1597,41 @@ mod tests {
             .unwrap();
         assert!(fc.contains("rotate=a='(if(lt(t,"), "fc = {fc}");
         assert!(fc.contains("*PI/180"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_image_overlays_use_sticker_chain() {
+        let mut d = doc();
+        d.image_overlays.push(veditor_core::ImageOverlay {
+            id: "st1".into(),
+            start: 0,
+            end: 30,
+            path: "/tmp/sticker.png".into(),
+            x: 0.5,
+            y: 0.5,
+            scale: 0.3,
+            rotate: 15.0,
+            opacity: 0.8,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        assert!(
+            args.contains(&"/tmp/sticker.png".to_string()),
+            "应有贴纸输入"
+        );
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("scale=576:-1,format=rgba"), "fc = {fc}");
+        assert!(fc.contains("rotate=a='(15.0000)*PI/180'"), "fc = {fc}");
+        assert!(fc.contains("colorchannelmixer=aa=0.800"), "fc = {fc}");
+        assert!(
+            fc.contains("overlay=x='(0.5000)*main_w-overlay_w/2'"),
+            "fc = {fc}"
+        );
+        assert!(fc.contains("enable='between(t,0.000,1.000)'"), "fc = {fc}");
     }
 
     #[test]

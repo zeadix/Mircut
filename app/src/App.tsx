@@ -12,6 +12,7 @@ import SubtitlePanel from "./SubtitlePanel";
 import TextPanel from "./TextPanel";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
+import StickerPanel from "./StickerPanel";
 import AudioBus from "./AudioBus";
 import {
   FilmSlate,
@@ -73,7 +74,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
-  const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts">("inspector");
+  const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts" | "stickers">("inspector");
   const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
@@ -1175,6 +1176,13 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
             >
               文字
             </button>
+            <button
+              className="btn"
+              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "stickers" ? "#30333c" : "transparent" }}
+              onClick={() => setRightTab("stickers")}
+            >
+              贴纸
+            </button>
           </div>
           {rightTab === "inspector" ? (
             <Inspector
@@ -1192,8 +1200,10 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
               onRefresh={refresh}
               fps={fps}
             />
-          ) : (
+          ) : rightTab === "texts" ? (
             <TextPanel playheadTicks={playhead} onRefresh={refresh} />
+          ) : (
+            <StickerPanel doc={doc} playheadTicks={playhead} onRefresh={refresh} />
           )}
         </aside>
       </div>

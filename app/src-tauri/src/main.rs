@@ -300,6 +300,10 @@ fn main() {
             article_to_video,
             update_text_overlay,
             remove_text_overlay,
+            list_image_overlays,
+            add_image_overlay,
+            update_image_overlay,
+            remove_image_overlay,
             seek_frame,
             export_video,
             preview_export_cmd
