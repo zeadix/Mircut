@@ -113,7 +113,22 @@ export interface Transition {
   id: string;
   left_clip_id: string;
   right_clip_id: string;
-  kind: "Fade" | "Dissolve" | "SlideLeft" | "SlideRight" | "Zoom";
+  kind:
+    | "Fade"
+    | "Dissolve"
+    | "SlideLeft"
+    | "SlideRight"
+    | "Zoom"
+    | "WipeLeft"
+    | "WipeRight"
+    | "WipeUp"
+    | "WipeDown"
+    | "CircleOpen"
+    | "CircleClose"
+    | "FadeBlack"
+    | "FadeWhite"
+    | "Radial"
+    | "Pixelize";
   duration_secs: number;
 }
 

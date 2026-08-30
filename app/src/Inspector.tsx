@@ -817,12 +817,11 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               className="ti"
               value={transKind}
               onChange={(e) => setTransKind(e.target.value)}
+              title="转场画廊(15 种)"
             >
-              <option value="fade">淡入淡出</option>
-              <option value="dissolve">叠化</option>
-              <option value="slideleft">左滑</option>
-              <option value="slideright">右滑</option>
-              <option value="zoom">缩放</option>
+              {TRANSITIONS.map((t) => (
+                <option key={t[0]} value={t[0]}>{t[1]}</option>
+              ))}
             </select>{" "}
             <input
               className="ti"
@@ -849,6 +848,25 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     </div>
   );
 }
+
+/// 转场画廊(与导出 xfade 映射一一对应)。
+const TRANSITIONS: [string, string][] = [
+  ["fade", "淡入淡出"],
+  ["dissolve", "叠化"],
+  ["fadeblack", "黑场过渡"],
+  ["fadewhite", "白场过渡"],
+  ["slideleft", "左滑"],
+  ["slideright", "右滑"],
+  ["wipeleft", "左擦除"],
+  ["wiperight", "右擦除"],
+  ["wipeup", "上擦除"],
+  ["wipedown", "下擦除"],
+  ["circleopen", "圆形展开"],
+  ["circleclose", "圆形收缩"],
+  ["radial", "径向擦除"],
+  ["pixelize", "像素化"],
+  ["zoom", "缩放推进"],
+];
 
 /// 预设滤镜(调色 grade 组合,一键应用)。
 const FILTER_PRESETS: { name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[] = [

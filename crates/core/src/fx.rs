@@ -132,6 +132,16 @@ pub enum TransitionKind {
     SlideLeft,
     SlideRight,
     Zoom,
+    WipeLeft,
+    WipeRight,
+    WipeUp,
+    WipeDown,
+    CircleOpen,
+    CircleClose,
+    FadeBlack,
+    FadeWhite,
+    Radial,
+    Pixelize,
 }
 
 /// 两片段间的转场。

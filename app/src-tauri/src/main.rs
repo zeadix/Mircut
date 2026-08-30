@@ -1405,6 +1405,16 @@ fn set_transition(
         "slideleft" => TransitionKind::SlideLeft,
         "slideright" => TransitionKind::SlideRight,
         "zoom" => TransitionKind::Zoom,
+        "wipeleft" => TransitionKind::WipeLeft,
+        "wiperight" => TransitionKind::WipeRight,
+        "wipeup" => TransitionKind::WipeUp,
+        "wipedown" => TransitionKind::WipeDown,
+        "circleopen" => TransitionKind::CircleOpen,
+        "circleclose" => TransitionKind::CircleClose,
+        "fadeblack" => TransitionKind::FadeBlack,
+        "fadewhite" => TransitionKind::FadeWhite,
+        "radial" => TransitionKind::Radial,
+        "pixelize" => TransitionKind::Pixelize,
         _ => TransitionKind::Fade,
     };
     let trans = Transition {
