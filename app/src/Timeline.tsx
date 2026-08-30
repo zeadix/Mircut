@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
-import { isDropYValid, resolveDropTarget } from "./drop";
+import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 
 interface Props {
   doc: Document;
@@ -82,11 +82,16 @@ function TimelineInner({
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
+  /// 重排占位:插入索引(0..n,即"插到第 i 个轨道之前"),null=未拖拽。
+  const [reorderInsert, setReorderInsert] = useState<number | null>(null);
+  const [reorderHint, setReorderHint] = useState<number | null>(null);
+  /// 轨道头列宽(垂直分界线拖拽调整)。
+  const [headW, setHeadW] = useState(132);
+  const headWDrag = useRef<{ startX: number; startW: number } | null>(null);
   const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
   /// 拖放落点缓存:dragover 坐标可靠(提示正常),drop 事件 clientY 在 WebKitGTK
   /// 可能异常(0 或不变),drop 时优先用缓存的 dragover 落点。
   const dropTargetRef = useRef<{ trackId: string | null; start: number; lane: "Video" | "Audio" | null } | null>(null);
-  const [reorderHint, setReorderHint] = useState<number | null>(null);
   const [rangeEdit, setRangeEdit] = useState<{ clipId: string; start: number; duration: number; sourceIn: number } | null>(null);
   const [rangeDraft, setRangeDraft] = useState({ start: "", duration: "", sourceIn: "" });
   const ctxMenuArmedAt = useRef(0);
@@ -800,7 +805,7 @@ function TimelineInner({
       </div>
       {/* 顶部刻度尺(固定在轨道列表上边缘) */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -813,8 +818,8 @@ function TimelineInner({
       </div>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 轨道头 */}
-        <div style={{ width: 132, flexShrink: 0, overflow: "hidden" }}>
-          <div ref={headInnerRef}>
+        <div style={{ width: headW, flexShrink: 0, overflow: "hidden", display: "flex" }}>
+          <div ref={headInnerRef} style={{ flex: 1, minWidth: 0 }}>
           {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
@@ -827,19 +832,64 @@ function TimelineInner({
                 borderBottom: "1px solid #2e3038",
                 background: track.kind === "Audio" ? "#1a211d" : "#1b1d26",
                 position: "relative",
+                opacity: reorderHint === ti ? 0.45 : 1,
               }}
               onDragOver={(e) => {
-                if (reorderFrom.current !== null) e.preventDefault();
+                if (reorderFrom.current === null) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                // 计算插入索引:行上半 -> 插到该行前,下半 -> 插到该行后
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                const after = e.clientY - rect.top > rect.height / 2;
+                let idx = ti + (after ? 1 : 0);
+                const from = reorderFrom.current;
+                // 拖动源自身位置不显示占位(无操作)
+                setReorderInsert(from !== null && insertToMoveIdx(from, idx) === null ? null : idx);
               }}
               onDrop={(e) => {
-                if (reorderFrom.current !== null && reorderFrom.current !== ti) {
-                  e.preventDefault();
-                  onReorderTrack?.(reorderFrom.current, ti);
+                const from = reorderFrom.current;
+                if (from === null) return;
+                e.preventDefault();
+                const insert = reorderInsert;
+                if (insert !== null) {
+                  const toIdx = insertToMoveIdx(from, insert);
+                  if (toIdx !== null) onReorderTrack?.(from, toIdx);
                 }
                 reorderFrom.current = null;
+                setReorderInsert(null);
                 setReorderHint(null);
               }}
             >
+              {reorderInsert === ti && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: -2,
+                    left: 4,
+                    right: 4,
+                    height: 3,
+                    background: "#ffd75e",
+                    borderRadius: 2,
+                    boxShadow: "0 0 6px #ffd75e88",
+                    zIndex: 2,
+                  }}
+                />
+              )}
+              {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: -2,
+                    left: 4,
+                    right: 4,
+                    height: 3,
+                    background: "#ffd75e",
+                    borderRadius: 2,
+                    boxShadow: "0 0 6px #ffd75e88",
+                    zIndex: 2,
+                  }}
+                />
+              )}
               <span
                 title="拖动排序轨道"
                 draggable
@@ -849,7 +899,7 @@ function TimelineInner({
                   reorderFrom.current = ti;
                   setReorderHint(ti);
                 }}
-                onDragEnd={() => { reorderFrom.current = null; setReorderHint(null); }}
+                onDragEnd={() => { reorderFrom.current = null; setReorderInsert(null); setReorderHint(null); }}
                 style={{
                   cursor: "grab",
                   alignSelf: "center",
@@ -924,6 +974,45 @@ function TimelineInner({
           ))}
           </div>
         </div>
+        {/* 轨道头列宽拖拽分隔条(pointer capture) */}
+        <div
+          style={{
+            width: 6,
+            flexShrink: 0,
+            cursor: "col-resize",
+            background: "#22242a",
+            userSelect: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          title="拖拽调整轨道栏宽度"
+          onPointerDown={(e) => {
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            headWDrag.current = { startX: e.clientX, startW: headW };
+          }}
+          onPointerMove={(e) => {
+            const d = headWDrag.current;
+            if (!d) return;
+            const next = d.startW + (e.clientX - d.startX);
+            setHeadW(Math.max(88, Math.min(360, next)));
+          }}
+          onPointerUp={(e) => {
+            (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+            headWDrag.current = null;
+          }}
+          onDoubleClick={() => setHeadW(132)}
+        >
+          <div
+            style={{
+              width: 2,
+              height: 28,
+              borderRadius: 2,
+              background: headWDrag.current ? "#ffd75e" : "#3a3d46",
+              transition: "background 0.15s",
+            }}
+          />
+        </div>
         {/* 时间轴视口:静态层 + 动态层(播放头)分别做 stacking context,各占独立层 */}
         <div
           ref={wrapRef}
@@ -994,7 +1083,7 @@ function TimelineInner({
 
       {/* 底部刻度尺(固定在轨道列表下边缘)+ 横向滚动条 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: 132, flexShrink: 0, background: "#1a1b1f", borderTop: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "#1a1b1f", borderTop: "1px solid #2a2c33" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}

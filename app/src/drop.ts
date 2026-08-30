@@ -21,3 +21,11 @@ export function resolveDropTarget<T>(
 ): T | null {
   return dropYValid ? dropEventTarget : cachedTarget;
 }
+
+/// 轨道重排:插入索引 -> 后端 remove+insert 的目标索引。
+/// insert 为"插到第 i 个轨道之前"(0..n);源自身位置(或紧邻其后)是原地不动。
+/// 源被 remove 后,其后的索引整体前移一位,故 insert > from 时目标减一。
+export function insertToMoveIdx(from: number, insert: number): number | null {
+  if (insert === from || insert === from + 1) return null;
+  return insert > from ? insert - 1 : insert;
+}
