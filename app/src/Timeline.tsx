@@ -82,6 +82,10 @@ function TimelineInner({
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
+  /// 重排 drop 是否已执行(dragend 兜底:drop 不触发时用缓存插入位补执行)。
+  const reorderDropped = useRef(false);
+  /// 插入位 ref 镜像:dragend 闭包读最新 dragover 位置(state 闭包可能是旧值)。
+  const reorderInsertRef = useRef<number | null>(null);
   /// 重排占位:插入索引(0..n,即"插到第 i 个轨道之前"),null=未拖拽。
   const [reorderInsert, setReorderInsert] = useState<number | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
@@ -154,6 +158,7 @@ function TimelineInner({
     // 真实滚动位置(缩放后 scrollLeft 会被浏览器 clamp,state 可能失同步,
     // 此处读真实值避免视口裁剪把所有块跳过)
     const sx = wrap.scrollLeft;
+    scrollTopRef.current = wrap.scrollTop;
     const w = contentW;
     const h = geo.totalH;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -818,7 +823,30 @@ function TimelineInner({
       </div>
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         {/* 轨道头 */}
-        <div style={{ width: headW, flexShrink: 0, overflow: "hidden", display: "flex" }}>
+        <div
+          style={{ width: headW, flexShrink: 0, overflow: "hidden", display: "flex" }}
+          onDragOver={(e) => {
+            if (reorderFrom.current === null) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            // 整列计算插入位(含行间分隔线):y 相对列 + 纵向滚动偏移
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const yIn = e.clientY - rect.top + scrollTopRef.current;
+            let idx = Math.floor(yIn / trackH);
+            idx = Math.max(0, Math.min(doc.tracks.length, idx + (yIn - Math.floor(yIn / trackH) * trackH > trackH / 2 ? 1 : 0)));
+            const from = reorderFrom.current;
+            const nextInsert = from !== null && insertToMoveIdx(from, idx) === null ? null : idx;
+            reorderInsertRef.current = nextInsert;
+            setReorderInsert(nextInsert);
+          }}
+          onDragLeave={(e) => {
+            // 子元素间移动会冒泡 dragleave,仅真正离开列才清占位
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              reorderInsertRef.current = null;
+              setReorderInsert(null);
+            }
+          }}
+        >
           <div ref={headInnerRef} style={{ flex: 1, minWidth: 0 }}>
           {doc.tracks.map((track, ti) => (
             <div
@@ -834,28 +862,18 @@ function TimelineInner({
                 position: "relative",
                 opacity: reorderHint === ti ? 0.45 : 1,
               }}
-              onDragOver={(e) => {
-                if (reorderFrom.current === null) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                // 计算插入索引:行上半 -> 插到该行前,下半 -> 插到该行后
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                const after = e.clientY - rect.top > rect.height / 2;
-                let idx = ti + (after ? 1 : 0);
-                const from = reorderFrom.current;
-                // 拖动源自身位置不显示占位(无操作)
-                setReorderInsert(from !== null && insertToMoveIdx(from, idx) === null ? null : idx);
-              }}
               onDrop={(e) => {
                 const from = reorderFrom.current;
                 if (from === null) return;
                 e.preventDefault();
-                const insert = reorderInsert;
+                const insert = reorderInsertRef.current;
                 if (insert !== null) {
                   const toIdx = insertToMoveIdx(from, insert);
                   if (toIdx !== null) onReorderTrack?.(from, toIdx);
                 }
+                reorderDropped.current = true;
                 reorderFrom.current = null;
+                reorderInsertRef.current = null;
                 setReorderInsert(null);
                 setReorderHint(null);
               }}
@@ -897,9 +915,25 @@ function TimelineInner({
                   ev.dataTransfer.setData("application/x-veditor-track", String(ti));
                   ev.dataTransfer.effectAllowed = "move";
                   reorderFrom.current = ti;
+                  reorderDropped.current = false;
                   setReorderHint(ti);
                 }}
-                onDragEnd={() => { reorderFrom.current = null; setReorderInsert(null); setReorderHint(null); }}
+                onDragEnd={() => {
+                  // drop 未触发(WebKitGTK 常见)时用 dragover 缓存的插入位兜底执行
+                  const from = reorderFrom.current;
+                  if (from !== null && !reorderDropped.current) {
+                    const insert = reorderInsertRef.current;
+                    if (insert !== null) {
+                      const toIdx = insertToMoveIdx(from, insert);
+                      if (toIdx !== null) onReorderTrack?.(from, toIdx);
+                    }
+                  }
+                  reorderFrom.current = null;
+                  reorderDropped.current = false;
+                  reorderInsertRef.current = null;
+                  setReorderInsert(null);
+                  setReorderHint(null);
+                }}
                 style={{
                   cursor: "grab",
                   alignSelf: "center",
@@ -1027,6 +1061,7 @@ function TimelineInner({
           onScroll={(e) => {
             const el = e.target as HTMLDivElement;
             setScrollX(el.scrollLeft);
+            scrollTopRef.current = el.scrollTop;
             if (headInnerRef.current) {
               headInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`;
             }
