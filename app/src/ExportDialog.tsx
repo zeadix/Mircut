@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
@@ -11,31 +11,65 @@ interface Props {
   onStatus: (msg: string) => void;
 }
 
+/// 队列任务:一次导出(可选带一键发布动作)。
+interface QueueTask {
+  id: number;
+  name: string;
+  req: api.ExportRequest;
+  status: "pending" | "running" | "done" | "failed" | "cancelled";
+  pct: number;
+  publish?: "bilibili" | "douyin";
+}
+
+const STATUS_LABEL: Record<QueueTask["status"], string> = {
+  pending: "等待",
+  running: "导出中",
+  done: "完成",
+  failed: "失败",
+  cancelled: "已取消",
+};
+const STATUS_COLOR: Record<QueueTask["status"], string> = {
+  pending: "#8b93a1",
+  running: "#4ec9ff",
+  done: "#7ed957",
+  failed: "#ff5f5f",
+  cancelled: "#8b93a1",
+};
+
 /**
- * 导出操作窗口(模态):平台预设/路径/命令预览/进度与取消,
- * 全部导出配置集中于此;替代原底部导出栏。
+ * 导出操作窗口(模态):平台预设/编码器/路径/命令预览 + 导出队列
+ * (顺序执行/暂停/单任务取消/按预设批量入队),一键发布经队列导出后跳上传页。
  */
 function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
-  const [exportPct, setExportPct] = useState<number | null>(null);
   const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
   const [presetIdx, setPresetIdx] = useState(0);
-  const [busy, setBusy] = useState(false);
   const [loudness, setLoudness] = useState(false);
   /// 视频编码器(默认软编 libx264;探测到硬编后可选)。
   const [vcodec, setVcodec] = useState("libx264");
   const [hwEncoders, setHwEncoders] = useState<string[]>([]);
+  /// 导出队列。
+  const [queue, setQueue] = useState<QueueTask[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const activeIdRef = useRef<number | null>(null);
+  activeIdRef.current = activeId;
+  const runningRef = useRef(false);
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
   }, []);
 
-  // 导出进度事件
+  // 导出进度事件 -> 活动任务进度
   useEffect(() => {
     const un = listen<{ percent: number; done?: boolean }>("export-progress", (e) => {
-      setExportPct(e.payload.percent);
-      if (e.payload.done) setTimeout(() => setExportPct(null), 800);
+      if (e.payload.done) return;
+      const id = activeIdRef.current;
+      if (id === null) return;
+      setQueue((q) =>
+        q.map((t) => (t.id === id && t.status === "running" ? { ...t, pct: e.payload.percent } : t))
+      );
     });
     return () => {
       un.then((f) => f());
@@ -43,6 +77,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   }, []);
 
   const preset = presets[presetIdx];
+  const busy = activeId !== null;
 
   const req: api.ExportRequest = useMemo(
     () => ({
@@ -57,6 +92,91 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     [exportPath, preset, fps, loudness, vcodec]
   );
 
+  // 队列顺序执行器:无活动且未暂停时取队首 pending
+  useEffect(() => {
+    if (paused || runningRef.current) return;
+    const next = queue.find((t) => t.status === "pending");
+    if (!next) return;
+    runningRef.current = true;
+    setActiveId(next.id);
+    (async () => {
+      setQueue((q) =>
+        q.map((t) => (t.id === next.id ? { ...t, status: "running", pct: 0 } : t))
+      );
+      try {
+        const out = await api.exportVideo(next.req);
+        onStatus(`导出完成: ${out}`);
+        setQueue((q) =>
+          q.map((t) => (t.id === next.id ? { ...t, status: "done" } : t))
+        );
+        if (next.publish) {
+          const url =
+            next.publish === "bilibili"
+              ? "https://member.bilibili.com/platform/upload/video/frame"
+              : "https://creator.douyin.com/creator-micro/content/upload";
+          await api.openBrowser(url);
+          onStatus(`已导出并打开 ${next.publish === "bilibili" ? "B站" : "抖音"} 上传页,请手动上传`);
+        }
+      } catch (e) {
+        const cancelled = String(e).includes("取消");
+        setQueue((q) =>
+          q.map((t) =>
+            t.id === next.id ? { ...t, status: cancelled ? "cancelled" : "failed" } : t
+          )
+        );
+        onStatus(`导出失败: ${e}`);
+      } finally {
+        runningRef.current = false;
+        setActiveId(null);
+      }
+    })();
+  }, [queue, paused, onStatus]);
+
+  function checkTimeline(): boolean {
+    if (doc.clips.length === 0) {
+      onStatus("时间轴为空:请先添加素材");
+      return false;
+    }
+    const hasAudio = doc.clips.some((c) => {
+      const a = doc.assets.find((x) => x.id === c.asset.asset_id);
+      return a?.has_audio && !c.muted;
+    });
+    if (!hasAudio) onStatus("提示:未检测到有效音频,将导出纯视频");
+    return true;
+  }
+
+  function enqueue(r: api.ExportRequest, name: string, publish?: "bilibili" | "douyin") {
+    setQueue((q) => [
+      ...q,
+      { id: Date.now() + Math.random(), name, req: r, status: "pending", pct: 0, publish },
+    ]);
+  }
+
+  function onEnqueue() {
+    if (!checkTimeline()) return;
+    const file = exportPath.split("/").pop() ?? exportPath;
+    enqueue(req, `${file} · ${preset?.name ?? "自定义"}`);
+  }
+
+  /// 批量入队:每个平台预设一个任务(路径后缀区分)。
+  function onEnqueueAllPresets() {
+    if (!checkTimeline()) return;
+    const base = exportPath.replace(/\.mp4$/i, "");
+    for (const p of presets) {
+      enqueue(
+        { ...req, width: p.width, height: p.height, fps: p.fps, crf: p.crf, outPath: `${base}_${p.name}.mp4` },
+        `${p.name}.mp4 · ${p.width}x${p.height}`
+      );
+    }
+    onStatus(`已按 ${presets.length} 个预设批量入队`);
+  }
+
+  function onPublish(platform: "bilibili" | "douyin") {
+    if (!checkTimeline()) return;
+    const file = exportPath.split("/").pop() ?? exportPath;
+    enqueue(req, `${file} · ${platform === "bilibili" ? "B站" : "抖音"}发布`, platform);
+  }
+
   async function onPickSavePath() {
     const picked = await saveDialog({
       defaultPath: exportPath,
@@ -70,60 +190,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     setExportCmd(cmd);
   }
 
-  async function onExport() {
-    if (doc.clips.length === 0) {
-      onStatus("时间轴为空:请先添加素材");
-      return;
-    }
-    const hasAudio = doc.clips.some((c) => {
-      const a = doc.assets.find((x) => x.id === c.asset.asset_id);
-      return a?.has_audio && !c.muted;
-    });
-    if (!hasAudio) onStatus("提示:未检测到有效音频,将导出纯视频");
-    setBusy(true);
-    setExportPct(0);
-    try {
-      const out = await api.exportVideo(req);
-      onStatus(`导出完成: ${out}`);
-    } catch (e) {
-      onStatus(`导出失败: ${e}`);
-      setExportPct(null);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onCancelExport() {
+  async function onCancelRunning() {
     await api.cancelExport();
-    onStatus("已取消导出");
-    setExportPct(null);
-    setBusy(false);
+    onStatus("已取消当前导出");
   }
 
-  /// 一键发布(降级):导出到指定路径后打开平台上传页。
-  async function onPublish(platform: string) {
-    if (doc.clips.length === 0) {
-      onStatus("时间轴为空:请先添加素材");
-      return;
-    }
-    setBusy(true);
-    setExportPct(0);
-    try {
-      await api.exportVideo(req);
-      const url =
-        platform === "bilibili"
-          ? "https://member.bilibili.com/platform/upload/video/frame"
-          : "https://creator.douyin.com/creator-micro/content/upload";
-      await api.openBrowser(url);
-      onStatus(`已导出并打开 ${platform === "bilibili" ? "B站" : "抖音"} 上传页,请手动上传`);
-      setExportPct(null);
-    } catch (e) {
-      onStatus(`发布失败: ${e}`);
-      setExportPct(null);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const pendingCount = queue.filter((t) => t.status === "pending").length;
 
   return (
     <div
@@ -146,8 +218,8 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           border: "1px solid #3a3d46",
           borderRadius: 10,
           padding: 18,
-          width: 460,
-          maxHeight: "80vh",
+          width: 480,
+          maxHeight: "84vh",
           overflowY: "auto",
           fontSize: 12,
           color: "#dfe3ea",
@@ -239,7 +311,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 color: "#9aa8b8",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-all",
-                maxHeight: 120,
+                maxHeight: 100,
                 overflowY: "auto",
               }}
               title={exportCmd}
@@ -249,47 +321,109 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           )}
         </div>
 
-        {/* 进度 */}
-        {exportPct !== null && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div
-              style={{
-                flex: 1,
-                height: 8,
-                background: "#24262c",
-                borderRadius: 4,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  width: `${exportPct}%`,
-                  height: "100%",
-                  background: "#3d5a99",
-                  transition: "width 0.2s",
-                }}
-              />
-            </div>
-            <span style={{ color: "#8b93a1", width: 44 }}>{Math.round(exportPct)}%</span>
-            <button className="btn" onClick={onCancelExport}>
-              取消
+        {/* 队列 */}
+        <fieldset style={{ borderColor: "#2a2c33" }}>
+          <legend>导出队列({pendingCount} 等待)</legend>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+            <button className="btn" onClick={onEnqueue} disabled={busy}>
+              加入队列
             </button>
+            <button className="btn" onClick={onEnqueueAllPresets} disabled={busy}>
+              全部预设入队
+            </button>
+            <button className="btn" onClick={() => setPaused((p) => !p)}>
+              {paused ? "▶ 继续" : "⏸ 暂停队列"}
+            </button>
+            {queue.some((t) => t.status === "done" || t.status === "failed" || t.status === "cancelled") && (
+              <button
+                className="btn"
+                onClick={() => setQueue((q) => q.filter((t) => t.status === "pending" || t.status === "running"))}
+                disabled={busy}
+              >
+                清理已完成
+              </button>
+            )}
           </div>
-        )}
+          {queue.length === 0 && (
+            <div style={{ color: "#667" }}>空:配置预设/路径后点"加入队列"</div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {queue.map((t) => (
+              <div
+                key={t.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "#17181c",
+                  border: "1px solid #2a2c33",
+                  borderRadius: 6,
+                  padding: "4px 8px",
+                }}
+              >
+                <span style={{ color: STATUS_COLOR[t.status], flexShrink: 0, width: 44 }}>
+                  {STATUS_LABEL[t.status]}
+                </span>
+                <span
+                  style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={t.req.outPath}
+                >
+                  {t.name}
+                </span>
+                {t.status === "running" && (
+                  <>
+                    <div
+                      style={{
+                        width: 70,
+                        height: 6,
+                        background: "#24262c",
+                        borderRadius: 3,
+                        overflow: "hidden",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${t.pct}%`,
+                          height: "100%",
+                          background: "#3d5a99",
+                          transition: "width 0.2s",
+                        }}
+                      />
+                    </div>
+                    <span style={{ color: "#8b93a1", width: 34, textAlign: "right" }}>
+                      {Math.round(t.pct)}%
+                    </span>
+                    <button className="btn" style={{ padding: "1px 6px" }} onClick={onCancelRunning}>
+                      取消
+                    </button>
+                  </>
+                )}
+                {t.status === "pending" && (
+                  <button
+                    className="btn"
+                    style={{ padding: "1px 6px" }}
+                    title="移除任务"
+                    onClick={() => setQueue((q) => q.filter((x) => x.id !== t.id))}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </fieldset>
 
         {/* 操作行 */}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose} disabled={busy}>
             关闭
           </button>
-          <button className="btn" onClick={() => onPublish("douyin")} disabled={busy}>
+          <button className="btn" onClick={() => onPublish("douyin")}>
             一键发布(抖音)
           </button>
-          <button className="btn" onClick={() => onPublish("bilibili")} disabled={busy}>
+          <button className="btn" onClick={() => onPublish("bilibili")}>
             一键发布(B站)
-          </button>
-          <button className="btn primary" onClick={onExport} disabled={busy}>
-            {busy ? "导出中…" : "开始导出"}
           </button>
         </div>
       </div>
