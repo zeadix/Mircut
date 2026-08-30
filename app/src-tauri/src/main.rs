@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use veditor_ai::Transcriber;
 use veditor_core::{
-    AddClip, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, DetachAudio, Document,
-    FreezeFrame, Interpolation, RemoveClip, RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio,
-    SetFx, SetSpeed, SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind,
-    Transition, TransitionKind,
+    AddClip, AddMarker, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, Compound,
+    DetachAudio, Document, FreezeFrame, Interpolation, Marker, RemoveClip, RemoveMarker,
+    RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed, SetTrackFlags,
+    SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind, Transition, TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
@@ -656,6 +656,53 @@ fn add_clip(
 fn remove_clip(clip_id: String, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
     inner.exec(Box::new(RemoveClip::new(clip_id)));
+    true
+}
+
+/// 批量删除(组合命令,一次撤销整体回退)。
+#[tauri::command]
+fn remove_clips(clip_ids: Vec<String>, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let cmds: Vec<Box<dyn Command>> = clip_ids
+        .iter()
+        .map(|id| Box::new(RemoveClip::new(id.clone())) as Box<dyn Command>)
+        .collect();
+    inner.exec(Box::new(Compound::new("批量删除片段", cmds)));
+    true
+}
+
+/// 批量设置音量/静音(组合命令)。
+#[tauri::command]
+fn set_clips_audio(
+    clip_ids: Vec<String>,
+    volume: Option<f64>,
+    muted: Option<bool>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    let cmds: Vec<Box<dyn Command>> = clip_ids
+        .iter()
+        .map(|id| Box::new(SetClipAudio::new(id.clone(), volume, muted)) as Box<dyn Command>)
+        .collect();
+    inner.exec(Box::new(Compound::new("批量片段音频", cmds)));
+    true
+}
+
+/// 添加时间轴标记。
+#[tauri::command]
+fn add_marker(t: Ticks, label: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(AddMarker {
+        marker: Marker { t, label },
+    }));
+    true
+}
+
+/// 移除时间轴标记(精确刻度)。
+#[tauri::command]
+fn remove_marker(t: Ticks, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(RemoveMarker::new(t)));
     true
 }
 
@@ -2361,6 +2408,10 @@ fn main() {
             make_proxy,
             add_clip,
             remove_clip,
+            remove_clips,
+            set_clips_audio,
+            add_marker,
+            remove_marker,
             split_clip,
             auto_split_scenes,
             move_clip,

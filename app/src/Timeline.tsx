@@ -2,14 +2,22 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
+import { valueAt } from "./anim";
 import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash, X } from "@phosphor-icons/react";
 
 interface Props {
   doc: Document;
   playheadTicks: number;
   onSeek: (ticks: number) => void;
-  onClipClick: (clipId: string) => void;
-  selectedClipId: string | null;
+  /// plain=单选;additive(Shift/Ctrl)=切换增减。
+  onClipClick: (clipId: string, additive: boolean) => void;
+  /// 框选批量设置选中集合。
+  onSelectMany?: (clipIds: string[]) => void;
+  /// 片段右键菜单动作(split/duplicate/remove/...;clipId 为空 = 画布级动作如 toggle-marker)。
+  onClipAction?: (action: string, clipId: string) => void;
+  /// 音量包络拖拽提交(片段本地 ticks + 0~1.5 增益)。
+  onSetVolumeKeyframe?: (clipId: string, tLocal: number, value: number) => void;
+  selectedClipIds: string[];
   onClipMove?: (clipId: string, newStart: number, trackId: string, laneHint?: "Video" | "Audio") => void;
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
@@ -30,11 +38,26 @@ const EDGE_HIT_PX = 10;
 const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 /// 文字叠层 lane 高度(有文字块时画布底部追加)。
 const TEXT_LANE_H = 26;
+/// 音量包络显示上限(增益 >1.5 钳到顶部)。
+const ENV_MAX = 1.5;
 
 type DragSession =
   | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean }
   | { kind: "trimL"; clipId: string; origStart: number; origDuration: number }
-  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number };
+  | { kind: "trimR"; clipId: string; origStart: number; origDuration: number }
+  /// 空白处左键拖拽:框选。
+  | { kind: "marquee" }
+  /// 音频块音量包络拖拽。
+  | { kind: "envelope"; clipId: string };
+
+/// 包络值(0~ENV_MAX) -> 行内 y 像素。
+function envY(v: number, laneTop: number, h: number): number {
+  return laneTop + h - 3 - (Math.min(v, ENV_MAX) / ENV_MAX) * (h - 8);
+}
+/// 行内 y 像素 -> 包络值。
+function envValFromY(yIn: number, laneTop: number, h: number): number {
+  return Math.max(0, Math.min(ENV_MAX, ((laneTop + h - 3 - yIn) / (h - 8)) * ENV_MAX));
+}
 
 /// 稳定渐变(模块级缓存,避免每片段每帧新建)。
 const GRAD_VIDEO: [string, string] = ["#3f9d5a", "#2c7040"];
@@ -53,7 +76,10 @@ function TimelineInner({
   playheadTicks,
   onSeek,
   onClipClick,
-  selectedClipId,
+  onSelectMany,
+  onClipAction,
+  onSetVolumeKeyframe,
+  selectedClipIds,
   onClipMove,
   onClipTrim,
   onToggleTrack,
@@ -106,8 +132,16 @@ function TimelineInner({
   const [dropMenu, setDropMenu] = useState<{ x: number; y: number; clipId: string; start: number; trackId: string } | null>(null);
   const [renamingTrack, setRenamingTrack] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  /// 框选矩形(client 坐标)。
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  /// 音量包络拖拽实时值(片段本地 ticks + 增益)。
+  const [envLive, setEnvLive] = useState<{ clipId: string; tLocal: number; v: number } | null>(null);
+  /// 片段/画布右键菜单(clipId null = 画布级)。
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; clipId: string | null } | null>(null);
 
   const tps = doc.timebase.num / doc.timebase.den;
+  /// 选中集合(绘制/命中判断用)。
+  const selectedSet = useMemo(() => new Set(selectedClipIds), [selectedClipIds]);
 
   /// 行几何(绘制与命中共用)。
   const geo = useMemo(() => {
@@ -250,12 +284,42 @@ function TimelineInner({
         ctx.fillStyle = "#ffd75e";
         ctx.fillRect(x, laneTop, Math.max(cw, 2), 3);
       }
+      // 音量包络(音频块):音量关键帧折线 + 关键帧点 + 拖拽实时点
+      if (isAudioBlock && h >= 18 && cw > 8) {
+        const kfs = clip.fx?.volume?.keyframes ?? [];
+        const vAt = (tl: number) => valueAt(kfs, tl) ?? clip.volume;
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.beginPath();
+        const ex0 = Math.max(x, vx0);
+        const ex1 = Math.min(x + cw, vx1);
+        for (let px = ex0; px <= ex1; px += 4) {
+          const py = envY(vAt(px / pxPerTick - clip.start), laneTop, h);
+          if (px === ex0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.fillStyle = "#ffd75e";
+        for (const k of kfs) {
+          const kx = (clip.start + k.t) * pxPerTick;
+          if (kx < vx0 - 4 || kx > vx1 + 4) continue;
+          ctx.beginPath();
+          ctx.arc(kx, envY(k.value, laneTop, h), 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (envLive?.clipId === clip.id) {
+          const lx = (clip.start + envLive.tLocal) * pxPerTick;
+          ctx.fillStyle = "#ff9f43";
+          ctx.beginPath();
+          ctx.arc(lx, envY(envLive.v, laneTop, h), 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       // 头尾 2px 颜色条带(所有块,指示 10px 修剪触发区)
-      const edgeCol = clip.id === selectedClipId ? "#ffd75e" : "rgba(255,255,255,0.28)";
+      const edgeCol = selectedSet.has(clip.id) ? "#ffd75e" : "rgba(255,255,255,0.28)";
       ctx.fillStyle = edgeCol;
       ctx.fillRect(x, laneTop, 2, h);
       ctx.fillRect(x + Math.max(cw, 2) - 2, laneTop, 2, h);
-      if (clip.id === selectedClipId) {
+      if (selectedSet.has(clip.id)) {
         ctx.strokeStyle = "#ffd75e";
         ctx.lineWidth = 1;
         ctx.strokeRect(x, laneTop, Math.max(cw, 2), h);
@@ -273,6 +337,25 @@ function TimelineInner({
         ctx.fillText(name.slice(0, 18), x + 4, laneTop + h - 3, Math.max(cw - 8, 2));
       }
     });
+
+    // 时间轴标记(顶部菱形,单击定位)——画在轨道区最上层边缘
+    for (const m of doc.markers ?? []) {
+      const mx = m.t * pxPerTick;
+      if (mx < vx0 - 8 || mx > vx1 + 8) continue;
+      ctx.fillStyle = "#4ec9ff";
+      ctx.beginPath();
+      ctx.moveTo(mx, 1);
+      ctx.lineTo(mx + 5, 6.5);
+      ctx.lineTo(mx, 12);
+      ctx.lineTo(mx - 5, 6.5);
+      ctx.closePath();
+      ctx.fill();
+      if (m.label) {
+        ctx.fillStyle = "#8fd0ff";
+        ctx.font = "9px sans-serif";
+        ctx.fillText(m.label.slice(0, 12), mx + 7, 9);
+      }
+    }
 
     // 转场带:窗口 [左片段出点-时长, 出点](与导出 xfade 窗口一致),
     // 画在左片段行,紫色沙漏形。
@@ -390,7 +473,7 @@ function TimelineInner({
         ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
       }
     }
-  }, [doc, selectedClipId, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -535,20 +618,47 @@ function TimelineInner({
     const target = (e.currentTarget as HTMLElement) ?? (e.target as HTMLElement);
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
-    // 文字块 lane:点击跳转到该文字块起点
     const yIn = e.clientY - canvasRef.current!.getBoundingClientRect().top;
+    // 标记菱形(顶部 12px):单击定位到标记
+    if (yIn <= 12) {
+      const near = (doc.markers ?? []).find(
+        (m) => Math.abs(m.t * pxPerTick - t * pxPerTick) <= 6
+      );
+      if (near) {
+        onSeek(near.t);
+        return;
+      }
+    }
+    // 文字块 lane:点击跳转到该文字块起点
     if (canvasH > geo.totalH && yIn >= geo.totalH) {
       const block = (doc.text_overlays ?? []).find((o) => t >= o.start && t < o.end);
       if (block) onSeek(block.start);
       return;
     }
     const hit = hitTest(t, e.clientX, e.clientY);
-    // 时间帧操作全部在上下刻度尺上(画布内不再拖拽/切换播放头)
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     if (hit) {
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
       if (track?.locked) return;
-      onClipClick(hit.clipId);
+      // 音频块音量包络:靠近音量线时进入包络拖拽(优先于移动)
+      const isAudioBlock = clip.lane === "Audio" || track?.kind === "Audio";
+      const row = clipRow(clip);
+      if (isAudioBlock && row && hit.edge === "body") {
+        const vAt = valueAt(clip.fx?.volume?.keyframes ?? [], t - clip.start) ?? clip.volume;
+        if (Math.abs(yIn - envY(vAt, row.laneTop, row.h)) <= 6) {
+          onClipClick(clip.id, false);
+          dragRef.current = { kind: "envelope", clipId: clip.id };
+          setEnvLive({ clipId: clip.id, tLocal: Math.max(0, t - clip.start), v: vAt });
+          return;
+        }
+      }
+      // 增选(Shift/Ctrl):切换选中,不进入拖拽
+      if (additive) {
+        onClipClick(clip.id, true);
+        return;
+      }
+      onClipClick(clip.id, false);
       if (hit.edge === "left" || hit.edge === "right") {
         dragRef.current = { kind: hit.edge === "left" ? "trimL" : "trimR", clipId: hit.clipId, origStart: clip.start, origDuration: clip.duration };
       } else {
@@ -566,7 +676,9 @@ function TimelineInner({
         moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
       }
     } else {
-      // 空白处不切换播放头(时间帧只在刻度尺上操作)
+      // 空白处:左键拖拽 = 框选;单击空白 = 清空选择
+      setMarquee({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
+      dragRef.current = { kind: "marquee" };
       setGhost(null);
       setTrimHint(null);
     }
@@ -574,6 +686,25 @@ function TimelineInner({
 
   function onPointerMove(e: React.PointerEvent) {
     const d = dragRef.current;
+    if (d?.kind === "marquee") {
+      setMarquee((m) => (m ? { ...m, x1: e.clientX, y1: e.clientY } : m));
+      return;
+    }
+    if (d?.kind === "envelope") {
+      const clip = doc.clips.find((c) => c.id === d.clipId);
+      const row = clip ? clipRow(clip) : null;
+      const rect0 = canvasRef.current?.getBoundingClientRect();
+      if (clip && row && rect0) {
+        const y = e.clientY - rect0.top;
+        const t = ticksFromClientX(e.clientX);
+        setEnvLive({
+          clipId: d.clipId,
+          tLocal: Math.max(0, Math.min(clip.duration, t - clip.start)),
+          v: envValFromY(y, row.laneTop, row.h),
+        });
+      }
+      return;
+    }
     if (!d) {
       const t = ticksFromClientX(e.clientX);
       const hit = hitTest(t, e.clientX, e.clientY);
@@ -669,6 +800,43 @@ function TimelineInner({
     const hint = trimHint;
     setTrimHint(null);
     if (!d) return;
+    if (d.kind === "marquee") {
+      const m = marquee;
+      setMarquee(null);
+      if (!m) return;
+      const w = Math.abs(m.x1 - m.x0);
+      const h = Math.abs(m.y1 - m.y0);
+      if (w < 5 && h < 5) {
+        // 单击空白:清空选择
+        onSelectMany?.([]);
+        return;
+      }
+      const rect0 = canvasRef.current!.getBoundingClientRect();
+      const cx0 = Math.min(m.x0, m.x1) - rect0.left;
+      const cx1 = Math.max(m.x0, m.x1) - rect0.left;
+      const cy0 = Math.min(m.y0, m.y1) - rect0.top;
+      const cy1 = Math.max(m.y0, m.y1) - rect0.top;
+      const ids: string[] = [];
+      for (const c of doc.clips) {
+        const row = clipRow(c);
+        if (!row) continue;
+        const x0 = c.start * pxPerTick;
+        const x1 = (c.start + c.duration) * pxPerTick;
+        if (x0 < cx1 && x1 > cx0 && row.laneTop < cy1 && row.laneTop + row.h > cy0) {
+          ids.push(c.id);
+        }
+      }
+      onSelectMany?.(ids);
+      return;
+    }
+    if (d.kind === "envelope") {
+      const env = envLive;
+      setEnvLive(null);
+      if (env && env.clipId === d.clipId && onSetVolumeKeyframe) {
+        onSetVolumeKeyframe(d.clipId, Math.round(env.tLocal), Math.round(env.v * 100) / 100);
+      }
+      return;
+    }
     if (d.kind === "move") {
       const target = moveTargetRef.current;
       moveTargetRef.current = null;
@@ -1154,6 +1322,17 @@ function TimelineInner({
                 if (!dragRef.current) setHoverEdge(null);
                 e.preventDefault();
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const t = ticksFromClientX(e.clientX);
+                const hit = hitTest(t, e.clientX, e.clientY);
+                if (hit) {
+                  if (!selectedSet.has(hit.clipId)) onClipClick(hit.clipId, false);
+                  setCtxMenu({ x: e.clientX, y: e.clientY, clipId: hit.clipId });
+                } else {
+                  setCtxMenu({ x: e.clientX, y: e.clientY, clipId: null });
+                }
+              }}
               onDoubleClick={(e) => {
                 const t = ticksFromClientX(e.clientX);
                 const hit = hitTest(t, e.clientX, e.clientY);
@@ -1206,6 +1385,101 @@ function TimelineInner({
           />
         </div>
       </div>
+
+      {/* 框选矩形 */}
+      {marquee && (
+        <div
+          style={{
+            position: "fixed",
+            left: Math.min(marquee.x0, marquee.x1),
+            top: Math.min(marquee.y0, marquee.y1),
+            width: Math.abs(marquee.x1 - marquee.x0),
+            height: Math.abs(marquee.y1 - marquee.y0),
+            background: "rgba(126, 168, 255, 0.14)",
+            border: "1px solid #7ea8ff",
+            pointerEvents: "none",
+            zIndex: 800,
+          }}
+        />
+      )}
+
+      {/* 右键上下文菜单(片段/画布) */}
+      {ctxMenu && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 950 }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setCtxMenu(null);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setCtxMenu(null);
+          }}
+        >
+          {(() => {
+            const c = ctxMenu.clipId ? doc.clips.find((x) => x.id === ctxMenu.clipId) : null;
+            const right = c
+              ? doc.clips
+                  .filter((x) => x.track_id === c.track_id && x.start >= c.start + c.duration)
+                  .sort((a, b) => a.start - b.start)[0]
+              : null;
+            const hasTrans = c ? (doc.transitions ?? []).some((t) => t.left_clip_id === c.id) : false;
+            const inClip = c ? playheadTicks > c.start && playheadTicks < c.start + c.duration : false;
+            const items: { label: string; fn: () => void; disabled?: boolean }[] = c
+              ? [
+                  { label: "在播放头分割", fn: () => onClipAction?.("split", c.id), disabled: !inClip },
+                  { label: "复制片段(播放头处)", fn: () => onClipAction?.("duplicate", c.id) },
+                  { label: "删除", fn: () => onClipAction?.("remove", c.id) },
+                  { label: "波纹删除", fn: () => onClipAction?.("ripple-remove", c.id) },
+                  { label: "分离音频", fn: () => onClipAction?.("detach-audio", c.id) },
+                  { label: "定格帧(1s)", fn: () => onClipAction?.("freeze", c.id) },
+                  { label: c.muted ? "取消静音" : "静音", fn: () => onClipAction?.("toggle-mute", c.id) },
+                  hasTrans
+                    ? { label: "移除转场", fn: () => onClipAction?.("remove-transition", c.id) }
+                    : { label: "创建转场(淡入淡出 0.5s)", fn: () => onClipAction?.("add-transition", c.id), disabled: !right },
+                ]
+              : [
+                  { label: "在播放头添加/移除标记 (M)", fn: () => onClipAction?.("toggle-marker", "") },
+                ];
+            return (
+              <div
+                style={{
+                  position: "fixed",
+                  left: ctxMenu.x,
+                  top: ctxMenu.y,
+                  background: "#1e2026",
+                  border: "1px solid #3a3d46",
+                  borderRadius: 8,
+                  padding: 6,
+                  minWidth: 180,
+                  fontSize: 12,
+                  color: "#dfe3ea",
+                  boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
+                }}
+              >
+                {items.map((it) => (
+                  <button
+                    key={it.label}
+                    className="btn"
+                    style={{
+                      width: "100%",
+                      justifyContent: "flex-start",
+                      marginBottom: 3,
+                      opacity: it.disabled ? 0.45 : 1,
+                    }}
+                    disabled={it.disabled}
+                    onClick={() => {
+                      it.fn();
+                      setCtxMenu(null);
+                    }}
+                  >
+                    {it.label}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* 右键拖拽释放菜单 */}
       {dropMenu && (

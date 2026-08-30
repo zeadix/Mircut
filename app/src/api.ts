@@ -34,6 +34,28 @@ export async function removeClip(clipId: string): Promise<boolean> {
   return invoke("remove_clip", { clipId });
 }
 
+/// 批量删除(组合命令,一次撤销)。
+export async function removeClips(clipIds: string[]): Promise<boolean> {
+  return invoke("remove_clips", { clipIds });
+}
+
+/// 批量设置音量/静音(组合命令)。
+export async function setClipsAudio(
+  clipIds: string[],
+  volume: number | null,
+  muted: boolean | null
+): Promise<boolean> {
+  return invoke("set_clips_audio", { clipIds, volume, muted });
+}
+
+export async function addMarker(t: number, label: string): Promise<boolean> {
+  return invoke("add_marker", { t, label });
+}
+
+export async function removeMarker(t: number): Promise<boolean> {
+  return invoke("remove_marker", { t });
+}
+
 export async function splitClip(clipId: string, pos: number): Promise<boolean> {
   return invoke("split_clip", { clipId, pos });
 }

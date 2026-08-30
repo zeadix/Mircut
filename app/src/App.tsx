@@ -27,15 +27,30 @@ import {
   Waves,
 } from "@phosphor-icons/react";
 
-export default function App() {
-  const [doc, setDoc] = useState<Document | null>(null);
+/// 时间码显示:mm:ss.ff。
+function fmtTimecode(secs: number): string {
+  if (!Number.isFinite(secs) || secs < 0) secs = 0;
+  const m = Math.floor(secs / 60);
+  const s = secs - m * 60;
+  return `${String(m).padStart(2, "0")}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
+}
+
+/// 时间码解析:支持 "12.5" / "1:05" / "1:02.5"(逐段 60 进制)。
+function parseTimecode(s: string): number {
+  const parts = s.trim().split(":").map((p) => parseFloat(p));
+  if (parts.length === 0 || parts.some((p) => !Number.isFinite(p))) return NaN;
+  return parts.reduce((acc, p) => acc * 60 + p, 0);
+}
+
+export default function App() {  const [doc, setDoc] = useState<Document | null>(null);
   const [playhead, setPlayhead] = useState(0);
   /// 播放头真值(rAF 直写,避免每帧 React 重渲染)。
   const playheadRef = useRef(0);
   useEffect(() => {
     playheadRef.current = playhead;
   }, [playhead]);
-  const [selected, setSelected] = useState<string | null>(null);
+  /// 多选:时间轴选中片段 id 列表(点击单选,Shift/Ctrl 增减,空白拖拽框选)。
+  const [selected, setSelected] = useState<string[]>([]);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
   const [status, setStatus] = useState("");
@@ -45,6 +60,8 @@ export default function App() {
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(1);
+  /// 时间码草稿(非 null = 正在编辑,否则显示当前时间)。
+  const [tcDraft, setTcDraft] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
@@ -247,15 +264,37 @@ export default function App() {
   }
 
   async function onSplit() {
-    if (!selected) return;
-    await api.splitClip(selected, playhead);
+    if (selected.length !== 1) return;
+    await api.splitClip(selected[0], playhead);
     await refresh();
   }
 
+  /// 删除:多选走组合命令(一次撤销),单选走原命令。
   async function onRemove() {
-    if (!selected) return;
-    await api.removeClip(selected);
-    setSelected(null);
+    if (selected.length === 0) return;
+    if (selected.length === 1) await api.removeClip(selected[0]);
+    else await api.removeClips(selected);
+    setSelected([]);
+    await refresh();
+  }
+
+  async function onBatchRemove() {
+    if (selected.length === 0) return;
+    await api.removeClips(selected);
+    setSelected([]);
+    await refresh();
+  }
+
+  async function onBatchAudio(volume: number | null, muted: boolean | null) {
+    if (selected.length === 0) return;
+    await api.setClipsAudio(selected, volume, muted);
+    await refresh();
+  }
+
+  async function onRippleDelete() {
+    if (selected.length !== 1) return;
+    await api.rippleDelete(selected[0]);
+    setSelected([]);
     await refresh();
   }
 
@@ -266,6 +305,82 @@ export default function App() {
 
   async function onRedo() {
     await api.redo();
+    await refresh();
+  }
+
+  /// 片段右键菜单动作(Timeline 上下文菜单转发)。
+  async function onClipAction(action: string, clipId: string) {
+    if (action === "toggle-marker") {
+      await toggleMarkerAtPlayhead();
+      return;
+    }
+    const c = doc?.clips.find((x) => x.id === clipId);
+    if (!c) return;
+    try {
+      switch (action) {
+        case "split":
+          if (playhead > c.start && playhead < c.start + c.duration) {
+            await api.splitClip(clipId, playhead);
+          }
+          break;
+        case "duplicate": {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("duplicate_clip", { clipId, trackId: c.track_id, start: playhead });
+          break;
+        }
+        case "remove":
+          await api.removeClip(clipId);
+          setSelected((s) => s.filter((id) => id !== clipId));
+          break;
+        case "ripple-remove":
+          await api.rippleDelete(clipId);
+          setSelected((s) => s.filter((id) => id !== clipId));
+          break;
+        case "detach-audio":
+          await api.detachAudio(clipId);
+          break;
+        case "freeze": {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("freeze_frame", {
+            clipId,
+            pos: c.start + Math.max(0, playhead - c.start),
+            freezeSecs: 1.0,
+          });
+          break;
+        }
+        case "toggle-mute":
+          await api.setClipAudio(clipId, null, !c.muted);
+          break;
+        case "add-transition": {
+          const right = doc!.clips
+            .filter((x) => x.track_id === c.track_id && x.start >= c.start + c.duration)
+            .sort((a, b) => a.start - b.start)[0];
+          if (right) await api.setTransition(clipId, right.id, "fade", 0.5);
+          break;
+        }
+        case "remove-transition":
+          await api.removeTransition(clipId);
+          break;
+        default:
+          break;
+      }
+    } catch (e) {
+      setStatus(`操作失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
+  /// 播放头处标记开关(±半帧内已有则移除)。
+  async function toggleMarkerAtPlayhead() {
+    if (!doc) return;
+    const t = playheadRef.current;
+    const existing = (doc.markers ?? []).find((m) => Math.abs(m.t - t) <= 2);
+    try {
+      if (existing) await api.removeMarker(existing.t);
+      else await api.addMarker(t, "");
+    } catch (e) {
+      setStatus(`标记操作失败: ${String(e).slice(0, 120)}`);
+    }
     await refresh();
   }
 
@@ -385,6 +500,27 @@ export default function App() {
     await refresh();
   }
 
+  /// 多选点击:plain=单选,additive=切换增减。
+  const onClipClick = useCallback((clipId: string, additive: boolean) => {
+    setSelected((prev) =>
+      additive
+        ? prev.includes(clipId)
+          ? prev.filter((id) => id !== clipId)
+          : [...prev, clipId]
+        : [clipId]
+    );
+  }, []);
+
+  /// 音量包络拖拽提交(Timeline 音频块音量线)。
+  async function onSetVolumeKeyframe(clipId: string, tLocal: number, value: number) {
+    try {
+      await api.setKeyframe(clipId, "volume", tLocal, value, "smooth");
+    } catch (e) {
+      setStatus(`音量关键帧失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   async function onClipTrim(
     clipId: string,
     edge: "left" | "right",
@@ -447,8 +583,8 @@ export default function App() {
   async function onRemoveTrack(trackId: string) {
     try {
       await api.removeTrack(trackId);
-      if (selected && doc?.clips.find((c) => c.id === selected)?.track_id === trackId) {
-        setSelected(null);
+      if (doc?.clips.some((c) => selected.includes(c.id) && c.track_id === trackId)) {
+        setSelected((s) => s.filter((id) => !doc.clips.some((c) => c.id === id && c.track_id === trackId)));
       }
     } catch (e) {
       setStatus(`删除轨道失败: ${String(e).slice(0, 120)}`);
@@ -493,13 +629,6 @@ export default function App() {
     }
     return edges;
   }, [doc]);
-
-  async function onRippleDelete() {
-    if (!selected) return;
-    await api.rippleDelete(selected);
-    setSelected(null);
-    await refresh();
-  }
 
   async function onAddTrack(kind: "video" | "audio") {
     await api.addTrack(kind, kind === "video" ? `V${doc!.tracks.filter(t => t.kind === "Video").length + 1}` : `A${doc!.tracks.filter(t => t.kind === "Audio").length + 1}`);
@@ -606,12 +735,12 @@ export default function App() {
         case "i":
         case "I": {
           // 播放头设为选中片段入点(剪映/PR 习惯)
-          if (selected && doc) {
-            const c = doc.clips.find((x) => x.id === selected);
+          if (selected.length === 1 && doc) {
+            const c = doc.clips.find((x) => x.id === selected[0]);
             if (c && playhead > c.start) {
               const delta = playhead - c.start;
               api
-                .trimClip(selected, "left", playhead, Math.max(1, c.duration - delta), false)
+                .trimClip(selected[0], "left", playhead, Math.max(1, c.duration - delta), false)
                 .then(refresh)
                 .catch(() => setStatus("入点设置失败"));
             }
@@ -620,17 +749,21 @@ export default function App() {
         }
         case "o":
         case "O": {
-          if (selected && doc) {
-            const c = doc.clips.find((x) => x.id === selected);
+          if (selected.length === 1 && doc) {
+            const c = doc.clips.find((x) => x.id === selected[0]);
             if (c && playhead > c.start) {
               api
-                .trimClip(selected, "right", c.start, Math.max(1, playhead - c.start), false)
+                .trimClip(selected[0], "right", c.start, Math.max(1, playhead - c.start), false)
                 .then(refresh)
                 .catch(() => setStatus("出点设置失败"));
             }
           }
           break;
         }
+        case "m":
+        case "M":
+          void toggleMarkerAtPlayhead();
+          break;
         case "ArrowLeft":
           e.preventDefault();
           seekTo(playheadRef.current - (e.shiftKey ? Math.round(fps) : 1));
@@ -844,6 +977,28 @@ export default function App() {
               <option value="proxy">代理引擎</option>
               <option value="realtime">实时引擎(管道)</option>
             </select>
+            {/* 时间码输入跳转(支持 ss.s / mm:ss / hh:mm:ss) */}
+            <input
+              className="ti"
+              style={{ width: 78, fontSize: 11 }}
+              value={tcDraft ?? fmtTimecode(playhead / fps)}
+              onChange={(e) => setTcDraft(e.target.value)}
+              onFocus={() => setTcDraft(fmtTimecode(playhead / fps))}
+              onBlur={() => setTcDraft(null)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const secs = parseTimecode(tcDraft ?? "");
+                  if (Number.isFinite(secs)) {
+                    playheadRef.current = Math.max(0, Math.round(secs * fps));
+                    setPlayhead(playheadRef.current);
+                  }
+                  setTcDraft(null);
+                  (e.target as HTMLInputElement).blur();
+                }
+                if (e.key === "Escape") setTcDraft(null);
+              }}
+              title="时间码跳转:回车确认(格式 12.5 / 1:05 / 1:02.5)"
+            />
           </div>
           <Preview
             playheadTicks={playhead}
@@ -853,7 +1008,7 @@ export default function App() {
             assetPreview={assetPreview}
             onAssetPreviewDone={clearAssetPreview}
             doc={doc}
-            selectedClipId={selected}
+            selectedClipIds={selected}
             onSetRect={onSetRect}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
@@ -868,8 +1023,11 @@ export default function App() {
                 playheadRef.current = t;
                 setPlayhead(t);
               }}
-              onClipClick={setSelected}
-              selectedClipId={selected}
+              onClipClick={onClipClick}
+              onSelectMany={setSelected}
+              onClipAction={onClipAction}
+              onSetVolumeKeyframe={onSetVolumeKeyframe}
+              selectedClipIds={selected}
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}
               onToggleTrack={onToggleTrack}
@@ -914,7 +1072,10 @@ export default function App() {
           {rightTab === "inspector" ? (
             <Inspector
               doc={doc}
-              clip={doc.clips.find((c) => c.id === selected) ?? null}
+              clip={selected.length === 1 ? doc.clips.find((c) => c.id === selected[0]) ?? null : null}
+              selectedCount={selected.length}
+              onBatchRemove={onBatchRemove}
+              onBatchAudio={onBatchAudio}
               onRefresh={refresh}
               playheadTicks={playhead}
             />

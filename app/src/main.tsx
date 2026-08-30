@@ -35,7 +35,11 @@ function isTextInput(target: EventTarget | null): boolean {
 }
 
 window.addEventListener("contextmenu", (e) => {
-  if (!isTextInput(e.target)) e.preventDefault();
+  if (isTextInput(e.target)) return;
+  // 时间轴画布自带上下文菜单,放行给组件处理
+  const el = e.target as HTMLElement | null;
+  if (el?.closest("canvas")) return;
+  e.preventDefault();
 });
 window.addEventListener("dragstart", (e) => {
   // 我们自己的拖放用 dataTransfer 白名单放行:

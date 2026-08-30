@@ -168,6 +168,9 @@ pub struct Document {
     /// 文字叠层(M4 富文本标题)。
     #[serde(default)]
     pub text_overlays: Vec<TextOverlay>,
+    /// 时间轴标记(打点/跳转)。
+    #[serde(default)]
+    pub markers: Vec<Marker>,
 }
 
 impl Default for Document {
@@ -180,6 +183,7 @@ impl Default for Document {
             transitions: Vec::new(),
             subtitles: SubtitleTrack::default(),
             text_overlays: Vec::new(),
+            markers: Vec::new(),
         }
     }
 }
@@ -347,6 +351,94 @@ impl Command for RemoveClip {
     fn undo(&mut self, doc: &mut Document) {
         if let Some(c) = self.removed.take() {
             doc.clips.push(c);
+        }
+    }
+}
+
+/// 组合命令:多个子命令按序 apply、逆序 undo(批量操作一次撤销整体回退)。
+pub struct Compound {
+    label: String,
+    commands: Vec<Box<dyn Command>>,
+}
+
+impl Compound {
+    pub fn new(label: impl Into<String>, commands: Vec<Box<dyn Command>>) -> Self {
+        Self {
+            label: label.into(),
+            commands,
+        }
+    }
+}
+
+impl Command for Compound {
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        for c in &mut self.commands {
+            c.apply(doc);
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        for c in self.commands.iter_mut().rev() {
+            c.undo(doc);
+        }
+    }
+}
+
+/// 时间轴标记(M 键打点,跳转/对齐用)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Marker {
+    /// 时间轴位置(ticks)。
+    pub t: Ticks,
+    /// 标签(空 = 不显示文字)。
+    pub label: String,
+}
+
+/// 具体命令:添加标记(同刻度幂等)。
+pub struct AddMarker {
+    pub marker: Marker,
+}
+
+impl Command for AddMarker {
+    fn label(&self) -> &str {
+        "添加标记"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if !doc.markers.iter().any(|m| m.t == self.marker.t) {
+            doc.markers.push(self.marker.clone());
+            doc.markers.sort_by_key(|m| m.t);
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        doc.markers.retain(|m| m.t != self.marker.t);
+    }
+}
+
+/// 具体命令:移除标记。
+pub struct RemoveMarker {
+    pub t: Ticks,
+    removed: Option<Marker>,
+}
+
+impl RemoveMarker {
+    pub fn new(t: Ticks) -> Self {
+        Self { t, removed: None }
+    }
+}
+
+impl Command for RemoveMarker {
+    fn label(&self) -> &str {
+        "移除标记"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.removed = doc.markers.iter().find(|m| m.t == self.t).cloned();
+        doc.markers.retain(|m| m.t != self.t);
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some(m) = self.removed.take() {
+            doc.markers.push(m);
+            doc.markers.sort_by_key(|m| m.t);
         }
     }
 }
@@ -805,5 +897,63 @@ mod tests {
         let json = serde_json::to_string(&doc).unwrap();
         let back: Document = serde_json::from_str(&json).unwrap();
         assert_eq!(doc, back);
+    }
+
+    #[test]
+    fn compound_batch_remove_and_audio_one_undo() {
+        let mut doc = Document::default();
+        doc.tracks.push(Track {
+            id: "t1".into(),
+            kind: TrackKind::Video,
+            name: "V1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        doc.clips.push(clip("c1", "t1", 0, 30));
+        doc.clips.push(clip("c2", "t1", 30, 30));
+        doc.clips.push(clip("c3", "t1", 60, 30));
+        // 批量删除 c1/c2 + 批量静音 c3:一次 undo 整体回退
+        let cmds: Vec<Box<dyn Command>> = vec![
+            Box::new(RemoveClip::new("c1")),
+            Box::new(RemoveClip::new("c2")),
+            Box::new(SetClipAudio::new("c3", None, Some(true))),
+        ];
+        let mut compound = Compound::new("批量操作", cmds);
+        compound.apply(&mut doc);
+        assert_eq!(doc.clips.len(), 1);
+        assert!(doc.clips[0].muted);
+        compound.undo(&mut doc);
+        assert_eq!(doc.clips.len(), 3);
+        assert!(doc.clips.iter().all(|c| !c.muted));
+        let ids: Vec<&str> = doc.clips.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"c1") && ids.contains(&"c2") && ids.contains(&"c3"));
+    }
+
+    #[test]
+    fn marker_add_remove_and_backward_compatible_load() {
+        let mut doc = Document::default();
+        // 添加 + 同刻度幂等
+        let mut add = AddMarker {
+            marker: Marker {
+                t: 90,
+                label: "高潮".into(),
+            },
+        };
+        add.apply(&mut doc);
+        add.apply(&mut doc);
+        assert_eq!(doc.markers.len(), 1);
+        // 删除 + undo 恢复
+        let mut rm = RemoveMarker::new(90);
+        rm.apply(&mut doc);
+        assert!(doc.markers.is_empty());
+        rm.undo(&mut doc);
+        assert_eq!(doc.markers[0].label, "高潮");
+        // 旧工程 JSON 无 markers 字段也能加载(serde default)
+        doc.markers.clear();
+        let json = serde_json::to_string(&doc).unwrap();
+        let stripped = json.replace(",\"markers\":[]", "");
+        let back: Document = serde_json::from_str(&stripped).unwrap();
+        assert!(back.markers.is_empty());
     }
 }

@@ -133,6 +133,12 @@ export interface SubtitleTrack {
   style: SubtitleStyle;
 }
 
+/// 时间轴标记(M 键打点)。
+export interface Marker {
+  t: number;
+  label: string;
+}
+
 export interface Asset {
   id: string;
   path: string;
@@ -167,6 +173,7 @@ export interface Document {
   transitions?: Transition[];
   subtitles?: SubtitleTrack;
   text_overlays?: TextOverlay[];
+  markers?: Marker[];
 }
 
 export interface Waveform {

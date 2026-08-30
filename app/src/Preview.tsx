@@ -17,7 +17,8 @@ interface Props {
   onAssetPreviewDone?: () => void;
   /// 多层合成(画中画):时间轴文档 + 选中片段(rect 变换框交互)。
   doc: Document | null;
-  selectedClipId: string | null;
+  /// 选中片段(多选;仅唯一选中显示变换框)。
+  selectedClipIds: string[];
   onSetRect?: (clipId: string, rect: FxRect) => Promise<void>;
 }
 
@@ -171,7 +172,7 @@ export default function Preview({
   assetPreview,
   onAssetPreviewDone,
   doc,
-  selectedClipId,
+  selectedClipIds,
   onSetRect,
 }: Props) {
   const [url, setUrl] = useState<string | null>(null);
@@ -272,7 +273,9 @@ export default function Preview({
   }, [doc, playheadTicks, buildLayer]);
 
   /// 播放头所在层(选中层显示变换框)。
-  const selected = layers.find((l) => l.clipId === selectedClipId) ?? null;
+  /// 唯一选中才显示变换框/参与 rect 提交。
+  const selId = selectedClipIds.length === 1 ? selectedClipIds[0] : null;
+  const selected = layers.find((l) => l.clipId === selId) ?? null;
   const activeRect = liveRect ?? selected?.rect ?? null;
 
   // 层帧拉取:每层独立 preview_asset_frame(有缓存,ffmpeg 秒级)。节流复用旧循环思想。
@@ -379,7 +382,7 @@ export default function Preview({
     updateLive(null);
     setGuides(null);
     gripRef.current = null;
-  }, [selectedClipId]);
+  }, [selId]);
 
   /// 归一化 -> stage 像素。
   function stageRectStyle(rect: FxRect): React.CSSProperties {
@@ -410,7 +413,7 @@ export default function Preview({
     const xs = [0, 0.5, 1];
     const ys = [0, 0.5, 1];
     for (const l of layers) {
-      if (l.clipId === selectedClipId) continue;
+      if (selectedClipIds.includes(l.clipId)) continue;
       const r = l.rect;
       xs.push(r.x - r.w / 2, r.x, r.x + r.w / 2);
       ys.push(r.y - r.h / 2, r.y, r.y + r.h / 2);
@@ -641,7 +644,7 @@ export default function Preview({
           onPointerUp={onGripUp}
         >
           {layers.map((l) => {
-            const r = l.clipId === selectedClipId ? (liveRect ?? l.rect) : l.rect;
+            const r = l.clipId === selId ? (liveRect ?? l.rect) : l.rect;
             const img = layerUrls[l.clipId];
             const op = Math.max(0, Math.min(1, l.opacity * l.fade));
             let tf = l.rotate ? `rotate(${l.rotate.toFixed(2)}deg)` : "";

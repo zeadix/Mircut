@@ -6,12 +6,16 @@ import KeyframeEditor from "./KeyframeEditor";
 interface Props {
   doc: Document;
   clip: Clip | null;
+  /// 多选数量(>1 且 clip 为空时显示批量面板)。
+  selectedCount?: number;
+  onBatchRemove?: () => Promise<void>;
+  onBatchAudio?: (volume: number | null, muted: boolean | null) => Promise<void>;
   onRefresh: () => Promise<void>;
   playheadTicks: number;
 }
 
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
-function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
+function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAudio, onRefresh, playheadTicks }: Props) {
   const tps = doc.timebase.num / doc.timebase.den;
   const [speed, setSpeed] = useState("1.0");
   const [volume, setVolume] = useState("1.0");
@@ -34,6 +38,8 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   const [blend, setBlend] = useState<string>("Normal");
   const [splitStatus, setSplitStatus] = useState("");
   const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
+  /// 批量音量输入。
+  const [batchVol, setBatchVol] = useState("1.0");
 
   useEffect(() => {
     if (clip) {
@@ -169,6 +175,43 @@ function InspectorInner({ doc, clip, onRefresh, playheadTicks }: Props) {
   }
 
   if (!clip) {
+    if (selectedCount > 1) {
+      return (
+        <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 13 }}>已选 {selectedCount} 个片段</h3>
+          <div style={{ color: "#667" }}>批量操作(组合命令,一次撤销)</div>
+          <button className="btn" onClick={() => void onBatchRemove?.()}>
+            批量删除
+          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn" onClick={() => void onBatchAudio?.(null, true)}>
+              批量静音
+            </button>
+            <button className="btn" onClick={() => void onBatchAudio?.(null, false)}>
+              批量取消静音
+            </button>
+          </div>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            统一音量
+            <input
+              className="ti"
+              style={{ width: 56 }}
+              value={batchVol}
+              onChange={(e) => setBatchVol(e.target.value)}
+            />
+            <button
+              className="btn"
+              onClick={() => {
+                const v = parseFloat(batchVol);
+                if (Number.isFinite(v)) void onBatchAudio?.(v, null);
+              }}
+            >
+              应用
+            </button>
+          </label>
+        </div>
+      );
+    }
     return (
       <div style={{ padding: 12, color: "#667", fontSize: 12 }}>
         选中时间轴片段以编辑属性
