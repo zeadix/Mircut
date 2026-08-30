@@ -181,6 +181,16 @@ export async function setTrackFlags(
 }
 
 /// 滚动修剪(Roll):相邻两片段共享切点整体移动(组合命令,一次撤销)。
+/// 素材打标签(可撤销)。
+export async function setTagAsset(assetId: string, tag: string): Promise<boolean> {
+  return invoke("tag_asset", { assetId, tag });
+}
+
+/// 扫描目录下音频文件(音乐/音效库批量导入)。
+export async function scanAudioDir(dir: string): Promise<string[]> {
+  return invoke("scan_audio_dir", { dir });
+}
+
 /// 批量移动(组合命令,一次撤销)。
 export interface MoveEntry {
   clipId: string;

@@ -224,6 +224,7 @@ fn main() {
             log_js_error,
             preview_asset_frame,
             probe_media,
+            scan_audio_dir,
             get_document,
             undo,
             redo,

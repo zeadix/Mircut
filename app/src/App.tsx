@@ -65,8 +65,9 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
   const [tcDraft, setTcDraft] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
   const [mediaQuery, setMediaQuery] = useState("");
-  /// 媒体库:网格视图 + 重命名/标签编辑。
+  /// 媒体库:网格视图 + 分类 Tab + 重命名/标签编辑。
   const [mediaGrid, setMediaGrid] = useState(false);
+  const [mediaCat, setMediaCat] = useState<"all" | "video" | "audio" | "image">("all");
   const [editingAsset, setEditingAsset] = useState<string | null>(null);
   const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
@@ -663,6 +664,48 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     await refresh();
   }
 
+  /// 媒体分类:按扩展名归类(音乐/音效库浏览)。
+  const MEDIA_EXTS = {
+    video: ["mp4", "mov", "mkv", "webm", "avi", "m4v"],
+    audio: ["mp3", "wav", "aac", "ogg", "flac", "m4a", "opus"],
+    image: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"],
+  } as const;
+  function mediaKind(a: { path: string }): "video" | "audio" | "image" | "other" {
+    const ext = a.path.split(".").pop()?.toLowerCase() ?? "";
+    if ((MEDIA_EXTS.video as readonly string[]).includes(ext)) return "video";
+    if ((MEDIA_EXTS.audio as readonly string[]).includes(ext)) return "audio";
+    if ((MEDIA_EXTS.image as readonly string[]).includes(ext)) return "image";
+    return "other";
+  }
+
+  /// 扫描音乐/音效文件夹:批量导入(已导入的路径自动跳过)并打"音乐"标签。
+  async function onScanMusicDir() {
+    const picked = await openDialog({ multiple: false, directory: true });
+    const dir = Array.isArray(picked) ? picked[0] : picked;
+    if (!dir) return;
+    setStatus("扫描音频文件夹...");
+    try {
+      const paths = await api.scanAudioDir(dir);
+      const known = new Set(doc?.assets.map((a) => a.path) ?? []);
+      let n = 0;
+      for (const path of paths) {
+        if (known.has(path)) continue;
+        try {
+          const { asset } = await api.importMedia(path);
+          await api.setTagAsset(asset.id, "音乐");
+          n += 1;
+          setStatus(`导入音乐 ${n}/${paths.length}: ${path.split("/").pop()}`);
+        } catch {
+          /* 单个失败不阻塞 */
+        }
+      }
+      await refresh();
+      setStatus(`音乐库导入完成:新增 ${n} 个(跳过已导入 ${paths.length - n} 个)`);
+    } catch (e) {
+      setStatus(`扫描失败: ${e}`);
+    }
+  }
+
   /// 跨轨对齐边缘:非当前操作轨道的片段头尾(供吸附)。
   const alignEdges = useMemo(() => {
     if (!doc) return [];
@@ -930,6 +973,13 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
             <span style={{ flex: 1 }} />
             <button
               className="btn"
+              title="扫描音乐/音效文件夹(批量导入并打标签)"
+              onClick={onScanMusicDir}
+            >
+              ♪ 音乐库
+            </button>
+            <button
+              className="btn"
               title={mediaGrid ? "切换为列表视图" : "切换为网格视图"}
               onClick={() => setMediaGrid((v) => !v)}
             >
@@ -950,9 +1000,37 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
             onChange={(e) => setMediaQuery(e.target.value)}
             style={{ width: "100%", marginBottom: 8 }}
           />
+          <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
+            {([
+              ["all", "全部"],
+              ["video", "视频"],
+              ["audio", "音频"],
+              ["image", "图片"],
+            ] as const).map(([k, label]) => (
+              <button
+                key={k}
+                className="btn"
+                style={{
+                  padding: "1px 8px",
+                  fontSize: 10,
+                  borderColor: mediaCat === k ? "#ffd75e" : undefined,
+                  color: mediaCat === k ? "#ffd75e" : undefined,
+                }}
+                onClick={() => setMediaCat(k)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div style={{ display: mediaGrid ? "grid" : "block", gridTemplateColumns: mediaGrid ? "1fr 1fr" : undefined, gap: 6 }}>
           {doc.assets
             .filter((a) => {
+              if (mediaCat !== "all") {
+                const kind = mediaKind(a);
+                if (mediaCat === "audio" && !(kind === "audio" || (a.tags ?? []).includes("音乐"))) return false;
+                if (mediaCat === "video" && kind !== "video") return false;
+                if (mediaCat === "image" && kind !== "image") return false;
+              }
               if (!mediaQuery.trim()) return true;
               const q = mediaQuery.trim().toLowerCase();
               return (

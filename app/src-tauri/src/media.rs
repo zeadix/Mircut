@@ -93,6 +93,43 @@ pub(crate) fn probe_media(path: String) -> Result<MediaInfo, String> {
     veditor_media::probe(&PathBuf::from(&path)).map_err(|e| e.to_string())
 }
 
+/// 扫描目录下的音频文件(递归,上限 200 个)——音乐/音效库批量导入用。
+#[tauri::command(async)]
+pub(crate) fn scan_audio_dir(dir: String) -> Result<Vec<String>, String> {
+    const AUDIO_EXTS: [&str; 7] = ["mp3", "wav", "aac", "ogg", "flac", "m4a", "opus"];
+    let root = PathBuf::from(&dir);
+    if !root.is_dir() {
+        return Err("不是目录".into());
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut stack = vec![root];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .unwrap_or_default();
+            if AUDIO_EXTS.contains(&ext.as_str()) {
+                out.push(p.to_string_lossy().to_string());
+                if out.len() >= 200 {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 #[derive(Serialize)]
 pub(crate) struct ImportResult {
     asset: Asset,
