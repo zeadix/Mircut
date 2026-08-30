@@ -249,6 +249,24 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     params.width, params.height, params.width, params.height
                 );
                 chain.push_str(&format!(",{scale},fps={}", params.fps));
+                // 画面矩形(画中画):缩到 rect 尺寸并放到 rect 位置,其余黑。
+                // rect 非默认(不满屏)时替换上面的全屏 pad 定位。
+                if let Some(rect) = c.fx.rect {
+                    if (rect.w - 1.0).abs() > 1e-3
+                        || (rect.h - 1.0).abs() > 1e-3
+                        || (rect.x - 0.5).abs() > 1e-3
+                        || (rect.y - 0.5).abs() > 1e-3
+                    {
+                        let rw = (rect.w * params.width as f64).round().max(2.0) as u32;
+                        let rh = (rect.h * params.height as f64).round().max(2.0) as u32;
+                        let rx = ((rect.x - rect.w / 2.0) * params.width as f64).round() as i32;
+                        let ry = ((rect.y - rect.h / 2.0) * params.height as f64).round() as i32;
+                        chain.push_str(&format!(
+                            ",scale={rw}:{rh}:force_original_aspect_ratio=decrease,pad={}:{}:{rx}:{ry}",
+                            params.width, params.height
+                        ));
+                    }
+                }
                 // 蒙版(矩形:裁剪区域 + pad 黑边放回原位;线性蒙版 MVP 暂不导出)
                 if let Some(mask) = &c.fx.mask {
                     let pw = params.width as f64;
@@ -419,14 +437,39 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     continue;
                 }
             }
-            // 画中画尺寸:fx.scale 静态值(默认 0.35);位置:x/y_offset(0-1,默认 0.72/0.72 右下)
-            let pip_scale = c.fx.scale.value_at(0).unwrap_or(0.35).clamp(0.05, 1.0);
-            let pip_x = c.fx.x_offset.value_at(0).unwrap_or(0.72).clamp(0.0, 1.0);
-            let pip_y = c.fx.y_offset.value_at(0).unwrap_or(0.72).clamp(0.0, 1.0);
+            // 画面矩形(画中画)优先:精确尺寸/位置(允许越界,导出裁剪);否则回退旧模型。
+            let rect = c.fx.rect;
+            let pip_scale = rect
+                .map(|r| r.w.clamp(0.02, 4.0))
+                .or_else(|| c.fx.scale.value_at(0))
+                .unwrap_or(0.35)
+                .clamp(0.05, 1.0);
+            // rect 模式:x/y 是中心点;旧模型:x/y 是剩余空间系数。
+            let rect_h = rect.map(|r| r.h.clamp(0.02, 4.0)).unwrap_or(pip_scale);
+            let pip_x = rect
+                .map(|r| r.x.clamp(-2.0, 3.0))
+                .or_else(|| c.fx.x_offset.value_at(0))
+                .unwrap_or(0.72)
+                .clamp(0.0, 1.0);
+            let pip_y = rect
+                .map(|r| r.y.clamp(-2.0, 3.0))
+                .or_else(|| c.fx.y_offset.value_at(0))
+                .unwrap_or(0.72)
+                .clamp(0.0, 1.0);
             let pw = (params.width as f64 * pip_scale).round() as u32;
-            let ph = (params.height as f64 * pip_scale).round() as u32;
-            let ox = ((params.width - pw) as f64 * pip_x).round() as i32;
-            let oy = ((params.height - ph) as f64 * pip_y).round() as i32;
+            let ph = (params.height as f64 * rect_h).round() as u32;
+            // overlay 位置:rect 中心点直接换算(允许负偏移/出界);旧模型按剩余空间系数。
+            let (ox, oy) = if rect.is_some() {
+                (
+                    (pip_x * params.width as f64 - pw as f64 / 2.0).round() as i32,
+                    (pip_y * params.height as f64 - ph as f64 / 2.0).round() as i32,
+                )
+            } else {
+                (
+                    ((params.width - pw) as f64 * pip_x).round() as i32,
+                    ((params.height - ph) as f64 * pip_y).round() as i32,
+                )
+            };
             // 片段链:trim -> 缩放画中画 -> (透明度) -> 设定 pts 起始 -> overlay
             let mut chain = format!(
                 "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,scale={pw}:{ph}:force_original_aspect_ratio=decrease,format=yuva420p",

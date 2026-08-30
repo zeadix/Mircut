@@ -60,6 +60,14 @@ export interface LutApply {
   strength: number;
 }
 
+/// 画面矩形(归一化):x/y 中心点,w/h 宽高(可越界,导出裁剪)。
+export interface FxRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Mask {
   kind: "Rect" | "Linear";
   x: number;
@@ -83,6 +91,7 @@ export interface ClipFx {
   lut?: LutApply;
   mask?: Mask;
   blend_mode?: "Normal" | "Multiply" | "Screen" | "Overlay" | "Darken" | "Lighten" | "Difference" | "Addition";
+  rect?: FxRect;
 }
 
 export interface Clip {

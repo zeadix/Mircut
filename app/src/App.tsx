@@ -3,7 +3,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
-import type { Document } from "./types";
+import type { Document, FxRect } from "./types";
 import MiniWaveform from "./MiniWaveform";
 import Timeline from "./Timeline";
 import Preview from "./Preview";
@@ -418,6 +418,26 @@ export default function App() {
     await refresh();
   }
 
+  /// 预览窗口画中画变换提交:fx.rect(保留其余 fx)。
+  async function onSetRect(clipId: string, rect: FxRect) {
+    if (!doc) return;
+    const clip = doc.clips.find((c) => c.id === clipId);
+    if (!clip) return;
+    const fx = clip.fx ?? {
+      opacity: { keyframes: [] },
+      scale: { keyframes: [] },
+      rotate: { keyframes: [] },
+      x_offset: { keyframes: [] },
+      y_offset: { keyframes: [] },
+      grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 },
+      volume: { keyframes: [] },
+    };
+    fx.rect = rect;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_clip_fx", { clipId, fx });
+    await refresh();
+  }
+
   async function onRenameTrack(trackId: string, name: string) {
     await api.renameTrack(trackId, name);
     await refresh();
@@ -777,6 +797,9 @@ export default function App() {
             renderMode={renderMode}
             assetPreview={assetPreview}
             onAssetPreviewDone={clearAssetPreview}
+            doc={doc}
+            selectedClipId={selected}
+            onSetRect={onSetRect}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>

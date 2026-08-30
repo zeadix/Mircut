@@ -263,6 +263,31 @@ impl BlendMode {
     }
 }
 
+/// 画面矩形(归一化 0-1,相对输出画面):x/y 为中心点,w/h 为宽高。
+/// 超出 [0,1] 表示图像伸出画面外(导出时被裁剪)。None = 铺满(主轨默认)。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct FxRect {
+    /// 中心 x(0=左缘,1=右缘,可越界)。
+    pub x: f64,
+    /// 中心 y(0=上缘,1=下缘,可越界)。
+    pub y: f64,
+    /// 宽(相对画面宽,>0)。
+    pub w: f64,
+    /// 高(相对画面高,>0)。
+    pub h: f64,
+}
+
+impl Default for FxRect {
+    fn default() -> Self {
+        Self {
+            x: 0.5,
+            y: 0.5,
+            w: 1.0,
+            h: 1.0,
+        }
+    }
+}
+
 /// 片段特效属性(M2 挂在 Clip 的可选扩展)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ClipFx {
@@ -274,6 +299,9 @@ pub struct ClipFx {
     pub grade: ColorGrade,
     /// 音量关键帧(与 Clip.volume 独立:有关键帧时优先)。
     pub volume: Animatable,
+    /// 画面矩形(画中画尺寸/位置;None = 铺满)。
+    #[serde(default)]
+    pub rect: Option<FxRect>,
     /// 色度抠像(默认关闭)。
     #[serde(default)]
     pub chroma_key: ChromaKey,
