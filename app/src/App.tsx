@@ -566,6 +566,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
       rotate: { keyframes: [] },
       x_offset: { keyframes: [] },
       y_offset: { keyframes: [] },
+      speed: { keyframes: [] },
       grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 },
       volume: { keyframes: [] },
     };

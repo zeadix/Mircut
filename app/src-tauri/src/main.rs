@@ -10,8 +10,9 @@ use veditor_ai::Transcriber;
 use veditor_core::{
     AddClip, AddMarker, AddTrack, Asset, AssetRef, Clip, ClipFx, Command, CommandStack, Compound,
     DetachAudio, Document, FreezeFrame, Interpolation, Marker, RemoveClip, RemoveMarker,
-    RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed, SetTrackFlags,
-    SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind, Transition, TransitionKind,
+    RemoveTrack, ReorderTrack, RippleDelete, SetClipAudio, SetFx, SetSpeed, SetSpeedAnim,
+    SetTrackFlags, SetTransition, SplitClip, TagAsset, Ticks, Track, TrackKind, Transition,
+    TransitionKind,
 };
 use veditor_media::MediaInfo;
 use veditor_render::{ProxyRenderer, Renderer};
@@ -1307,7 +1308,6 @@ fn set_keyframe(
     let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
         return false;
     };
-    let mut fx = clip.fx;
     let interp = match interp.as_str() {
         "hold" => Interpolation::Hold,
         "smooth" => Interpolation::Smooth,
@@ -1327,6 +1327,15 @@ fn set_keyframe(
         }
         _ => Interpolation::Linear,
     };
+    // 速度关键帧:走 SetSpeedAnim(反解时长并重排重叠)
+    if prop == "speed" {
+        let mut anim = clip.fx.speed.clone();
+        anim.set(t, value, interp);
+        inner.exec(Box::new(SetSpeedAnim::new(clip_id.clone(), anim)));
+        reschedule_clip_track(&mut inner, &clip_id);
+        return true;
+    }
+    let mut fx = clip.fx;
     match prop.as_str() {
         "opacity" => fx.opacity.set(t, value, interp),
         "scale" => fx.scale.set(t, value, interp),
@@ -1340,6 +1349,18 @@ fn set_keyframe(
     true
 }
 
+/// 关键帧/变速后按片段所在轨重排重叠。
+fn reschedule_clip_track(inner: &mut Inner, clip_id: &str) {
+    let tid = inner
+        .doc
+        .clip(clip_id)
+        .map(|c| c.track_id.clone())
+        .unwrap_or_default();
+    if !tid.is_empty() {
+        inner.schedule_track(&tid, Some(clip_id));
+    }
+}
+
 /// 删除指定时间点的关键帧。
 #[tauri::command]
 fn remove_keyframe(clip_id: String, prop: String, t: Ticks, state: State<'_, AppState>) -> bool {
@@ -1347,6 +1368,14 @@ fn remove_keyframe(clip_id: String, prop: String, t: Ticks, state: State<'_, App
     let Some(clip) = inner.doc.clip(&clip_id).cloned() else {
         return false;
     };
+    // 速度关键帧:走 SetSpeedAnim(反解时长并重排重叠)
+    if prop == "speed" {
+        let mut anim = clip.fx.speed.clone();
+        anim.keyframes.retain(|k| k.t != t);
+        inner.exec(Box::new(SetSpeedAnim::new(clip_id.clone(), anim)));
+        reschedule_clip_track(&mut inner, &clip_id);
+        return true;
+    }
     let mut fx = clip.fx;
     let target: &mut veditor_core::Animatable = match prop.as_str() {
         "opacity" => &mut fx.opacity,

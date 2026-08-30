@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Clip, ColorGrade, Document, FxRect, Mask, Transition } from "./types";
-import { valueAt } from "./anim";
+import { sourceSecsAt, valueAt } from "./anim";
 import { Magnet } from "@phosphor-icons/react";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
@@ -208,8 +208,9 @@ export default function Preview({
       const asset = doc.assets.find((a) => a.id === c.asset.asset_id);
       if (!asset || !asset.has_video) return null;
       const tps = doc.timebase.num / doc.timebase.den;
-      const tLocal = (t - c.start) / tps;
-      const rawSecs = forcedSecs ?? c.asset.source_in + tLocal * (c.speed || 1);
+      const tLocalTicks = t - c.start;
+      const rawSecs = forcedSecs ?? c.asset.source_in + sourceSecsAt(c.speed, c.fx?.speed?.keyframes, doc.timebase.num, doc.timebase.den, tLocalTicks);
+      const tLocal = tLocalTicks / tps;
       const { rect, rotate } = deriveRect(c, tLocal);
       return {
         clipId: c.id,

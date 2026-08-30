@@ -246,6 +246,217 @@ pub fn anim_expr(
     Some(format!("if(lt(t,{t0:.4}),{v0:.4},{})", polyline_expr(&pts)))
 }
 
+/// 单片段视频链(trim/变速/缩放/特效/不透明度/旋转 -> label)。
+/// 供主轨静态链与变速分段复用;cmd_tag 用于 sendcmd 命令文件命名。
+fn build_video_chain(
+    doc: &Document,
+    params: &ExportParams,
+    c: &veditor_core::Clip,
+    input_idx: usize,
+    label: &str,
+    cmd_tag: &str,
+) -> String {
+    let src = format!("[{}:v]", input_idx);
+    let label_owned = label.to_string();
+    let label = &label_owned;
+    let mut chain = format!(
+        "{src}trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS",
+        c.asset.source_in,
+        c.source_span_secs(&doc.timebase)
+    );
+    // 定格片段(speed == 0):单帧后 tpad 克隆
+    if c.speed.abs() < 1e-3 {
+        let freeze_secs = doc.timebase.secs(c.duration);
+        chain.push_str(&format!(
+            ",tpad=stop_mode=clone:stop_duration={freeze_secs:.3}"
+        ));
+    }
+    // 变速:时间轴时长 = 源时长 / speed
+    if c.speed > 1e-3 && (c.speed - 1.0).abs() > 1e-3 {
+        chain.push_str(&format!(",setpts=PTS/{}", c.speed));
+    }
+    // 宽高比保持缩放(黑边填充)
+    let scale = format!(
+        "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2",
+        params.width, params.height, params.width, params.height
+    );
+    chain.push_str(&format!(",{scale},fps={}", params.fps));
+    // 画面矩形(画中画):缩到 rect 尺寸并放到 rect 位置,其余黑。
+    // rect 非默认(不满屏)时替换上面的全屏 pad 定位。
+    if let Some(rect) = c.fx.rect {
+        if (rect.w - 1.0).abs() > 1e-3
+            || (rect.h - 1.0).abs() > 1e-3
+            || (rect.x - 0.5).abs() > 1e-3
+            || (rect.y - 0.5).abs() > 1e-3
+        {
+            let rw = (rect.w * params.width as f64).round().max(2.0) as u32;
+            let rh = (rect.h * params.height as f64).round().max(2.0) as u32;
+            let rx = ((rect.x - rect.w / 2.0) * params.width as f64).round() as i32;
+            let ry = ((rect.y - rect.h / 2.0) * params.height as f64).round() as i32;
+            chain.push_str(&format!(
+                ",scale={rw}:{rh}:force_original_aspect_ratio=decrease,pad={}:{}:{rx}:{ry}",
+                params.width, params.height
+            ));
+        }
+    }
+    // 蒙版(矩形:裁剪区域 + pad 黑边放回原位;线性蒙版 MVP 暂不导出)
+    if let Some(mask) = &c.fx.mask {
+        let pw = params.width as f64;
+        let ph = params.height as f64;
+        if mask.kind == veditor_core::MaskKind::Rect {
+            // 钳制到画面内:宽高不超画面,位置不越界(边缘蒙版不变形)
+            let mw = ((mask.w * pw).round() as u32).clamp(2, params.width);
+            let mh = ((mask.h * ph).round() as u32).clamp(2, params.height);
+            let mx = (((mask.x - mask.w / 2.0) * pw).round() as i64)
+                .clamp(0, (params.width - mw) as i64) as u32;
+            let my = (((mask.y - mask.h / 2.0) * ph).round() as i64)
+                .clamp(0, (params.height - mh) as i64) as u32;
+            chain.push_str(&format!(
+                ",crop=w={mw}:h={mh}:x={mx}:y={my},pad={}:{}:{mx}:{my}",
+                params.width, params.height
+            ));
+        }
+    }
+    // 色度抠像(绿幕)
+    if c.fx.chroma_key.enabled() {
+        let ck = &c.fx.chroma_key;
+        let color = ck.color.trim_start_matches('#');
+        chain.push_str(&format!(
+            ",format=yuva420p,colorkey=0x{color}:similarity={:.3}:blend={:.3}",
+            ck.similarity, ck.blend
+        ));
+    }
+    // 调色(非默认才加)
+    let g = &c.fx.grade;
+    if (g.brightness - 0.0).abs() > 1e-3
+        || (g.contrast - 1.0).abs() > 1e-3
+        || (g.saturation - 1.0).abs() > 1e-3
+    {
+        chain.push_str(&format!(
+            ",eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
+            g.brightness, g.contrast, g.saturation
+        ));
+    }
+    // 色温(-1 冷~+1 暖)-> 开尔文(10000~3000,0=6500)
+    if (g.temperature - 0.0).abs() > 1e-3 {
+        let kelvin = (6500.0 - g.temperature * 3500.0).clamp(3000.0, 10000.0) as u32;
+        chain.push_str(&format!(",colortemperature=temperature={kelvin}"));
+    }
+    // LUT(.cube)
+    if c.fx.lut.enabled() {
+        chain.push_str(&format!(
+            ",lut3d=file='{}'",
+            c.fx.lut.path.replace('\\', "/").replace(':', "\\:")
+        ));
+    }
+    // 不透明度关键帧:
+    // - >=2 关键帧:sendcmd 逐帧动画(支持贝塞尔/线性/保持)
+    // - 单值:静态 colorchannelmixer
+    let kfs = &c.fx.opacity.keyframes;
+    if kfs.len() >= 2 {
+        let cmds = keyframe_sendcmd_commands(&c.fx.opacity, c.duration, &doc.timebase, 0.0);
+        if !cmds.is_empty() {
+            let dir = std::env::temp_dir().join("veditor-export");
+            let _ = std::fs::create_dir_all(&dir);
+            let fname = dir.join(format!("{cmd_tag}.txt"));
+            // sendcmd 文件:每条命令以分号结尾(否则多行解析失败)
+            let _ = std::fs::write(&fname, cmds.join(";\n") + ";");
+            // colorchannelmixer 作为 sendcmd 的 target 必须存在,初始 aa=首帧值
+            let first_op = c.fx.opacity.value_at(0).unwrap_or(1.0);
+            chain.push_str(&format!(
+                        ",format=yuva420p,colorchannelmixer=aa={first_op:.3},sendcmd=f={},premultiply=inplace=1",
+                        fname.to_string_lossy()
+                    ));
+        }
+    } else if let Some(op) = c.fx.opacity.value_at(0) {
+        if (op - 1.0).abs() > 1e-3 {
+            chain.push_str(&format!(
+                ",format=yuva420p,colorchannelmixer=aa={op:.3},premultiply=inplace=1"
+            ));
+        }
+    }
+    // 旋转关键帧(>=1 帧):rotate 表达式(t = 片段本地秒),透明角落随后被
+    // format=yuv420p 压平为黑(底层轨无下层可透)。
+    let rkfs = &c.fx.rotate.keyframes;
+    if !rkfs.is_empty() {
+        let rot_expr = anim_expr(&c.fx.rotate, &doc.timebase, 0.0).unwrap_or_else(|| "0".into());
+        if !chain.contains("yuva420p") {
+            chain.push_str(",format=yuva420p");
+        }
+        chain.push_str(&format!(
+            ",rotate=a='({rot_expr})*PI/180':c=black@0:ow=iw:oh=ih,premultiply=inplace=1"
+        ));
+    }
+    chain.push_str(&format!(",format=yuv420p{label}"));
+
+    chain
+}
+
+/// 变速曲线分段:按关键帧断点切成恒速段(段速 = 段内源消费 / 段时长)。
+/// 无变速曲线(关键帧 <2)返回空,走静态路径。
+struct SpeedSegment {
+    /// 片段本地起点(ticks)。
+    t_start: veditor_core::Ticks,
+    /// 段时长(ticks)。
+    ticks: veditor_core::Ticks,
+    /// 源起点(相对片段 source_in,秒)。
+    src_start: f64,
+    /// 源终点(相对片段 source_in,秒)。
+    src_end: f64,
+    /// 段恒速。
+    speed: f64,
+}
+
+fn speed_segments(c: &veditor_core::Clip, tb: &veditor_core::Timebase) -> Vec<SpeedSegment> {
+    let kfs = &c.fx.speed.keyframes;
+    if kfs.len() < 2 {
+        return vec![];
+    }
+    let mut pts: Vec<veditor_core::Ticks> = kfs.iter().map(|k| k.t).collect();
+    pts.sort_unstable();
+    pts.dedup();
+    let mut bounds: Vec<veditor_core::Ticks> = pts
+        .into_iter()
+        .filter(|&t| t > 0 && t < c.duration)
+        .collect();
+    bounds.insert(0, 0);
+    bounds.push(c.duration);
+    // 细分:段长超过 0.25s 再均分(线性速度的阶梯逼近,段越短越贴近曲线)
+    let max_seg = tb.ticks(0.25).max(1);
+    let mut fine: Vec<veditor_core::Ticks> = Vec::new();
+    for w in bounds.windows(2) {
+        let (ta, tbb) = (w[0], w[1]);
+        let span = (tbb - ta).max(1);
+        let n = ((span + max_seg - 1) / max_seg).max(1);
+        for k in 0..n {
+            fine.push(ta + span * k / n);
+        }
+    }
+    fine.push(c.duration);
+    fine.dedup();
+    let mut out = Vec::new();
+    for w in fine.windows(2) {
+        let (ta, tbb) = (w[0], w[1]);
+        if tbb <= ta {
+            continue;
+        }
+        let src_a = c.source_secs_at(tb, ta);
+        let src_b = c.source_secs_at(tb, tbb);
+        let dur_secs = tb.secs(tbb - ta);
+        if src_b - src_a < 1e-6 || dur_secs < 1e-6 {
+            continue;
+        }
+        out.push(SpeedSegment {
+            t_start: ta,
+            ticks: tbb - ta,
+            src_start: src_a,
+            src_end: src_b,
+            speed: (src_b - src_a) / dur_secs,
+        });
+    }
+    out
+}
+
 /// 编译单条 FFmpeg 命令(整条时间轴,顺序 concat 方案)。
 /// 输入策略:每个消费片段一个独立 -i(ffmpeg 4.x 同输入拆多路 trim 会
 /// 共享解码状态导致 concat 时长错误,独立输入实测精确)。
@@ -315,141 +526,55 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
                 let input_idx = input_of(&c.id);
-                let src = format!("[{}:v]", input_idx);
-                let label = format!("[v{i}]");
-                let mut chain = format!(
-                    "{src}trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS",
-                    c.asset.source_in,
-                    c.source_span_secs(&doc.timebase)
+                let segs = speed_segments(c, &doc.timebase);
+                let has_trans = doc
+                    .transitions
+                    .iter()
+                    .any(|t| t.left_clip_id == c.id || t.right_clip_id == c.id);
+                if segs.len() > 1 && !has_trans {
+                    // 变速曲线:分段恒速(段内 fx 静态采样),段间 concat 还原 [v{i}]
+                    let mut seg_labels: Vec<String> = Vec::new();
+                    for (j, seg) in segs.iter().enumerate() {
+                        let mut sc = (**c).clone();
+                        sc.asset.source_in = c.asset.source_in + seg.src_start;
+                        sc.asset.source_out = c.asset.source_in + seg.src_end;
+                        sc.duration = seg.ticks;
+                        sc.speed = seg.speed;
+                        sc.fx.speed = Default::default();
+                        let op = c.fx.opacity.value_at(seg.t_start).unwrap_or(1.0);
+                        sc.fx.opacity = veditor_core::Animatable {
+                            keyframes: vec![veditor_core::Keyframe {
+                                t: 0,
+                                value: op,
+                                interp: veditor_core::Interpolation::Linear,
+                            }],
+                        };
+                        let slabel = format!("[v{i}s{j}]");
+                        chain_parts.push(build_video_chain(
+                            doc,
+                            params,
+                            &sc,
+                            input_idx,
+                            &slabel,
+                            &format!("cmd_{i}s{j}"),
+                        ));
+                        seg_labels.push(slabel);
+                    }
+                    chain_parts.push(format!(
+                        "{}concat=n={}:v=1:a=0[v{i}]",
+                        seg_labels.concat(),
+                        seg_labels.len()
+                    ));
+                    continue;
+                }
+                let chain = build_video_chain(
+                    doc,
+                    params,
+                    c,
+                    input_idx,
+                    &format!("[v{i}]"),
+                    &format!("cmd_{i}"),
                 );
-                // 定格片段(speed == 0):单帧后 tpad 克隆
-                if c.speed.abs() < 1e-3 {
-                    let freeze_secs = doc.timebase.secs(c.duration);
-                    chain.push_str(&format!(
-                        ",tpad=stop_mode=clone:stop_duration={freeze_secs:.3}"
-                    ));
-                }
-                // 变速:时间轴时长 = 源时长 / speed
-                if c.speed > 1e-3 && (c.speed - 1.0).abs() > 1e-3 {
-                    chain.push_str(&format!(",setpts=PTS/{}", c.speed));
-                }
-                // 宽高比保持缩放(黑边填充)
-                let scale = format!(
-                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2",
-                    params.width, params.height, params.width, params.height
-                );
-                chain.push_str(&format!(",{scale},fps={}", params.fps));
-                // 画面矩形(画中画):缩到 rect 尺寸并放到 rect 位置,其余黑。
-                // rect 非默认(不满屏)时替换上面的全屏 pad 定位。
-                if let Some(rect) = c.fx.rect {
-                    if (rect.w - 1.0).abs() > 1e-3
-                        || (rect.h - 1.0).abs() > 1e-3
-                        || (rect.x - 0.5).abs() > 1e-3
-                        || (rect.y - 0.5).abs() > 1e-3
-                    {
-                        let rw = (rect.w * params.width as f64).round().max(2.0) as u32;
-                        let rh = (rect.h * params.height as f64).round().max(2.0) as u32;
-                        let rx = ((rect.x - rect.w / 2.0) * params.width as f64).round() as i32;
-                        let ry = ((rect.y - rect.h / 2.0) * params.height as f64).round() as i32;
-                        chain.push_str(&format!(
-                            ",scale={rw}:{rh}:force_original_aspect_ratio=decrease,pad={}:{}:{rx}:{ry}",
-                            params.width, params.height
-                        ));
-                    }
-                }
-                // 蒙版(矩形:裁剪区域 + pad 黑边放回原位;线性蒙版 MVP 暂不导出)
-                if let Some(mask) = &c.fx.mask {
-                    let pw = params.width as f64;
-                    let ph = params.height as f64;
-                    if mask.kind == veditor_core::MaskKind::Rect {
-                        // 钳制到画面内:宽高不超画面,位置不越界(边缘蒙版不变形)
-                        let mw = ((mask.w * pw).round() as u32).clamp(2, params.width);
-                        let mh = ((mask.h * ph).round() as u32).clamp(2, params.height);
-                        let mx = (((mask.x - mask.w / 2.0) * pw).round() as i64)
-                            .clamp(0, (params.width - mw) as i64)
-                            as u32;
-                        let my = (((mask.y - mask.h / 2.0) * ph).round() as i64)
-                            .clamp(0, (params.height - mh) as i64)
-                            as u32;
-                        chain.push_str(&format!(
-                            ",crop=w={mw}:h={mh}:x={mx}:y={my},pad={}:{}:{mx}:{my}",
-                            params.width, params.height
-                        ));
-                    }
-                }
-                // 色度抠像(绿幕)
-                if c.fx.chroma_key.enabled() {
-                    let ck = &c.fx.chroma_key;
-                    let color = ck.color.trim_start_matches('#');
-                    chain.push_str(&format!(
-                        ",format=yuva420p,colorkey=0x{color}:similarity={:.3}:blend={:.3}",
-                        ck.similarity, ck.blend
-                    ));
-                }
-                // 调色(非默认才加)
-                let g = &c.fx.grade;
-                if (g.brightness - 0.0).abs() > 1e-3
-                    || (g.contrast - 1.0).abs() > 1e-3
-                    || (g.saturation - 1.0).abs() > 1e-3
-                {
-                    chain.push_str(&format!(
-                        ",eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
-                        g.brightness, g.contrast, g.saturation
-                    ));
-                }
-                // 色温(-1 冷~+1 暖)-> 开尔文(10000~3000,0=6500)
-                if (g.temperature - 0.0).abs() > 1e-3 {
-                    let kelvin = (6500.0 - g.temperature * 3500.0).clamp(3000.0, 10000.0) as u32;
-                    chain.push_str(&format!(",colortemperature=temperature={kelvin}"));
-                }
-                // LUT(.cube)
-                if c.fx.lut.enabled() {
-                    chain.push_str(&format!(
-                        ",lut3d=file='{}'",
-                        c.fx.lut.path.replace('\\', "/").replace(':', "\\:")
-                    ));
-                }
-                // 不透明度关键帧:
-                // - >=2 关键帧:sendcmd 逐帧动画(支持贝塞尔/线性/保持)
-                // - 单值:静态 colorchannelmixer
-                let kfs = &c.fx.opacity.keyframes;
-                if kfs.len() >= 2 {
-                    let cmds =
-                        keyframe_sendcmd_commands(&c.fx.opacity, c.duration, &doc.timebase, 0.0);
-                    if !cmds.is_empty() {
-                        let dir = std::env::temp_dir().join("veditor-export");
-                        let _ = std::fs::create_dir_all(&dir);
-                        let fname = dir.join(format!("cmd_{i}.txt"));
-                        // sendcmd 文件:每条命令以分号结尾(否则多行解析失败)
-                        let _ = std::fs::write(&fname, cmds.join(";\n") + ";");
-                        // colorchannelmixer 作为 sendcmd 的 target 必须存在,初始 aa=首帧值
-                        let first_op = c.fx.opacity.value_at(0).unwrap_or(1.0);
-                        chain.push_str(&format!(
-                            ",format=yuva420p,colorchannelmixer=aa={first_op:.3},sendcmd=f={},premultiply=inplace=1",
-                            fname.to_string_lossy()
-                        ));
-                    }
-                } else if let Some(op) = c.fx.opacity.value_at(0) {
-                    if (op - 1.0).abs() > 1e-3 {
-                        chain.push_str(&format!(
-                            ",format=yuva420p,colorchannelmixer=aa={op:.3},premultiply=inplace=1"
-                        ));
-                    }
-                }
-                // 旋转关键帧(>=1 帧):rotate 表达式(t = 片段本地秒),透明角落随后被
-                // format=yuv420p 压平为黑(底层轨无下层可透)。
-                let rkfs = &c.fx.rotate.keyframes;
-                if !rkfs.is_empty() {
-                    let rot_expr =
-                        anim_expr(&c.fx.rotate, &doc.timebase, 0.0).unwrap_or_else(|| "0".into());
-                    if !chain.contains("yuva420p") {
-                        chain.push_str(",format=yuva420p");
-                    }
-                    chain.push_str(&format!(
-                        ",rotate=a='({rot_expr})*PI/180':c=black@0:ow=iw:oh=ih,premultiply=inplace=1"
-                    ));
-                }
-                chain.push_str(&format!(",format=yuv420p{label}"));
                 chain_parts.push(chain);
             }
             let has_transitions = clips.len() > 1 && !doc.transitions.is_empty();
@@ -582,12 +707,25 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             };
             // 片段链:trim -> setpts(+st,后续表达式 t = 时间轴秒) -> 缩放(可动画)
             //   -> 旋转(可动画) -> 透明度(可动画)
-            let mut chain = format!(
-                "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,",
-                input_idx,
-                c.asset.source_in,
-                c.source_span_secs(&doc.timebase),
-            );
+            // 变速曲线片段:整段源区间按平均速度压缩到时间轴时长(画中画不做分段)。
+            let spd_kf = c.fx.speed.keyframes.len() >= 2;
+            let mut chain = if spd_kf {
+                let src_range = (c.asset.source_out - c.asset.source_in).max(1e-6);
+                let factor = doc.timebase.secs(c.duration) / src_range;
+                format!(
+                    "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS,setpts=PTS*{factor:.6}+{st:.3}/TB,",
+                    input_idx,
+                    c.asset.source_in,
+                    src_range,
+                )
+            } else {
+                format!(
+                    "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,",
+                    input_idx,
+                    c.asset.source_in,
+                    c.source_span_secs(&doc.timebase),
+                )
+            };
             // 缩放:关键帧动画用 eval=frame 表达式(trunc+0.5 四舍五入),否则静态。
             if anim_scale {
                 let e = anim_expr(&c.fx.scale, &doc.timebase, st)
@@ -682,6 +820,53 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             } else {
                 c.volume
             };
+            let segs = speed_segments(c, &doc.timebase);
+            let has_trans = doc
+                .transitions
+                .iter()
+                .any(|t| t.left_clip_id == c.id || t.right_clip_id == c.id);
+            if segs.len() > 1 && !has_trans {
+                // 变速曲线:分段恒速 atrim+atempo,段间 concat;
+                // 音频滤镜与音量(含关键帧表达式)作用于拼接后的整段
+                let mut seg_labels: Vec<String> = Vec::new();
+                for (j, seg) in segs.iter().enumerate() {
+                    let slabel = format!("[a{ti}_{i}s{j}]");
+                    let mut schain = format!(
+                        "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS",
+                        c.asset.source_in + seg.src_start,
+                        seg.src_end - seg.src_start
+                    );
+                    if (seg.speed - 1.0).abs() > 1e-3 {
+                        let tempo = seg.speed.clamp(0.5, 2.0);
+                        schain.push_str(&format!(",atempo={tempo:.3}"));
+                    }
+                    schain.push_str(&slabel);
+                    filters.push(schain);
+                    seg_labels.push(slabel);
+                }
+                let mut chain = format!(
+                    "{}concat=n={}:v=0:a=1",
+                    seg_labels.concat(),
+                    seg_labels.len()
+                );
+                if !c.fx.audio_fx.is_noop() {
+                    for f in c.fx.audio_fx.to_ffmpeg_chain(doc.timebase.secs(c.duration)) {
+                        chain.push(',');
+                        chain.push_str(&f);
+                    }
+                }
+                let vk = &c.fx.volume.keyframes;
+                if !c.muted && !track_muted && !vk.is_empty() {
+                    let e = anim_expr(&c.fx.volume, &doc.timebase, 0.0)
+                        .unwrap_or_else(|| format!("{vol:.3}"));
+                    chain.push_str(&format!(",volume='{e}':eval=frame{label}"));
+                } else {
+                    chain.push_str(&format!(",volume={vol:.3}{label}"));
+                }
+                filters.push(chain);
+                audio_labels.push(label);
+                continue;
+            }
             let mut chain = format!(
                 "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS",
                 c.asset.source_in,
@@ -1741,6 +1926,74 @@ mod tests {
             .parse()
             .unwrap_or(0.0);
         assert!((dur - 1.0).abs() < 0.35, "动画 PiP 时长应 ~1s, got {dur}");
+    }
+
+    /// 变速曲线 e2e:主轨片段速度关键帧 0.5(0s)-> 2.0(2s),源 2s。
+    /// 时长 = ∫ ≈ 1s(0->0.875s 消费) + ... 由分段编译产出,验证真实 ffmpeg 接受分段滤镜图。
+    #[test]
+    fn e2e_speed_keyframes_segmented_export() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !std::path::Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        d.assets[0].has_audio = false;
+        d.clips[0].asset.source_in = 0.0;
+        d.clips[0].asset.source_out = 2.0;
+        d.clips[0].duration = 150; // 由 SetSpeedAnim 反解:∫ 消费 2s 源 ≈ 100 ticks(0.5@0->2.0@100: 前段 0.375+后段 1.375+尾段 ...)
+        d.clips[0]
+            .fx
+            .speed
+            .set(0, 0.5, veditor_core::Interpolation::Linear);
+        d.clips[0]
+            .fx
+            .speed
+            .set(60, 2.0, veditor_core::Interpolation::Linear);
+        d.clips[0].duration = d.clips[0].ticks_for_source_secs(&d.timebase, 2.0);
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        // 应含分段 concat([v0s0]/[v0s1]...)
+        assert!(fc.contains("[v0s0]"), "fc = {fc}");
+        assert!(fc.contains("concat=n=7:v=1:a=0[v0]"), "fc = {fc}");
+
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_speed_kf.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        run_export(&compile_ffmpeg_cmd(&d, &params)).unwrap();
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let dur: f64 = String::from_utf8_lossy(&probe.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        let expect = d.timebase.secs(d.clips[0].duration);
+        assert!(
+            (dur - expect).abs() < 0.35,
+            "变速曲线时长应 ~{expect:.2}s, got {dur}"
+        );
     }
 
     /// 画中画:双层轨导出,主轨全时长,上层 35% 右下角;验证输出时长与画面差异。

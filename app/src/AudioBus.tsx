@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Animatable, Document } from "./types";
-import { valueAt } from "./anim";
+import { sourceSecsAt, speedAt, valueAt } from "./anim";
 
 interface Props {
   doc: Document | null;
@@ -20,6 +20,7 @@ interface BusClip {
   volume: number;
   muted: boolean;
   fxVolume?: Animatable;
+  fxSpeed?: Animatable;
   fade: { in: number; out: number };
 }
 
@@ -47,6 +48,7 @@ function audioClipsAt(doc: Document, t: number): BusClip[] {
         volume: c.volume,
         muted: c.muted || tr.muted,
         fxVolume: c.fx?.volume,
+        fxSpeed: c.fx?.speed,
         fade: { in: c.fx?.audio_fx?.fade_in ?? 0, out: c.fx?.audio_fx?.fade_out ?? 0 },
       });
     }
@@ -103,8 +105,9 @@ export default function AudioBus({ doc, playing, playheadRef }: Props) {
           document.body.appendChild(el);
           elsRef.current.set(c.id, el);
         }
-        const local = (t - c.start) / tps;
-        const expected = c.sourceIn + local * c.speed;
+        const localTicks = t - c.start;
+        const local = localTicks / tps;
+        const expected = c.sourceIn + sourceSecsAt(c.speed, c.fxSpeed?.keyframes, tps, 1, localTicks);
         const kfV = valueAt(c.fxVolume?.keyframes, local) ?? 1;
         let fade = 1;
         if (c.fade.in > 0 && local < c.fade.in) fade *= local / c.fade.in;
@@ -112,7 +115,8 @@ export default function AudioBus({ doc, playing, playheadRef }: Props) {
           fade *= Math.max(0, (c.durSecs - local) / c.fade.out);
         }
         el.volume = Math.min(1, Math.max(0, c.muted ? 0 : c.volume * kfV * fade));
-        el.playbackRate = Math.min(4, Math.max(0.25, c.speed));
+        // 变速曲线:实时取当前速度(线性变速时播放速率逐段跟随)
+        el.playbackRate = Math.min(4, Math.max(0.25, speedAt(c.speed, c.fxSpeed?.keyframes, localTicks)));
         // 漂移超阈值才重定位(频繁 currentTime 赋值会打断连续播放)
         if (Math.abs(el.currentTime - expected) > 0.15) {
           el.currentTime = Math.max(0, expected);

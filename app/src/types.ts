@@ -84,6 +84,8 @@ export interface ClipFx {
   rotate: Animatable;
   x_offset: Animatable;
   y_offset: Animatable;
+  /// 速度关键帧(>=2 帧生效,时长自动反解)。
+  speed: Animatable;
   grade: ColorGrade;
   volume: Animatable;
   chroma_key?: ChromaKey;

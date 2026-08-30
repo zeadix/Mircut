@@ -16,7 +16,8 @@ pub use subtitle::{parse_srt, to_srt, SubtitleCue, SubtitleStyle, SubtitleTrack}
 
 pub use commands_m2::{
     AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, ReorderTrack, RippleDelete,
-    SetClipAudio, SetClipRange, SetFx, SetSpeed, SetTrackFlags, SetTransition, TagAsset,
+    SetClipAudio, SetClipRange, SetFx, SetSpeed, SetSpeedAnim, SetTrackFlags, SetTransition,
+    TagAsset,
 };
 pub use fx::{
     bezier_eval, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect, Interpolation,
@@ -95,9 +96,121 @@ impl Clip {
         self.start + self.duration
     }
 
-    /// 源文件内实际消费的时长(秒),考虑变速。
+    /// 源文件内实际消费的时长(秒),考虑变速(静态速度语义;
+    /// 速度关键帧场景用 source_out - source_in 为准)。
     pub fn source_span_secs(&self, tb: &Timebase) -> f64 {
         tb.secs(self.duration) * self.speed
+    }
+
+    /// 源区间总长(秒):变速曲线的积分目标。
+    pub fn source_range_secs(&self) -> f64 {
+        (self.asset.source_out - self.asset.source_in).max(0.0)
+    }
+
+    /// 片段本地 t(ticks)处的速度(fx.speed >=2 帧时按关键帧,否则静态 speed)。
+    pub fn speed_at(&self, t_local: Ticks) -> f64 {
+        let kf = &self.fx.speed.keyframes;
+        if kf.len() >= 2 {
+            self.fx.speed.value_at(t_local).unwrap_or(self.speed)
+        } else if kf.len() == 1 {
+            kf[0].value
+        } else {
+            self.speed
+        }
+    }
+
+    /// 片段本地时间轴 t(ticks)处已消费的源时长(秒)= ∫₀ᵗ speed。
+    /// 速度关键帧按段内线性插值积分(梯形);贝塞尔/平滑按线性近似。
+    pub fn source_secs_at(&self, tb: &Timebase, t_local: Ticks) -> f64 {
+        let kfs = &self.fx.speed.keyframes;
+        if kfs.len() < 2 {
+            return tb.secs(t_local) * self.speed_at(t_local);
+        }
+        let mut pts: Vec<(Ticks, f64)> = kfs.iter().map(|k| (k.t, k.value)).collect();
+        pts.sort_by_key(|p| p.0);
+        let mut acc = 0.0f64;
+        let t0 = pts[0].0.min(t_local);
+        if t0 > 0 {
+            acc += pts[0].1 * tb.secs(t0);
+        }
+        let mut prev = t0;
+        for w in pts.windows(2) {
+            if prev >= t_local {
+                break;
+            }
+            let (ta, va) = (w[0].0, w[0].1);
+            let (tbb, vb) = (w[1].0, w[1].1);
+            let seg_end = tbb.min(t_local);
+            if seg_end > ta {
+                let start = ta.max(prev);
+                if seg_end > start {
+                    let span = (tbb - ta).max(1) as f64;
+                    let v_start = va + (vb - va) * ((start - ta) as f64 / span);
+                    let v_end = va + (vb - va) * ((seg_end - ta) as f64 / span);
+                    acc += (v_start + v_end) / 2.0 * tb.secs(seg_end - start);
+                    prev = seg_end;
+                }
+            }
+        }
+        if t_local > prev {
+            acc += pts[pts.len() - 1].1 * tb.secs(t_local - prev);
+        }
+        acc.max(0.0)
+    }
+
+    /// 反解:消费 target 秒源内容所需的片段本地时长(ticks,>=1)。
+    /// 与 source_secs_at 互逆(速度段内线性)。
+    pub fn ticks_for_source_secs(&self, tb: &Timebase, target: f64) -> Ticks {
+        let kfs = &self.fx.speed.keyframes;
+        let target = target.max(0.0);
+        if kfs.len() < 2 {
+            let sp = self.speed_at(0).max(1e-3);
+            return tb.ticks(target / sp).max(1);
+        }
+        let mut pts: Vec<(Ticks, f64)> = kfs.iter().map(|k| (k.t, k.value)).collect();
+        pts.sort_by_key(|p| p.0);
+        let k = tb.den as f64 / tb.num as f64; // secs per tick
+        let mut acc = 0.0f64;
+        let t0 = pts[0].0;
+        if t0 > 0 {
+            // [0, t0] 恒速 v0
+            let seg = t0 as f64 * k * pts[0].1;
+            if target <= seg {
+                return ((target / (pts[0].1 * k)).round() as i64).max(1);
+            }
+            acc = seg;
+        }
+        for w in pts.windows(2) {
+            let (ta, va) = (w[0].0, w[0].1);
+            let (tbb, vb) = (w[1].0, w[1].1);
+            let t_span = (tbb - ta).max(1);
+            let l_span = t_span as f64 * k;
+            let dv = vb - va;
+            // 段内总消费
+            let seg_total = (va + vb) / 2.0 * l_span;
+            if target <= acc + seg_total {
+                let rem = target - acc;
+                if dv.abs() < 1e-9 {
+                    let s = (rem / (va.max(1e-3) * k)).round() as i64;
+                    return (ta + s.clamp(0, t_span)).max(1);
+                }
+                // k*(va*s + dv*s²/(2T)) = rem,s 单位 ticks(k = 每 tick 秒数)
+                let a_q = dv * k / (2.0 * t_span as f64);
+                let b_q = va * k;
+                let disc = b_q * b_q + 4.0 * a_q * rem;
+                let s = if disc < 0.0 {
+                    t_span as f64
+                } else {
+                    ((-b_q + disc.sqrt()) / (2.0 * a_q)).clamp(0.0, t_span as f64)
+                };
+                return (ta + s.round() as i64).max(1);
+            }
+            acc += seg_total;
+        }
+        // 末段之后恒速
+        let last = pts[pts.len() - 1].1.max(1e-3);
+        let last_t = pts[pts.len() - 1].0;
+        last_t + ((target - acc) / (last * k)).round() as i64
     }
 }
 
@@ -955,5 +1068,69 @@ mod tests {
         let stripped = json.replace(",\"markers\":[]", "");
         let back: Document = serde_json::from_str(&stripped).unwrap();
         assert!(back.markers.is_empty());
+    }
+
+    #[test]
+    fn speed_keyframe_integral_and_inverse() {
+        let t = tb(); // 30fps
+        let mut c = clip("c1", "t1", 0, 60);
+        c.asset.source_in = 0.0;
+        c.asset.source_out = 10.0;
+        // 无关键帧:静态语义
+        assert!((c.source_secs_at(&t, 30) - 1.0).abs() < 1e-9);
+        assert!((c.source_span_secs(&t) - 2.0).abs() < 1e-9);
+        // 线性变速 0.5(0s) -> 2.0(2s):∫ = 0.875 + 1.625 = 2.5s @ 60 ticks
+        c.fx.speed.set(0, 0.5, Interpolation::Linear);
+        c.fx.speed.set(60, 2.0, Interpolation::Linear);
+        assert_eq!(c.speed_at(0), 0.5);
+        assert_eq!(c.speed_at(30), 1.25);
+        assert_eq!(c.speed_at(90), 2.0); // 端点外钳制
+        assert!((c.source_secs_at(&t, 60) - 2.5).abs() < 1e-6);
+        // 反解:消费 2.5s 源 = 60 ticks;消费 0.875s = 30 ticks
+        assert_eq!(c.ticks_for_source_secs(&t, 2.5), 60);
+        assert_eq!(c.ticks_for_source_secs(&t, 0.875), 30);
+        assert!(c.ticks_for_source_secs(&t, 0.0) >= 1);
+        // 互逆扫描
+        for tt in [0, 7, 15, 30, 45, 59, 60, 80] {
+            let src = c.source_secs_at(&t, tt);
+            let back = c.ticks_for_source_secs(&t, src);
+            let src2 = c.source_secs_at(&t, back);
+            assert!(
+                (src - src2).abs() < 0.05,
+                "t={tt} src={src} back={back} src2={src2}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_speed_anim_resolves_duration() {
+        let mut doc = Document::default();
+        doc.tracks.push(Track {
+            id: "t1".into(),
+            kind: TrackKind::Video,
+            name: "V1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+        });
+        let mut c = clip("c1", "t1", 0, 30);
+        c.asset.source_in = 0.0;
+        c.asset.source_out = 2.0; // 2s 源
+        doc.clips.push(c);
+        let mut anim = Animatable::default();
+        anim.set(0, 0.5, Interpolation::Linear);
+        anim.set(60, 2.0, Interpolation::Linear);
+        let mut cmd = SetSpeedAnim::new("c1", anim);
+        cmd.apply(&mut doc);
+        let c = doc.clip("c1").unwrap();
+        // 2s 源在 0.5→2.0 变速下消费耗时 2.5s(反解 75 ticks? ∫ 直到 2.5s 源):
+        // t=60 ticks 时已消费 2.5s > 2s → 时长 < 60
+        assert_eq!(c.duration, c.ticks_for_source_secs(&doc.timebase, 2.0));
+        assert!(c.duration > 0 && c.duration < 60);
+        // undo 回滚时长与关键帧
+        cmd.undo(&mut doc);
+        let c = doc.clip("c1").unwrap();
+        assert_eq!(c.duration, 30);
+        assert!(c.fx.speed.keyframes.is_empty());
     }
 }

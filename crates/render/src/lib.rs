@@ -96,8 +96,10 @@ impl Renderer for ProxyRenderer {
                 .get(&clip.asset.asset_id)
                 .cloned()
                 .unwrap_or_else(|| PathBuf::from(&asset.path));
-            let offset_secs = self.doc.timebase.secs(t - clip.start);
-            let source_secs = clip.asset.source_in + offset_secs * clip.speed;
+            let offset_ticks = t - clip.start;
+            // 速度关键帧(>=2)时按积分求源时间,否则线性
+            let source_secs =
+                clip.asset.source_in + clip.source_secs_at(&self.doc.timebase, offset_ticks);
             (clip.asset.asset_id.clone(), media_path, source_secs)
         };
         let key = (asset_id.clone(), (source_secs * 1000.0) as i64);

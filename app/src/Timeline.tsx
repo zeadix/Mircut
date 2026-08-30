@@ -284,6 +284,22 @@ function TimelineInner({
         ctx.fillStyle = "#ffd75e";
         ctx.fillRect(x, laneTop, Math.max(cw, 2), 3);
       }
+      // 速度关键帧标记(>=2 帧):片段顶边橙色菱形(变速曲线可视化)
+      const spk = clip.fx?.speed?.keyframes ?? [];
+      if (spk.length >= 2) {
+        ctx.fillStyle = "#ff9f43";
+        for (const k of spk) {
+          const kx = (clip.start + k.t) * pxPerTick;
+          if (kx < vx0 - 4 || kx > vx1 + 4) continue;
+          ctx.beginPath();
+          ctx.moveTo(kx, laneTop + 1);
+          ctx.lineTo(kx + 3.5, laneTop + 5);
+          ctx.lineTo(kx, laneTop + 9);
+          ctx.lineTo(kx - 3.5, laneTop + 5);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
       // 音量包络(音频块):音量关键帧折线 + 关键帧点 + 拖拽实时点
       if (isAudioBlock && h >= 18 && cw > 8) {
         const kfs = clip.fx?.volume?.keyframes ?? [];

@@ -296,6 +296,9 @@ pub struct ClipFx {
     pub rotate: Animatable,
     pub x_offset: Animatable,
     pub y_offset: Animatable,
+    /// 速度关键帧(>=2 帧生效,覆盖 Clip.speed;时长由命令自动反解)。
+    #[serde(default)]
+    pub speed: Animatable,
     pub grade: ColorGrade,
     /// 音量关键帧(与 Clip.volume 独立:有关键帧时优先)。
     pub volume: Animatable,

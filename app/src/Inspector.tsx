@@ -711,6 +711,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           </button>
           <button
             className="btn"
+            onClick={() => addKeyframe("speed", 1.0)}
+            title="速度关键帧(倍率;时长自动反解)"
+          >
+            + 速度帧
+          </button>
+          <button
+            className="btn"
             onClick={async () => {
               // 位移帧:x/y 同一时刻成对添加(保持位置连续)
               const t = playheadTicks - clip!.start;
@@ -786,6 +793,17 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.01}
           onRefresh={onRefresh}
         />
+        <KeyframeEditor
+          clipId={clip.id}
+          prop="speed"
+          label="速度(倍率)"
+          keyframes={clip.fx?.speed.keyframes ?? []}
+          tps={tps}
+          min={0.1}
+          max={16}
+          step={0.05}
+          onRefresh={onRefresh}
+        />
         <div style={{ color: "#667", marginTop: 2 }}>
           关键帧按播放头位置添加;缩放/位移 ≥2 帧时优先于画中画静态参数
         </div>
@@ -851,6 +869,7 @@ function emptyFx(): NonNullable<Clip["fx"]> {
     rotate: { keyframes: [] },
     x_offset: { keyframes: [] },
     y_offset: { keyframes: [] },
+    speed: { keyframes: [] },
     grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 },
     volume: { keyframes: [] },
     chroma_key: { similarity: 0, color: "#00ff00", blend: 0.1 },

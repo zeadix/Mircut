@@ -205,6 +205,47 @@ impl Command for SetSpeed {
     }
 }
 
+/// 速度关键帧命令:写入 fx.speed 并按源区间反解时间轴时长
+/// (变速曲线改变播放耗时;undo 同时回滚关键帧与时长)。
+pub struct SetSpeedAnim {
+    pub clip_id: String,
+    pub anim: crate::fx::Animatable,
+    old: Option<(crate::fx::Animatable, Ticks)>,
+}
+
+impl SetSpeedAnim {
+    pub fn new(clip_id: impl Into<String>, anim: crate::fx::Animatable) -> Self {
+        Self {
+            clip_id: clip_id.into(),
+            anim,
+            old: None,
+        }
+    }
+}
+
+impl Command for SetSpeedAnim {
+    fn label(&self) -> &str {
+        "变速曲线"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
+            self.old = Some((c.fx.speed.clone(), c.duration));
+            c.fx.speed = self.anim.clone();
+            // 按源区间反解时长(静态速度时 = span/speed)
+            let span = c.source_range_secs();
+            c.duration = c.ticks_for_source_secs(&doc.timebase, span).max(1);
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some((anim, duration)) = self.old.take() {
+            if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
+                c.fx.speed = anim;
+                c.duration = duration;
+            }
+        }
+    }
+}
+
 /// 设置片段音量/静音。
 pub struct SetClipAudio {
     pub clip_id: String,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bezierY, valueAt } from "./anim";
+import { bezierY, sourceSecsAt, speedAt, valueAt } from "./anim";
 import type { Keyframe } from "./types";
 
 const kf = (t: number, value: number, interp: Keyframe["interp"] = "Linear"): Keyframe => ({
@@ -58,5 +58,24 @@ describe("bezierY", () => {
   it("端点", () => {
     expect(bezierY(0, 0.42, 0, 0.58, 1)).toBeCloseTo(0, 6);
     expect(bezierY(1, 0.42, 0, 0.58, 1)).toBeCloseTo(1, 6);
+  });
+});
+
+describe("sourceSecsAt / speedAt(变速曲线)", () => {
+  const clip = (speed: number, kfs?: Keyframe[]) => ({ speed, fx: { speed: { keyframes: kfs ?? [] } } });
+  it("无关键帧走静态语义", () => {
+    expect(sourceSecsAt(1, [], 30, 1, 30)).toBeCloseTo(1);
+    expect(sourceSecsAt(2, undefined, 30, 1, 30)).toBeCloseTo(2);
+  });
+  it("线性变速积分(0.5@0 -> 2.0@60)", () => {
+    const kfs = [kf(0, 0.5), kf(60, 2.0)];
+    expect(sourceSecsAt(1, kfs, 30, 1, 60)).toBeCloseTo(2.5, 5);
+    expect(sourceSecsAt(1, kfs, 30, 1, 30)).toBeCloseTo(0.875, 5);
+  });
+  it("speedAt 端点钳制", () => {
+    const kfs = [kf(0, 0.5), kf(60, 2.0)];
+    expect(speedAt(1, kfs, 0)).toBe(0.5);
+    expect(speedAt(1, kfs, 30)).toBeCloseTo(1.25);
+    expect(speedAt(1, kfs, 90)).toBe(2.0);
   });
 });

@@ -54,3 +54,51 @@ function bx(t: number, c1x: number, c2x: number): number {
 function by(t: number, c1y: number, c2y: number): number {
   return 3 * (1 - t) * (1 - t) * t * c1y + 3 * (1 - t) * t * t * c2y + t * t * t;
 }
+
+
+/// 片段本地时间轴 t(ticks)处已消费的源时长(秒)= ∫speed。
+/// 与 Rust Clip::source_secs_at 语义一致(速度关键帧段内线性积分,梯形)。
+export function sourceSecsAt(
+  staticSpeed: number,
+  kfs: Keyframe[] | undefined,
+  tbNum: number,
+  tbDen: number,
+  tLocal: number
+): number {
+  const secs = (ticks: number) => (ticks * tbDen) / tbNum;
+  if (!kfs || kfs.length < 2) {
+    return secs(tLocal) * (staticSpeed || 1);
+  }
+  const pts = [...kfs].sort((a, b) => a.t - b.t);
+  let acc = 0;
+  const t0 = Math.min(pts[0].t, tLocal);
+  if (t0 > 0) acc += pts[0].value * secs(t0);
+  let prev = t0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (prev >= tLocal) break;
+    const ta = pts[i].t;
+    const va = pts[i].value;
+    const tbb = pts[i + 1].t;
+    const vb = pts[i + 1].value;
+    const segEnd = Math.min(tbb, tLocal);
+    if (segEnd > ta) {
+      const start = Math.max(ta, prev);
+      if (segEnd > start) {
+        const span = Math.max(1, tbb - ta);
+        const vStart = va + ((vb - va) * (start - ta)) / span;
+        const vEnd = va + ((vb - va) * (segEnd - ta)) / span;
+        acc += ((vStart + vEnd) / 2) * secs(segEnd - start);
+        prev = segEnd;
+      }
+    }
+  }
+  if (tLocal > prev) acc += pts[pts.length - 1].value * secs(tLocal - prev);
+  return Math.max(0, acc);
+}
+
+/// 片段本地 t(ticks)处的速度(速度关键帧 >=1 帧生效,否则静态)。
+export function speedAt(staticSpeed: number, kfs: Keyframe[] | undefined, tLocal: number): number {
+  if (kfs && kfs.length >= 2) return valueAt(kfs, tLocal) ?? staticSpeed;
+  if (kfs && kfs.length === 1) return kfs[0].value;
+  return staticSpeed || 1;
+}
