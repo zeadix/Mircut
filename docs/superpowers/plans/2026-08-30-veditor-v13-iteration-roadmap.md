@@ -1,7 +1,7 @@
 # VEditor v1.3 产品迭代路线图（对标剪映）
 
 - **日期**: 2026-08-30
-- **状态**: 批次 1 全部 + 批次 2 大部 + 批次 3 三项(转场 15 种/波形落盘/媒体库第一场) + 批次 4 第一场 已执行(2026-08-30,提交 f5f23b0..d7c9850)
+- **状态**: 批次 1 全部 + 批次 2 大部 + 批次 3 三项 + 批次 4 两场(帧率/硬编/波形落盘/死代码/导出队列) + 贯穿项 main.rs 拆分 已执行(2026-08-30,提交 f5f23b0..本提交)
 - **依据**: v1.2 全仓代码探索(前端 21 源文件 + crates 全部 + git 130 commits) + `docs/superpowers/specs/2026-08-27-veditor-prd-design.md` + `docs/superpowers/plans/2026-08-28-veditor-capcut-parity-roadmap.md`
 - **定位**: 08-28 路线图的对标项已基本落地(见第 3 节状态校准),本路线图回答"下一阶段做什么、为什么是这个顺序"。
 
@@ -139,7 +139,7 @@
 - [ ] **代理策略修正**：g=1 → 分级（g=10 + seek 侧帧缓存），代理生成走硬编；评估磁盘占用上限策略
 - [ ] **wgpu 实时合成 MVP**（Renderer trait 已预留 render/lib.rs:23）：先单轨实时解码+合成，后多轨；这是批次 8（合成语义层）的渲染端落地
 - [x] **RealtimeRenderer fps 修复**：probe 解析 r_frame_rate → Asset.fps → 解码管道真实帧率（替换硬编码 30）
-- [ ] **导出队列**：批量任务/暂停/优先级（PRD P0，现仅单任务进度+取消）
+- [x] **导出队列**（PRD P0）:ExportDialog 队列化——顺序执行/暂停继续/运行中取消/按全部预设批量入队/一键发布统一走队列
 - [ ] **性能验收 CI 化**（PRD 3.5）：8 轨 1080p 预览 60fps、10min 素材导出 <5min、内存 <1.5GB、启动 <1.5s 落进 criterion/CI 门禁
 - 验收：硬编在支持的机器上默认启用且可回退软编；性能指标在 CI 可见、不回退。
 
@@ -154,7 +154,7 @@
 ## 9. 贯穿的结构性/工程项
 
 - [ ] **合成语义层（最重要架构决策）**：把 export 的滤镜图编译器拆出"clip 在 t 时刻最终视觉/听觉状态"中间描述层；预览渲染器（wgpu 或前端 canvas）与导出编译器消费**同一描述**。结构性消除所见非所得，新增特效只需实现一次。批次 1.2 的前端合成按此接口先写，避免返工。
-- [ ] main.rs（3243 行 74 命令）按域拆模块（document/media/render/export/ai/project）
+- [x] main.rs（3243 行 74 命令）按域拆模块:state/util/media/timeline/fx/render/subtitles/export/project/ai/plugins(main.rs 仅存装配+测试 1145 行)
 - [ ] Timeline.tsx 1332 行 / App.tsx 883 行 / Inspector.tsx 750 行拆分；状态管理 Zustand 化（PRD 原规划），消除选中态三处穿透与全量 refresh
 - [ ] Playwright 冒烟测试（导入→剪辑→导出主链路）
 - [ ] i18n 框架 + 设计 token（CSS 变量），为国际版/亮色主题铺路

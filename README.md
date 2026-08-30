@@ -14,9 +14,10 @@
 - **字幕**:SRT/ASS 导入导出、AI 识别(whisper-cli,降级静音切分)、drawtext 烧录
 - **文字**:标题叠层(颜色/字号/位置/描边/双层花字描边/背景色/样式包)+ TTS 配音(espeak-ng / piper)
 - **示波器**:亮度波形图 + UV 矢量示波器(跟随播放头)
-- **导出**:FFmpeg 命令预览、进度事件/取消、平台预设(B站/YouTube/抖音/4K/竖屏)、宽高比保持
+- **导出**:FFmpeg 命令预览、**导出队列(顺序/暂停/批量按预设)**、进度事件/取消、平台预设(B站/YouTube/抖音/4K/竖屏)、宽高比保持
 - **渲染引擎**:代理引擎(逐帧)与实时管道引擎(顺序帧流)可切换
 - **可靠性**:自动快照崩溃恢复、项目保存/打开
+- **架构**:Rust 后端按域分模块(state/media/timeline/fx/render/subtitles/export/project/ai/plugins)
 - **测试**:Rust 102 项 + 前端 Vitest 39 项,CI 覆盖 fmt/clippy/test/bench
 - **性能**:实时引擎真实帧率解码、硬件编码探测(nvenc/qsv)、波形磁盘缓存、惰性代理
 
