@@ -4,29 +4,24 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { Document, FxRect } from "./types";
-import MiniWaveform from "./MiniWaveform";
 import Timeline from "./Timeline";
 import Preview from "./Preview";
-import Inspector from "./Inspector";
-import SubtitlePanel from "./SubtitlePanel";
-import TextPanel from "./TextPanel";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
-import StickerPanel from "./StickerPanel";
 import AudioBus from "./AudioBus";
 import {
   FilmSlate,
-  FolderOpen,
   Scissors,
   Trash,
   ArrowCounterClockwise,
   ArrowClockwise,
   Export,
   Plus,
-  VideoCamera,
-  SpeakerHigh,
   Waves,
 } from "@phosphor-icons/react";
+import { useEditor } from "./store";
+import MediaLibrary from "./MediaLibrary";
+import RightPanel from "./RightPanel";
 
 /// 时间码显示:mm:ss.ff。
 function fmtTimecode(secs: number): string {
@@ -43,40 +38,39 @@ function parseTimecode(s: string): number {
   return parts.reduce((acc, p) => acc * 60 + p, 0);
 }
 
-export default function App() {  const [doc, setDoc] = useState<Document | null>(null);
-  const [playhead, setPlayhead] = useState(0);
-  /// 播放头真值(rAF 直写,避免每帧 React 重渲染)。
+export default function App() {  /// 全局编辑器状态(store):doc/selected/playing/playhead/status。
+  const doc = useEditor((s) => s.doc);
+  const selected = useEditor((s) => s.selected);
+  const playhead = useEditor((s) => s.playhead);
+  const playing = useEditor((s) => s.playing);
+  const playSpeed = useEditor((s) => s.playSpeed);
+  const status = useEditor((s) => s.status);
+  const setPlaying = useEditor((s) => s.setPlaying);
+  const setPlaySpeed = useEditor((s) => s.setPlaySpeed);
+  const setPlayhead = useEditor((s) => s.setPlayhead);
+  const setStatus = useEditor((s) => s.setStatus);
+  const selectClip = useEditor((s) => s.selectClip);
+  const selectMany = useEditor((s) => s.selectMany);
+  const refreshStore = useEditor((s) => s.refresh);
+  /// 播放头真值(rAF 直写;来自 store)。
   const playheadRef = useRef(0);
-  useEffect(() => {
-    playheadRef.current = playhead;
-  }, [playhead]);
-  /// 多选:时间轴选中片段 id 列表(点击单选,Shift/Ctrl 增减,空白拖拽框选)。
-  const [selected, setSelected] = useState<string[]>([]);
+  playheadRef.current = playhead;
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
-  const [status, setStatus] = useState("");
+
   const [exportDialog, setExportDialog] = useState(false);
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
-  const [playing, setPlaying] = useState(false);
-  const [playSpeed, setPlaySpeed] = useState(1);
   /// 时间码草稿(非 null = 正在编辑,否则显示当前时间)。
   const [tcDraft, setTcDraft] = useState<string | null>(null);
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
-  const [mediaQuery, setMediaQuery] = useState("");
-  /// 媒体库:网格视图 + 分类 Tab + 重命名/标签编辑。
-  const [mediaGrid, setMediaGrid] = useState(false);
-  const [mediaCat, setMediaCat] = useState<"all" | "video" | "audio" | "image">("all");
-  const [editingAsset, setEditingAsset] = useState<string | null>(null);
-  const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
+
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
   // 拖拽中的素材类型(缝隙建轨提示用)
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
-  const [rightTab, setRightTab] = useState<"inspector" | "subtitles" | "texts" | "stickers">("inspector");
-  const fileRef = useRef<HTMLInputElement>(null);
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef<number>(0);
   const fps = doc ? doc.timebase.num / doc.timebase.den : 30;
@@ -143,30 +137,8 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     }
   }, [playhead, playing, doc]);
 
-  const refreshLockRef = useRef(0);
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refresh = useCallback(async () => {
-    // 节流合并:150ms 内多次编辑只拉一次全量文档
-    const now = Date.now();
-    const gap = now - refreshLockRef.current;
-    if (gap < 150 && refreshTimerRef.current === null) {
-      refreshTimerRef.current = setTimeout(() => {
-        refreshTimerRef.current = null;
-        void refresh();
-      }, 150 - gap);
-      return;
-    }
-    refreshLockRef.current = now;
-    const d = await api.getDocument();
-    // 归一化:文件轨上 lane=null 的旧片段视为视频块(渲染/命中一致)
-    for (const c of d.clips) {
-      const track = d.tracks.find((t) => t.id === c.track_id);
-      if (track?.kind === "File" && (c.lane === null || c.lane === undefined)) {
-        c.lane = "Video";
-      }
-    }
-    setDoc(d);
-  }, []);
+  /// 统一 refresh:store 节流版本(归一化在 store 内完成)。
+  const refresh = refreshStore;
 
   useEffect(() => {
     refresh();
@@ -253,14 +225,14 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     if (selected.length === 0) return;
     if (selected.length === 1) await api.removeClip(selected[0]);
     else await api.removeClips(selected);
-    setSelected([]);
+    selectMany([]);
     await refresh();
   }
 
   async function onBatchRemove() {
     if (selected.length === 0) return;
     await api.removeClips(selected);
-    setSelected([]);
+    selectMany([]);
     await refresh();
   }
 
@@ -273,7 +245,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
   async function onRippleDelete() {
     if (selected.length !== 1) return;
     await api.rippleDelete(selected[0]);
-    setSelected([]);
+    selectMany([]);
     await refresh();
   }
 
@@ -309,11 +281,11 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
         }
         case "remove":
           await api.removeClip(clipId);
-          setSelected((s) => s.filter((id) => id !== clipId));
+          selectMany(selected.filter((id) => id !== clipId));
           break;
         case "ripple-remove":
           await api.rippleDelete(clipId);
-          setSelected((s) => s.filter((id) => id !== clipId));
+          selectMany(selected.filter((id) => id !== clipId));
           break;
         case "detach-audio":
           await api.detachAudio(clipId);
@@ -479,16 +451,8 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     await refresh();
   }
 
-  /// 多选点击:plain=单选,additive=切换增减。
-  const onClipClick = useCallback((clipId: string, additive: boolean) => {
-    setSelected((prev) =>
-      additive
-        ? prev.includes(clipId)
-          ? prev.filter((id) => id !== clipId)
-          : [...prev, clipId]
-        : [clipId]
-    );
-  }, []);
+  /// 多选点击:直接用 store action。
+  const onClipClick = selectClip;
 
   /// 移除标记。
   async function onRemoveMarker(t: number) {
@@ -628,7 +592,7 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
     try {
       await api.removeTrack(trackId);
       if (doc?.clips.some((c) => selected.includes(c.id) && c.track_id === trackId)) {
-        setSelected((s) => s.filter((id) => !doc.clips.some((c) => c.id === id && c.track_id === trackId)));
+        selectMany(selected.filter((id) => !doc.clips.some((c) => c.id === id && c.track_id === trackId)));
       }
     } catch (e) {
       setStatus(`删除轨道失败: ${String(e).slice(0, 120)}`);
@@ -662,20 +626,6 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
       setStatus(`放置失败: ${String(e).slice(0, 120)}`);
     }
     await refresh();
-  }
-
-  /// 媒体分类:按扩展名归类(音乐/音效库浏览)。
-  const MEDIA_EXTS = {
-    video: ["mp4", "mov", "mkv", "webm", "avi", "m4v"],
-    audio: ["mp3", "wav", "aac", "ogg", "flac", "m4a", "opus"],
-    image: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"],
-  } as const;
-  function mediaKind(a: { path: string }): "video" | "audio" | "image" | "other" {
-    const ext = a.path.split(".").pop()?.toLowerCase() ?? "";
-    if ((MEDIA_EXTS.video as readonly string[]).includes(ext)) return "video";
-    if ((MEDIA_EXTS.audio as readonly string[]).includes(ext)) return "audio";
-    if ((MEDIA_EXTS.image as readonly string[]).includes(ext)) return "image";
-    return "other";
   }
 
   /// 扫描音乐/音效文件夹:批量导入(已导入的路径自动跳过)并打"音乐"标签。
@@ -804,20 +754,24 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
           break;
         case " ":
           e.preventDefault();
-          setPlaying((p) => !p);
+          setPlaying(!playing);
           break;
-        case "j":
+        case "j": {
           setPlaying(true);
-          setPlaySpeed((s) => (s > 0 ? -1 : s === -1 ? -2 : -1));
+          const cur = useEditor.getState().playSpeed;
+          setPlaySpeed(cur > 0 ? -1 : cur === -1 ? -2 : -1);
           break;
+        }
         case "k":
           setPlaying(false);
           setPlaySpeed(1);
           break;
-        case "l":
+        case "l": {
           setPlaying(true);
-          setPlaySpeed((s) => (s < 0 ? 1 : s === 1 ? 2 : s >= 2 ? 4 : 1));
+          const cur = useEditor.getState().playSpeed;
+          setPlaySpeed(cur < 0 ? 1 : cur === 1 ? 2 : cur >= 2 ? 4 : 1);
           break;
+        }
         case "i":
         case "I": {
           // 播放头设为选中片段入点(剪映/PR 习惯)
@@ -967,174 +921,23 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* 媒体库 */}
-        <aside style={{ width: 220, background: "#17181c", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
-          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-            <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
-            <span style={{ flex: 1 }} />
-            <button
-              className="btn"
-              title="扫描音乐/音效文件夹(批量导入并打标签)"
-              onClick={onScanMusicDir}
-            >
-              ♪ 音乐库
-            </button>
-            <button
-              className="btn"
-              title={mediaGrid ? "切换为列表视图" : "切换为网格视图"}
-              onClick={() => setMediaGrid((v) => !v)}
-            >
-              {mediaGrid ? "☰" : "▦"}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              style={{ display: "none" }}
-              onChange={(e) => onImportFiles(e.target.files)}
-            />
-          </div>
-          <input
-            className="ti"
-            placeholder="搜索/标签过滤..."
-            value={mediaQuery}
-            onChange={(e) => setMediaQuery(e.target.value)}
-            style={{ width: "100%", marginBottom: 8 }}
-          />
-          <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
-            {([
-              ["all", "全部"],
-              ["video", "视频"],
-              ["audio", "音频"],
-              ["image", "图片"],
-            ] as const).map(([k, label]) => (
-              <button
-                key={k}
-                className="btn"
-                style={{
-                  padding: "1px 8px",
-                  fontSize: 10,
-                  borderColor: mediaCat === k ? "#ffd75e" : undefined,
-                  color: mediaCat === k ? "#ffd75e" : undefined,
-                }}
-                onClick={() => setMediaCat(k)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: mediaGrid ? "grid" : "block", gridTemplateColumns: mediaGrid ? "1fr 1fr" : undefined, gap: 6 }}>
-          {doc.assets
-            .filter((a) => {
-              if (mediaCat !== "all") {
-                const kind = mediaKind(a);
-                if (mediaCat === "audio" && !(kind === "audio" || (a.tags ?? []).includes("音乐"))) return false;
-                if (mediaCat === "video" && kind !== "video") return false;
-                if (mediaCat === "image" && kind !== "image") return false;
-              }
-              if (!mediaQuery.trim()) return true;
-              const q = mediaQuery.trim().toLowerCase();
-              return (
-                a.path.toLowerCase().includes(q) ||
-                (a.name ?? "").toLowerCase().includes(q) ||
-                (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
-              );
-            })
-            .map((a) => (
-            <div
-              key={a.id}
-              className="asset-card"
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("application/x-veditor-asset", a.id);
-                setDragKind(a.has_video ? "video" : "audio");
-                e.dataTransfer.effectAllowed = "copy";
-              }}
-              onDoubleClick={() => addToTimeline(a.id)}
-              onClick={() => setAssetPreview({ path: a.path, secs: a.duration_secs / 2 })}
-              title="拖到时间轴放置;双击追加到末尾;单击预览"
-              style={{ cursor: "grab" }}
-            >
-              {!a.has_video && a.has_audio ? (
-                <MiniWaveform peaks={waveforms[a.id] ?? []} />
-              ) : thumbs[a.id] ? (
-                <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
-              ) : (
-                <div style={{ background: "#24262c", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>
-                  {a.has_video ? "视频" : "音频"}
-                </div>
-              )}
-              <div style={{ fontSize: 11, marginTop: 4, color: "#aab", display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {a.name ?? a.path.split("/").pop()}
-                </span>
-                <button
-                  className="btn"
-                  style={{ padding: "1px 4px", fontSize: 10, flexShrink: 0 }}
-                  title="重命名/标签"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEditingAsset(editingAsset === a.id ? null : a.id);
-                    setAssetDraft({ name: a.name ?? "", tags: (a.tags ?? []).join(", ") });
-                  }}
-                >
-                  ✎
-                </button>
-                <div style={{ color: "#667", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
-                {(a.tags ?? []).length > 0 && (
-                  <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {a.tags!.map((t) => (
-                      <span key={t} style={{ background: "#2c3a55", borderRadius: 3, padding: "1px 4px", fontSize: 10, color: "#9db4d8" }}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {editingAsset === a.id && (
-                  <div
-                    style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4 }}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => e.stopPropagation()}
-                  >
-                    <input
-                      className="ti"
-                      placeholder="显示名(空 = 文件名)"
-                      value={assetDraft.name}
-                      onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })}
-                    />
-                    <input
-                      className="ti"
-                      placeholder="标签,逗号分隔"
-                      value={assetDraft.tags}
-                      onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
-                    />
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button
-                        className="btn"
-                        onClick={async () => {
-                          await api.setAssetMeta(
-                            a.id,
-                            assetDraft.name.trim() || null,
-                            assetDraft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
-                          );
-                          setEditingAsset(null);
-                        }}
-                      >
-                        保存
-                      </button>
-                      <button className="btn" onClick={() => setEditingAsset(null)}>取消</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          </div>
-        </aside>
+        <MediaLibrary
+          doc={doc}
+          thumbs={thumbs}
+          waveforms={waveforms}
+          onPickFolder={onPickFolder}
+          onImportFiles={onImportFiles}
+          onScanMusicDir={onScanMusicDir}
+          onDragKind={setDragKind}
+          onAssetPreview={setAssetPreview}
+          onAddToTimeline={addToTimeline}
+          onRefresh={refresh}
+        />
 
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
-            <button className="btn" onClick={() => setPlaying((p) => !p)} title="播放/暂停 (空格)">
+            <button className="btn" onClick={() => setPlaying(!playing)} title="播放/暂停 (空格)">
               {playing ? `暂停 ${playSpeed}x` : "播放"}
             </button>
             <select
@@ -1202,11 +1005,10 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
               doc={doc}
               playheadTicks={playhead}
               onSeek={(t) => {
-                playheadRef.current = t;
                 setPlayhead(t);
               }}
               onClipClick={onClipClick}
-              onSelectMany={setSelected}
+              onSelectMany={selectMany}
               onClipAction={onClipAction}
               onSetVolumeKeyframe={onSetVolumeKeyframe}
               onSetAudioFade={onSetAudioFade}
@@ -1230,60 +1032,16 @@ export default function App() {  const [doc, setDoc] = useState<Document | null>
           </div>
         </main>
 
-        {/* 属性检查器 / 字幕 */}
-        <aside style={{ width: 240, background: "#17181c", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
-          <div style={{ display: "flex", borderBottom: "1px solid #2a2c33" }}>
-            <button
-              className="btn"
-              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "inspector" ? "#30333c" : "transparent" }}
-              onClick={() => setRightTab("inspector")}
-            >
-              属性
-            </button>
-            <button
-              className="btn"
-              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "subtitles" ? "#30333c" : "transparent" }}
-              onClick={() => setRightTab("subtitles")}
-            >
-              字幕
-            </button>
-            <button
-              className="btn"
-              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "texts" ? "#30333c" : "transparent" }}
-              onClick={() => setRightTab("texts")}
-            >
-              文字
-            </button>
-            <button
-              className="btn"
-              style={{ flex: 1, borderRadius: 0, borderColor: "transparent", background: rightTab === "stickers" ? "#30333c" : "transparent" }}
-              onClick={() => setRightTab("stickers")}
-            >
-              贴纸
-            </button>
-          </div>
-          {rightTab === "inspector" ? (
-            <Inspector
-              doc={doc}
-              clip={selected.length === 1 ? doc.clips.find((c) => c.id === selected[0]) ?? null : null}
-              selectedCount={selected.length}
-              onBatchRemove={onBatchRemove}
-              onBatchAudio={onBatchAudio}
-              onRefresh={refresh}
-              playheadTicks={playhead}
-            />
-          ) : rightTab === "subtitles" ? (
-            <SubtitlePanel
-              assetPaths={doc.assets.map((a) => a.path)}
-              onRefresh={refresh}
-              fps={fps}
-            />
-          ) : rightTab === "texts" ? (
-            <TextPanel playheadTicks={playhead} onRefresh={refresh} />
-          ) : (
-            <StickerPanel doc={doc} playheadTicks={playhead} onRefresh={refresh} />
-          )}
-        </aside>
+        {/* 属性检查器 / 字幕 / 文字 / 贴纸 */}
+        <RightPanel
+          doc={doc}
+          selectedClipIds={selected}
+          playhead={playhead}
+          fps={fps}
+          onRefresh={refresh}
+          onBatchRemove={onBatchRemove}
+          onBatchAudio={onBatchAudio}
+        />
       </div>
 
       {/* 导出操作窗口(所有导出配置集中于此) */}
