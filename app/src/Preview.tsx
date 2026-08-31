@@ -22,6 +22,8 @@ interface Props {
   /// 贴纸拖拽提交(归一化中心坐标)。
   onStickerMove?: (id: string, x: number, y: number) => void;
   onSetRect?: (clipId: string, rect: FxRect) => Promise<void>;
+  /// 自动选取:点击预览中任意视频框直接选中其片段(无需先在时间轴选中)。
+  onSelectClip?: (clipId: string) => void;
 }
 
 type SeekResp = { jpeg_path: string | null; error: string | null };
@@ -177,6 +179,7 @@ export default function Preview({
   selectedClipIds,
   onSetRect,
   onStickerMove,
+  onSelectClip,
 }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -186,6 +189,8 @@ export default function Preview({
   const [liveRect, setLiveRect] = useState<FxRect | null>(null);
   const liveRectRef = useRef<FxRect | null>(null);
   const [snapOn, setSnapOn] = useState(true);
+  /// 自动选取(快捷工具栏开关)。
+  const [autoSelect, setAutoSelect] = useState(true);
   /// 贴纸拖拽实时状态。
   const [stickerDrag, setStickerDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const stickerDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -395,6 +400,18 @@ export default function Preview({
     gripRef.current = null;
   }, [selId]);
 
+  // 闪烁修复:文档追上 liveRect(后端新 rect 到达)时才清理,
+  // 保证提交到新文档渲染之间无回退帧
+  useEffect(() => {
+    const r = liveRectRef.current;
+    if (!r) return;
+    const sel = layers.find((l) => l.clipId === selId);
+    if (sel && Math.abs(sel.rect.x - r.x) < 0.001 && Math.abs(sel.rect.y - r.y) < 0.001) {
+      updateLive(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers]);
+
   /// 归一化 -> stage 像素。
   function stageRectStyle(rect: FxRect): React.CSSProperties {
     return {
@@ -406,6 +423,39 @@ export default function Preview({
       overflow: "hidden",
       zIndex: selected?.clipId ? undefined : undefined,
     };
+  }
+
+  /// 自动选取:点击位置命中最高层(自上而下第一个包含该点的层)。
+  function layerAtPoint(clientX: number, clientY: number): Layer | null {
+    const st = stageRef.current?.getBoundingClientRect();
+    if (!st) return null;
+    const nx = (clientX - st.left) / st.width;
+    const ny = (clientY - st.top) / st.height;
+    // layers 顺序为自下而上;倒序即自上而下(最上层优先)
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const l = layers[i];
+      const r = l.rect;
+      if (
+        nx >= r.x - r.w / 2 &&
+        nx <= r.x + r.w / 2 &&
+        ny >= r.y - r.h / 2 &&
+        ny <= r.y + r.h / 2
+      ) {
+        return l;
+      }
+    }
+    return null;
+  }
+
+  /// 舞台点击(自动选取):命中层 -> 选中其片段(不拦截变换框手柄)。
+  function onStagePointerDown(e: React.PointerEvent) {
+    if (!autoSelect || !onSelectClip) return;
+    if (e.button !== 0) return;
+    // 变换框手柄/中心拖拽区自行处理(其 onPointerDown 已 stopPropagation)
+    const hit = layerAtPoint(e.clientX, e.clientY);
+    if (hit) {
+      onSelectClip(hit.clipId);
+    }
   }
 
   /// 拖拽坐标 -> 归一化 delta(相对 stage 尺寸)。
@@ -585,7 +635,16 @@ export default function Preview({
     if (!g) return;
     const r = liveRectRef.current;
     if (r && selected && onSetRect) {
-      onSetRect(selected.clipId, r);
+      // 闪烁修复:保留 liveRect 直到新文档到达(提交是异步的,立即清空
+      // 会让层渲染回退到旧 rect 一帧 -> 原位置闪现)
+      updateLive(r);
+      onSetRect(selected.clipId, r).finally(() => {
+        // 兜底:后端异常/无刷新时清理(成功路径由 doc 同步 effect 清)
+        setTimeout(() => {
+          if (liveRectRef.current === r) updateLive(null);
+        }, 800);
+      });
+      return;
     }
     updateLive(null);
   }
@@ -648,6 +707,7 @@ export default function Preview({
             overflow: "hidden",
             background: "#000",
           }}
+          onPointerDown={onStagePointerDown}
           onPointerMove={(e) => {
             if (gripRef.current) onGripMove(e);
           }}
@@ -930,6 +990,29 @@ export default function Preview({
               )}
             </>
           )}
+
+          {/* 自动选取开关 */}
+          <button
+            className="btn"
+            style={{
+              position: "absolute",
+              left: 64,
+              top: 8,
+              padding: "2px 8px",
+              fontSize: 10,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              opacity: autoSelect ? 1 : 0.5,
+              borderColor: autoSelect ? "var(--accent)" : undefined,
+              zIndex: 10,
+              background: "rgba(20,20,24,0.8)",
+            }}
+            onClick={() => setAutoSelect((v) => !v)}
+            title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
+          >
+            ⌖ 选取
+          </button>
 
           {/* 吸附开关 */}
           <button

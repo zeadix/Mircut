@@ -1118,6 +1118,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             selectedClipIds={selected}
             onSetRect={onSetRect}
             onStickerMove={onStickerMove}
+            onSelectClip={onClipClick ? (id: string) => onClipClick(id, false) : undefined}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)" }}>
