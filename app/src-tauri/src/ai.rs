@@ -27,18 +27,25 @@ pub(crate) fn tts_synthesize(
     } else {
         "espeak-ng"
     };
-    let voice_path = voice.and_then(|v| {
-        let p = std::env::var("HOME").ok().map(|h| {
-            std::path::PathBuf::from(h)
-                .join(".veditor/voices")
-                .join(format!("{v}.onnx"))
-        })?;
-        if p.exists() {
-            Some(p)
-        } else {
-            None
+    // D3:指定音色缺失时报错(此前静默回退默认音色,用户选 A 得到 B)
+    let voice_path = match voice {
+        Some(v) => {
+            let p = std::env::var("HOME").ok().map(|h| {
+                std::path::PathBuf::from(h)
+                    .join(".veditor/voices")
+                    .join(format!("{v}.onnx"))
+            });
+            match p {
+                Some(p) if p.exists() => Some(p),
+                _ => {
+                    return Err(format!(
+                        "音色模型不存在: ~/.veditor/voices/{v}.onnx(请放入音色文件或选择'默认')"
+                    ));
+                }
+            }
         }
-    });
+        None => None,
+    };
     let tts = veditor_ai::Tts {
         engine: engine.into(),
         out_dir: std::env::temp_dir().join("veditor-tts"),

@@ -678,10 +678,22 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 // 注意:此路径不使用 chain_parts(上面已按无转场模式构建),
                 // 转场路径片段链单独生成(带时间轴定位与淡入淡出)。
                 let black = "[vblack]";
-                // 黑底画布:与主轨同长(后续 overlay 全部 onto 它)
-                let tl_total: f64 = doc
-                    .timebase
-                    .secs(clips.last().map(|c| c.start + c.duration).unwrap_or(0));
+                // C6:黑底画布时长 = 全部视频内容最大出点(含画中画/贴纸/
+                // 文字超出主轨末尾的部分;此前只看主轨导致截断)
+                let tl_total: f64 = {
+                    let main_end = clips
+                        .last()
+                        .map(|c| c.start + c.duration)
+                        .map(|t| doc.timebase.secs(t))
+                        .unwrap_or(0.0);
+                    let extra_end = doc
+                        .image_overlays
+                        .iter()
+                        .map(|o| doc.timebase.secs(o.end))
+                        .chain(doc.text_overlays.iter().map(|o| doc.timebase.secs(o.end)))
+                        .fold(0.0_f64, f64::max);
+                    main_end.max(extra_end) + 0.1
+                };
                 filters.push(format!(
                     "color=c=black:s={}x{}:d={tl_total:.3}:r={}{}",
                     params.width, params.height, params.fps, black
@@ -811,8 +823,10 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                                 doc.timebase.secs(c.duration) - d
                             ));
                             let out_label = format!("[vtr{i}]");
+                            // D2:窗口起点应为片段时间轴位置(此前 0 依赖
+                            // framesync 兜底,边界不严格)
                             filters.push(format!(
-                                "{vcur}{flabel}overlay=0:0:format=auto:enable='between(t,0,{end:.3})'{out_label}"
+                                "{vcur}{flabel}overlay=0:0:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
                             ));
                             vcur = out_label;
                             ov_n += 1;
