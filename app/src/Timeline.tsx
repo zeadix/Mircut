@@ -138,7 +138,7 @@ function TimelineInner({
   const [reorderInsert, setReorderInsert] = useState<number | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   /// 轨道头列宽(垂直分界线拖拽调整)。
-  const [headW, setHeadW] = useState(132);
+  const [headW, setHeadW] = useState(150);
   const headWDrag = useRef<{ startX: number; startW: number } | null>(null);
   const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
   /// 拖放落点缓存:dragover 坐标可靠(提示正常),drop 事件 clientY 在 WebKitGTK
@@ -1430,6 +1430,7 @@ function TimelineInner({
                     style={{
                       color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2",
                       fontSize: trackH < 44 ? 10 : 12,
+                      lineHeight: "16px",
                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     }}
                     title="双击重命名"
@@ -1516,7 +1517,7 @@ function TimelineInner({
             (e.target as HTMLElement).releasePointerCapture(e.pointerId);
             headWDrag.current = null;
           }}
-          onDoubleClick={() => setHeadW(132)}
+          onDoubleClick={() => setHeadW(150)}
         >
           <div
             style={{
