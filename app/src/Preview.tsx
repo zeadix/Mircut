@@ -202,6 +202,10 @@ export default function Preview({
     doneRef.current?.();
   }, []);
 
+  // C10:有时间轴文档即走合成舞台(黑场/纯音频时刻也渲染贴纸/文字/字幕,
+  // 与导出行为一致;素材直读除外)
+  const composing = !assetPreview && !!doc && doc.tracks.length > 0;
+
   /// 单个片段 -> 合成层(取出帧时刻与全部视觉属性)。
   const buildLayer = useCallback(
     (c: Clip, doc: Document, t: number, forcedSecs: number | null, trans?: { kind: TransitionKind; p: number }): Layer | null => {
@@ -304,9 +308,9 @@ export default function Preview({
     };
   }, [layersKey, layers, assetPreview]);
 
-  // 单帧模式(素材预览 / 无 doc 层时回退原有单层逻辑)
+  // 单帧模式(素材预览;合成模式一律走 stage 层)
   useEffect(() => {
-    if (assetPreview || layers.length > 0) {
+    if (assetPreview || composing) {
       // 素材直读模式:拉单帧
       if (assetPreview) {
         let stopped = false;
@@ -376,7 +380,7 @@ export default function Preview({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [renderMode, assetPreview, layers.length, handleAssetDone]);
+  }, [renderMode, assetPreview, composing, handleAssetDone]);
 
   // 清理拖拽状态
   useEffect(() => {
@@ -595,7 +599,6 @@ export default function Preview({
     panelHDrag.current = null;
   }
 
-  const composing = !assetPreview && layers.length > 0;
   const showTransform = composing && !!selected && !!onSetRect;
 
   return (
@@ -644,6 +647,22 @@ export default function Preview({
           }}
           onPointerUp={onGripUp}
         >
+          {/* 黑场提示(合成模式无视频层时) */}
+          {layers.length === 0 && (
+            <span
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                transform: "translate(-50%, -50%)",
+                fontSize: 12,
+                color: "#666",
+                pointerEvents: "none",
+              }}
+            >
+              黑场(该位置无视频片段)
+            </span>
+          )}
           {layers.map((l) => {
             const r = l.clipId === selId ? (liveRect ?? l.rect) : l.rect;
             const img = layerUrls[l.clipId];

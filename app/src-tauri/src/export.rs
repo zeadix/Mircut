@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use tauri::State;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub(crate) struct ExportRequest {
     out_path: String,
     width: u32,
@@ -16,6 +16,10 @@ pub(crate) struct ExportRequest {
     vcodec: Option<String>,
     #[serde(default)]
     loudness_normalize: bool,
+    /// 入队时的文档快照(队列任务携带;None = 用当前文档)。
+    /// 修复 C9:排队期间继续剪辑不再改变已入队任务的成片内容。
+    #[serde(default)]
+    doc_snapshot: Option<veditor_core::Document>,
 }
 
 #[tauri::command(async)]
@@ -37,17 +41,18 @@ pub(crate) fn export_video(
             loudness_normalize: req.loudness_normalize,
             ..Default::default()
         };
-        // 进度分母 = 时间轴总长(所有片段中最晚的出点;此前误用最长单片段时长)
-        let total = inner
-            .doc
+        // C9:队列任务带快照时按入队时刻的文档编译,不受排队期间剪辑影响
+        let doc = req
+            .doc_snapshot
+            .clone()
+            .unwrap_or_else(|| inner.doc.clone());
+        // 进度分母 = 时间轴总长(所有片段中最晚的出点)
+        let total = doc
             .clips
             .iter()
-            .map(|c| inner.doc.timebase.secs(c.start + c.duration))
+            .map(|c| doc.timebase.secs(c.start + c.duration))
             .fold(0.0_f64, f64::max);
-        (
-            veditor_export::compile_ffmpeg_cmd(&inner.doc, &params),
-            total,
-        )
+        (veditor_export::compile_ffmpeg_cmd(&doc, &params), total)
     };
     // 注册取消句柄并后台执行,进度经事件推送
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -108,6 +113,13 @@ pub(crate) fn list_export_presets() -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+/// 当前文档快照(导出入队用,保证排队任务不受后续剪辑影响)。
+#[tauri::command]
+pub(crate) fn get_doc_snapshot(state: State<'_, AppState>) -> veditor_core::Document {
+    let inner = state.inner.lock().unwrap();
+    inner.doc.clone()
 }
 
 #[tauri::command(async)]

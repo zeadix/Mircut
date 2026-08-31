@@ -145,17 +145,25 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     return true;
   }
 
-  function enqueue(r: api.ExportRequest, name: string, publish?: "bilibili" | "douyin") {
+  /// 入队:附带当前文档快照(C9:排队期间继续剪辑不影响已入队任务的成片)。
+  async function enqueue(r: api.ExportRequest, name: string, publish?: "bilibili" | "douyin") {
+    let withSnapshot = r;
+    try {
+      const snapshot = await api.getDocSnapshot();
+      withSnapshot = { ...r, docSnapshot: snapshot };
+    } catch {
+      /* 快照失败退回当前文档语义 */
+    }
     setQueue((q) => [
       ...q,
-      { id: Date.now() + Math.random(), name, req: r, status: "pending", pct: 0, publish },
+      { id: Date.now() + Math.random(), name, req: withSnapshot, status: "pending", pct: 0, publish },
     ]);
   }
 
   function onEnqueue() {
     if (!checkTimeline()) return;
     const file = exportPath.split("/").pop() ?? exportPath;
-    enqueue(req, `${file} · ${preset?.name ?? "自定义"}`);
+    void enqueue(req, `${file} · ${preset?.name ?? "自定义"}`);
   }
 
   /// 批量入队:每个平台预设一个任务(路径后缀区分)。
@@ -174,7 +182,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   function onPublish(platform: "bilibili" | "douyin") {
     if (!checkTimeline()) return;
     const file = exportPath.split("/").pop() ?? exportPath;
-    enqueue(req, `${file} · ${platform === "bilibili" ? "B站" : "抖音"}发布`, platform);
+    void enqueue(req, `${file} · ${platform === "bilibili" ? "B站" : "抖音"}发布`, platform);
   }
 
   async function onPickSavePath() {

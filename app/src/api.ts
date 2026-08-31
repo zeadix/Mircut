@@ -307,6 +307,8 @@ export interface ExportRequest {
   /// 视频编码器(libx264/h264_nvenc/h264_qsv)。
   vcodec?: string;
   loudnessNormalize?: boolean;
+  /// 入队时的文档快照(排队任务不受后续剪辑影响)。
+  docSnapshot?: Document;
 }
 
 export async function exportVideo(req: ExportRequest): Promise<string> {
@@ -319,6 +321,7 @@ export async function exportVideo(req: ExportRequest): Promise<string> {
       crf: req.crf,
       vcodec: req.vcodec ?? null,
       loudness_normalize: req.loudnessNormalize ?? false,
+      doc_snapshot: req.docSnapshot ?? null,
     },
   };
   return invoke("export_video", payload);
@@ -345,6 +348,11 @@ export async function listExportPresets(): Promise<ExportPresetInfo[]> {
   return invoke("list_export_presets");
 }
 
+/// 当前文档快照(导出入队用)。
+export async function getDocSnapshot(): Promise<Document> {
+  return invoke("get_doc_snapshot");
+}
+
 /// 硬件编码器探测(nvenc/qsv)。
 export async function detectHwEncoders(): Promise<string[]> {
   return invoke("detect_hw_encoders");
@@ -360,6 +368,7 @@ export async function previewExportCmd(req: ExportRequest): Promise<string> {
       crf: req.crf,
       vcodec: req.vcodec ?? null,
       loudness_normalize: req.loudnessNormalize ?? false,
+      doc_snapshot: req.docSnapshot ?? null,
     },
   };
   return invoke("preview_export_cmd", payload);

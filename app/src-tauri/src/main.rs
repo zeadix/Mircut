@@ -307,6 +307,7 @@ fn main() {
             remove_image_overlay,
             seek_frame,
             export_video,
+            get_doc_snapshot,
             preview_export_cmd
         ])
         .on_window_event(|_window, event| {
