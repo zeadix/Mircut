@@ -20,7 +20,7 @@
 - **可靠性**:自动快照崩溃恢复、项目保存/打开
 - **工程**:Rust 后端按域分模块(state/media/timeline/fx/render/subtitles/export/project/ai/plugins)、CI 发布流水线(tag 触发 AppImage/deb 发布)
 - **标记**:M 打点/菱形点击/标记列表(跳转/删除)
-- **测试**:Rust 104 项 + 前端 Vitest 39 项,CI 覆盖 fmt/clippy/test/bench
+- **测试**:Rust 106 项(含 6 个真实 ffmpeg 端到端)+ 前端 Vitest 39 项,CI 覆盖 fmt/clippy/test/bench
 - **性能**:实时引擎真实帧率解码、硬件编码探测(nvenc/qsv)、波形磁盘缓存、惰性代理
 
 ## 开发环境
