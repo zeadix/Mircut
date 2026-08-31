@@ -86,6 +86,95 @@ impl Transcriber for WhisperCli {
     }
 }
 
+/// 人声分离引擎(demucs/UVR CLI 探测;输出人声/伴奏两条 wav)。
+pub struct StemSeparator {
+    /// demucs 或 uvr(按优先级探测)。
+    pub engine: String,
+}
+
+impl StemSeparator {
+    /// 探测可用引擎(None = 不可用,调用方降级频段滤波近似)。
+    pub fn detect() -> Option<Self> {
+        for bin in ["demucs", "demucs-cmd", "uvr"] {
+            if which_bin(bin) {
+                return Some(Self {
+                    engine: bin.to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /// 分离音频文件 -> (人声 wav 路径, 伴奏 wav 路径)。
+    pub fn separate(&self, media: &Path, out_dir: &Path) -> Result<(PathBuf, PathBuf)> {
+        std::fs::create_dir_all(out_dir)?;
+        let out_prefix = out_dir.join("stem");
+        match self.engine.as_str() {
+            "uvr" => {
+                let out = Command::new("uvr")
+                    .args(["-i"])
+                    .arg(media)
+                    .args(["-o"])
+                    .arg(out_dir)
+                    .output()
+                    .context("启动 uvr 失败")?;
+                ensure!(
+                    out.status.success(),
+                    "uvr 失败: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                // uvr 输出命名不稳定:扫目录找 Vocals/Instrumental
+                let mut vocals = None;
+                let mut inst = None;
+                for e in std::fs::read_dir(out_dir)?.flatten() {
+                    let name = e.file_name().to_string_lossy().to_lowercase();
+                    if name.contains("vocals") {
+                        vocals = Some(e.path());
+                    } else if name.contains("instrument") || name.contains("no_vocals") {
+                        inst = Some(e.path());
+                    }
+                }
+                Ok((
+                    vocals.context("未找到人声输出")?,
+                    inst.context("未找到伴奏输出")?,
+                ))
+            }
+            _ => {
+                // demucs:输出 {out_dir}/{stem_prefix}/{vocals,no_vocals}.wav
+                let out = Command::new(&self.engine)
+                    .args(["-n", "htdemucs", "-o"])
+                    .arg(out_dir)
+                    .arg(media)
+                    .output()
+                    .context("启动 demucs 失败")?;
+                ensure!(
+                    out.status.success(),
+                    "demucs 失败: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                // demucs 以输入文件名建子目录
+                let stem = media
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("audio");
+                let sub = out_dir.join(format!("htdemucs_{}", capitalize(stem)));
+                let alt = out_dir.join(stem);
+                let base = if sub.exists() { sub } else { alt };
+                let _ = out_prefix;
+                Ok((base.join("vocals.wav"), base.join("no_vocals.wav")))
+            }
+        }
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
 /// 降级引擎:ffmpeg silencedetect 静音切分(无文本,仅生成空轴段)。
 pub struct SilenceSegments {
     /// 静音判定阈值(秒)。
@@ -340,5 +429,18 @@ mod tests {
             .remove_frame(Path::new("/tmp/a.png"), Path::new("/tmp/b.png"))
             .unwrap_err();
         assert!(err.to_string().contains("不可用"));
+    }
+
+    #[test]
+    fn capitalize_handles_ascii() {
+        assert_eq!(capitalize("abc"), "Abc");
+        assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn stem_detect_none_without_bins() {
+        let r = StemSeparator::detect();
+        let which = which_bin("demucs") || which_bin("demucs-cmd") || which_bin("uvr");
+        assert_eq!(r.is_some(), which, "探测结果应与环境一致");
     }
 }

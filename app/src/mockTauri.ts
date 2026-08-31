@@ -205,6 +205,24 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "list_plugins":
       return [];
+    case "list_packs":
+      return [];
+    case "import_pack":
+      return { id: "mock-pack", name: "Mock 包", kind: "stickers", items: [] };
+    case "apply_pack_item":
+      return true;
+    case "list_models":
+      // AI 模型清单 mock(未下载,引擎可用)
+      return [
+        { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: false, engineAvailable: false },
+      ];
+    case "download_model":
+    case "delete_model":
+      return true;
+    case "stem_engine_status":
+      return { available: false, engine: null };
+    case "separate_stems":
+      return "mock:未安装分离引擎";
     case "detect_hw_encoders":
       return [];
     case "list_recent_projects":

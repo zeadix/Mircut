@@ -1,5 +1,6 @@
 import { useEffect, useState, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { SubtitleTrack } from "./types";
@@ -14,6 +15,9 @@ interface Props {
 function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   const [track, setTrack] = useState<SubtitleTrack | null>(null);
   const [status, setStatus] = useState("");
+  /// AI 模型管理。
+  const [models, setModels] = useState<api.ModelInfo[]>([]);
+  const [dlId, setDlId] = useState<string | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
 
@@ -23,7 +27,42 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
 
   useEffect(() => {
     load();
+    api.listModels().then(setModels).catch(() => {});
+    const un = listen<{ id: string; percent: number; done?: boolean }>(
+      "model-download-progress",
+      () => {
+        // 下载完成事件:刷新清单
+        api.listModels().then(setModels).catch(() => {});
+      }
+    );
+    return () => {
+      un.then((f) => f());
+    };
   }, []);
+
+  async function onDownloadModel(id: string) {
+    setDlId(id);
+    setStatus("下载中...(大模型可能需要数分钟)");
+    try {
+      await api.downloadModel(id);
+      setModels(await api.listModels());
+      setStatus("模型下载完成");
+    } catch (e) {
+      setStatus(`下载失败: ${String(e).slice(0, 160)}`);
+    } finally {
+      setDlId(null);
+    }
+  }
+
+  async function onDeleteModel(id: string) {
+    try {
+      await api.deleteModel(id);
+      setModels(await api.listModels());
+      setStatus("模型已删除");
+    } catch (e) {
+      setStatus(`删除失败: ${e}`);
+    }
+  }
 
   async function onAsr() {
     const path = assetPaths[0];
@@ -125,6 +164,46 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
 
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* AI 模型管理 */}
+      <fieldset style={{ borderColor: "#2a2c33" }}>
+        <legend>AI 模型</legend>
+        {models.map((m) => (
+          <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+            <span
+              style={{
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={m.desc}
+            >
+              {m.name}{" "}
+              <span style={{ color: "var(--text-dim)", fontSize: 10 }}>
+                {Math.round(m.size / 1_000_000)}MB
+              </span>
+            </span>
+            {m.downloaded ? (
+              <>
+                <span style={{ color: "#7ed957", fontSize: 10 }}>已下载</span>
+                <button className="btn" style={{ padding: "1px 6px" }} onClick={() => onDeleteModel(m.id)}>
+                  删除
+                </button>
+              </>
+            ) : (
+              <button className="btn" style={{ padding: "1px 6px" }} disabled={dlId === m.id} onClick={() => onDownloadModel(m.id)}>
+                {dlId === m.id ? "下载中…" : "下载"}
+              </button>
+            )}
+            {!m.engineAvailable && m.downloaded && (
+              <span style={{ color: "var(--accent)", fontSize: 10 }} title="需安装 whisper.cpp(whisper-cli)">
+                缺引擎
+              </span>
+            )}
+          </div>
+        ))}
+      </fieldset>
+
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button className="btn" onClick={onAsr}>AI 识别字幕</button>
         <button className="btn" onClick={onImportSrt}>导入 SRT</button>

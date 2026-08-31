@@ -5,6 +5,7 @@ mod diag;
 mod export;
 mod fx;
 mod media;
+mod models;
 mod packs;
 mod plugins;
 mod project;
@@ -22,6 +23,8 @@ use export::*;
 use fx::*;
 #[allow(unused_imports)]
 use media::*;
+#[allow(unused_imports)]
+use models::*;
 #[allow(unused_imports)]
 use packs::*;
 #[allow(unused_imports)]
@@ -276,6 +279,8 @@ fn main() {
             import_ass,
             export_ass,
             tts_synthesize,
+            separate_stems,
+            stem_engine_status,
             save_project,
             open_project,
             new_project,
@@ -315,6 +320,9 @@ fn main() {
             import_pack,
             export_pack,
             apply_pack_item,
+            list_models,
+            download_model,
+            delete_model,
             preview_export_cmd
         ])
         .on_window_event(|_window, event| {

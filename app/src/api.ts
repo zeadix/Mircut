@@ -380,6 +380,32 @@ export async function applyPackItem(
   await invoke("apply_pack_item", { packId, item, t, dur });
 }
 
+// ---------- AI 模型 / 人声分离 ----------
+export interface ModelInfo {
+  id: string;
+  name: string;
+  desc: string;
+  size: number;
+  downloaded: boolean;
+  engineAvailable: boolean;
+}
+export async function listModels(): Promise<ModelInfo[]> {
+  return invoke("list_models");
+}
+export async function downloadModel(id: string): Promise<void> {
+  await invoke("download_model", { id });
+}
+export async function deleteModel(id: string): Promise<void> {
+  await invoke("delete_model", { id });
+}
+export async function stemEngineStatus(): Promise<{ available: boolean; engine: string | null }> {
+  return invoke("stem_engine_status");
+}
+/// 真实人声分离(demucs/UVR):生成人声/伴奏两条音频块(组合命令)。
+export async function separateStems(clipId: string): Promise<string> {
+  return invoke("separate_stems", { clipId });
+}
+
 /// 当前文档快照(导出入队用)。
 export async function getDocSnapshot(): Promise<Document> {
   return invoke("get_doc_snapshot");

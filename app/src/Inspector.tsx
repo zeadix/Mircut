@@ -37,6 +37,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     enabled: false, x: 0.5, y: 0.5, w: 0.6, h: 0.6,
   });
   const [blend, setBlend] = useState<string>("Normal");
+  /// 人声分离忙态。
+  const [stemBusy, setStemBusy] = useState(false);
   const [splitStatus, setSplitStatus] = useState("");
   const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
   /// 批量音量输入。
@@ -492,6 +494,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           <select
             className="ti"
             value={afx.stem}
+            title="频段滤波近似(降级);demucs/UVR 已安装时用下方按钮做真实分离"
             onChange={(e) => {
               setAfx({ ...afx, stem: e.target.value });
               applyAudioFx();

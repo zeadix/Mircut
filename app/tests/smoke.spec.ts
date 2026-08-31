@@ -45,12 +45,16 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
 test("冒烟:右侧面板 Tab 切换与贴纸面板", async ({ page }) => {
   await page.goto("/");
 
-  // 右侧四个 Tab 均可切换
-  for (const label of ["属性", "字幕", "文字", "贴纸"]) {
-    await page.locator("aside button", { hasText: label }).last().click();
+  // 右侧 Tab 均可切换(右栏是最后一个 aside;最后停在贴纸以便断言)
+  const rightAside = page.locator("aside").last();
+  for (const label of ["属性", "字幕", "文字", "素材包", "贴纸"]) {
+    await rightAside.getByRole("button", { name: label, exact: true }).click();
   }
-  // 贴纸面板可见(素材库图片区/已放置区)
-  await expect(page.getByText("素材库图片(单击贴到播放头)")).toBeVisible();
+  // 贴纸面板可见(导入按钮 + 已放置区)
+  await expect(
+    rightAside.getByRole("button", { name: /导入图片贴纸/ })
+  ).toBeVisible();
+  await expect(rightAside.getByText(/已放置\(0\)/)).toBeVisible();
 });
 
 test("冒烟:标记打点与列表", async ({ page }) => {
