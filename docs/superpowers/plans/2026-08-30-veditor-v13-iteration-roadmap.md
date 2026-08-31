@@ -1,7 +1,7 @@
 # VEditor v1.3 产品迭代路线图（对标剪映）
 
 - **日期**: 2026-08-30
-- **状态**: 批次 1 全部 + 批次 2 仅余 Slide 滑移(暂缓) + 批次 3 五项(转场 15 种/波形落盘/媒体库/贴纸库/音乐音效库) + 批次 4 两场 + 贯穿项拆分/CI 已执行(2026-08-30,提交 f5f23b0..本提交)
+- **状态**(2026-08-31):批次 1 全部 + 批次 2 仅余 Slide 滑移(暂缓) + 批次 3 全部 + 批次 4 三场(帧率/硬编三通路/导出队列/性能CI) + 贯穿项全部(Zustand/Playwright/i18n/拆分/CI) + 审计 13 项全部修复。剩余唯一大项:批次 5 AI 去降级(需模型分发配套)。
 - **依据**: v1.2 全仓代码探索(前端 21 源文件 + crates 全部 + git 130 commits) + `docs/superpowers/specs/2026-08-27-veditor-prd-design.md` + `docs/superpowers/plans/2026-08-28-veditor-capcut-parity-roadmap.md`
 - **定位**: 08-28 路线图的对标项已基本落地(见第 3 节状态校准),本路线图回答"下一阶段做什么、为什么是这个顺序"。
 
@@ -132,6 +132,7 @@
 - [x] **媒体库升级(第一场)**:显示名重命名 + 标签编辑(SetAssetMeta 可撤销) + 网格/列表视图 + 搜索含显示名;~~文件夹树/多选/排序~~ 待后续
 - [x] **贴纸库**:ImageOverlay 图片叠层(核心模型+命令+导出 overlay 链+预览渲染+贴纸面板 Tab:素材库图片单击上贴/导入/位置大小旋转透明度调节);~~动图 GIF/预览拖拽~~ 待后续
 - [x] **音乐音效库**:媒体库分类 Tab(全部/视频/音频/图片)+ scan_audio_dir 递归扫描 + '♪ 音乐库'批量导入(跳过已导入,自动打'音乐'标签);~~在线曲库~~ 远期
+- [x] **画廊/媒体库/贴纸收尾**:转场 CSS 渐变预览块(15 种视觉特征)、媒体库 Ctrl/Shift 多选+批量上轨、贴纸预览画布直接拖拽定位(bf8433c)
 - [ ] **文字模板库**：复用 plugin.json 体系分发 JSON 模板（标题/花字/字幕条），TextPanel 加模板画廊
 - [ ] **贴纸库**：PNG/SVG 静态贴纸起步（新贴纸轨道或复用文件轨道）
 - [ ] **音乐/音效库**：本地目录扫描 + 标签/分类 + 试听；在线曲库后置
@@ -141,7 +142,7 @@
 
 ## 7. 批次 4：性能硬仗——GPU 与硬件加速（约 3-4 周）
 
-- [x] **导出硬件编码（第一场）**：detect_hw_encoders（nvenc/qsv 探测）+ ExportRequest.vcodec 贯通 + 导出对话框编码器下拉（硬编 qp 模式）;~~vaapi（需滤镜图 hwupload）~~ 待后续
+- [x] **导出硬件编码（完结）**：nvenc(qp)/qsv(global_quality)/vaapi(format=nv12,hwupload 滤镜图+vaapi_device)三通路齐备,detect_hw_encoders 全探测(f146c08)
 - [ ] **代理策略修正**：g=1 → 分级（g=10 + seek 侧帧缓存），代理生成走硬编；评估磁盘占用上限策略
 - [ ] **wgpu 实时合成 MVP**（Renderer trait 已预留 render/lib.rs:23）：先单轨实时解码+合成，后多轨；这是批次 8（合成语义层）的渲染端落地
 - [x] **RealtimeRenderer fps 修复**：probe 解析 r_frame_rate → Asset.fps → 解码管道真实帧率（替换硬编码 30）
@@ -165,6 +166,10 @@
 - [ ] Playwright 冒烟测试（导入→剪辑→导出主链路）
 - [ ] i18n 框架 + 设计 token（CSS 变量），为国际版/亮色主题铺路
 - [x] CI 发布流水线(release.yml:tag v* 触发 Linux 质量门禁+构建→AppImage/deb→GitHub Release,支持手动触发);[x] README 测试数刷新;[x] 删除 ScrollBar.tsx 死代码与 VEDITOR_AUTO_CLICK 诊断代码
+- [x] **Zustand 状态管理**:store.ts 全局状态(doc/selected/playing/playhead/status)+ 节流 refresh + 选中动作;App 改 store 消费者;媒体库/右侧面板抽为 MediaLibrary/RightPanel 组件(93f641f)
+- [x] **Playwright 冒烟测试**:mockTauri IPC 内存 mock + 3 用例主链路(加载->上轨->分割->导出队列/右面板 Tab/标记打点),CI 接入(7378db2)
+- [x] **i18n + 设计 token**:CSS 变量 token 化(96 处)+ 亮色主题(data-theme + 顶栏切换)+ 轻量 zh/en 词典(40+ 键)+ 语言切换(849b222)
+- [x] **性能验收 CI 化**:导出滤镜图编译基准(8轨80片段 106µs)+ 100 片段 2s 宽松回归门禁(833c904)
 - [ ] 路线图 checkbox 回填机制（本文档起，完成即勾选）
 
 ## 10. 执行顺序与依赖
@@ -193,9 +198,11 @@
 | B8 | 测试缺口 | 贴纸导出无真实 e2e | ✅ e2e(生成合法 PNG fixture) |
 | D11-13 | 瑕疵 | 波形静态映射/死代码/进度分母 | ✅ 全修 |
 
-**遗留 2 项(C 类,登记下一场)**:
-- C9 导出队列无文档快照:等待中的任务用执行时文档编译,排队期间剪辑会改变后续任务成片
-- C10 黑场/纯音频时刻预览不渲染贴纸/文字/字幕(导出会烧录)
+**C 类 2 项已修复(2026-08-31,提交 47c61f5)**:
+- ✅ C9:入队时 get_doc_snapshot 后端快照,队列任务携带快照执行
+- ✅ C10:预览合成条件放宽为有时间轴文档,黑场时刻也渲染贴纸/文字/字幕
+
+**审计 13 项全部修复完毕。**
 
 ## 11. 风险
 
