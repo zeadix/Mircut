@@ -19,6 +19,8 @@ interface Props {
   doc: Document | null;
   /// 选中片段(多选;仅唯一选中显示变换框)。
   selectedClipIds: string[];
+  /// 贴纸拖拽提交(归一化中心坐标)。
+  onStickerMove?: (id: string, x: number, y: number) => void;
   onSetRect?: (clipId: string, rect: FxRect) => Promise<void>;
 }
 
@@ -174,6 +176,7 @@ export default function Preview({
   doc,
   selectedClipIds,
   onSetRect,
+  onStickerMove,
 }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -183,6 +186,9 @@ export default function Preview({
   const [liveRect, setLiveRect] = useState<FxRect | null>(null);
   const liveRectRef = useRef<FxRect | null>(null);
   const [snapOn, setSnapOn] = useState(true);
+  /// 贴纸拖拽实时状态。
+  const [stickerDrag, setStickerDrag] = useState<{ id: string; x: number; y: number } | null>(null);
+  const stickerDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
   /// 吸附辅助线(归一化坐标,null=不显示)。
   const [guides, setGuides] = useState<{ x: number | null; y: number | null } | null>(null);
   /// 预览区高度(右下角拖拽调整)。
@@ -721,23 +727,66 @@ export default function Preview({
           {/* 贴纸(图片叠层,与导出 overlay 语义对齐:中心定位/宽度比例) */}
           {(doc?.image_overlays ?? [])
             .filter((o) => playheadTicks >= o.start && playheadTicks < o.end)
-            .map((o) => (
-              <img
-                key={o.id}
-                src={`veditor://preview/${encodeURIComponent(o.path)}`}
-                alt=""
-                style={{
-                  position: "absolute",
-                  left: `${o.x * 100}%`,
-                  top: `${o.y * 100}%`,
-                  width: `${o.scale * 100}%`,
-                  transform: `translate(-50%, -50%) rotate(${o.rotate}deg)`,
-                  opacity: o.opacity,
-                  pointerEvents: "none",
-                  zIndex: 3,
-                }}
-              />
-            ))}
+            .map((o) => {
+              const live = stickerDrag?.id === o.id ? stickerDrag : null;
+              return (
+                <img
+                  key={o.id}
+                  src={`veditor://preview/${encodeURIComponent(o.path)}`}
+                  alt=""
+                  draggable={false}
+                  title="拖拽调整贴纸位置"
+                  style={{
+                    position: "absolute",
+                    left: `${(live?.x ?? o.x) * 100}%`,
+                    top: `${(live?.y ?? o.y) * 100}%`,
+                    width: `${o.scale * 100}%`,
+                    transform: `translate(-50%, -50%) rotate(${o.rotate}deg)`,
+                    opacity: o.opacity,
+                    pointerEvents: "auto",
+                    cursor: "move",
+                    zIndex: 3,
+                  }}
+                  onPointerDown={(e) => {
+                    const st = stageRef.current?.getBoundingClientRect();
+                    if (!st) return;
+                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                    stickerDragRef.current = {
+                      id: o.id,
+                      startX: e.clientX,
+                      startY: e.clientY,
+                      origX: o.x,
+                      origY: o.y,
+                    };
+                    setStickerDrag({ id: o.id, x: o.x, y: o.y });
+                  }}
+                  onPointerMove={(e) => {
+                    const d = stickerDragRef.current;
+                    const st = stageRef.current?.getBoundingClientRect();
+                    if (!d || !st || d.id !== o.id) return;
+                    const x = d.origX + (e.clientX - d.startX) / st.width;
+                    const y = d.origY + (e.clientY - d.startY) / st.height;
+                    setStickerDrag({ id: o.id, x, y });
+                  }}
+                  onPointerUp={(e) => {
+                    const d = stickerDragRef.current;
+                    stickerDragRef.current = null;
+                    setStickerDrag(null);
+                    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+                    if (!d || d.id !== o.id) return;
+                    const st = stageRef.current?.getBoundingClientRect();
+                    if (!st) return;
+                    const x = d.origX + (e.clientX - d.startX) / st.width;
+                    const y = d.origY + (e.clientY - d.startY) / st.height;
+                    onStickerMove?.(
+                      o.id,
+                      Math.round(x * 1000) / 1000,
+                      Math.round(y * 1000) / 1000
+                    );
+                  }}
+                />
+              );
+            })}
 
           {/* 文字叠层(与导出 drawtext 样式/动画对齐) */}
           {(doc?.text_overlays ?? [])

@@ -52,7 +52,30 @@ export default function MediaLibrary({
   const [mediaQuery, setMediaQuery] = useState("");
   const [editingAsset, setEditingAsset] = useState<string | null>(null);
   const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
+  /// 素材多选(Ctrl/Shift 点击;批量上轨用)。
+  const [mediaSel, setMediaSel] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function onCardClick(e: React.MouseEvent, assetId: string, path: string, secs: number) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      e.stopPropagation();
+      setMediaSel((prev) => {
+        const next = new Set(prev);
+        if (next.has(assetId)) next.delete(assetId);
+        else next.add(assetId);
+        return next;
+      });
+      return;
+    }
+    onAssetPreview({ path, secs });
+  }
+
+  async function onBatchAddToTimeline() {
+    for (const id of mediaSel) {
+      onAddToTimeline(id);
+    }
+    setMediaSel(new Set());
+  }
 
   return (
     <aside style={{ width: 220, background: "var(--panel)", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
@@ -66,6 +89,15 @@ export default function MediaLibrary({
         >
           ♪ 音乐库
         </button>
+        {mediaSel.size > 0 && (
+          <button
+            className="btn"
+            title="批量上轨(追加到播放头后)"
+            onClick={onBatchAddToTimeline}
+          >
+            ⤒ {mediaSel.size}
+          </button>
+        )}
         <button
           className="btn"
           title={mediaGrid ? "切换为列表视图" : "切换为网格视图"}
@@ -138,9 +170,13 @@ export default function MediaLibrary({
                 e.dataTransfer.effectAllowed = "copy";
               }}
               onDoubleClick={() => onAddToTimeline(a.id)}
-              onClick={() => onAssetPreview({ path: a.path, secs: a.duration_secs / 2 })}
-              title="拖到时间轴放置;双击追加到末尾;单击预览"
-              style={{ cursor: "grab" }}
+              onClick={(e) => onCardClick(e, a.id, a.path, a.duration_secs / 2)}
+              title="拖到时间轴放置;双击追加到末尾;单击预览;Ctrl/Shift 点击多选"
+              style={{
+                cursor: "grab",
+                borderColor: mediaSel.has(a.id) ? "var(--accent)" : undefined,
+                outline: mediaSel.has(a.id) ? "1px solid var(--accent)" : undefined,
+              }}
             >
               {!a.has_video && a.has_audio ? (
                 <MiniWaveform peaks={waveforms[a.id] ?? []} />

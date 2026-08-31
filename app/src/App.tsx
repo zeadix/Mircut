@@ -472,6 +472,20 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     await refresh();
   }
 
+  /// 贴纸拖拽提交(更新位置)。
+  async function onStickerMove(id: string, x: number, y: number) {
+    if (!doc) return;
+    const idx = (doc.image_overlays ?? []).findIndex((o) => o.id === id);
+    if (idx < 0) return;
+    const o = doc.image_overlays![idx];
+    try {
+      await api.updateImageOverlay(idx, { ...o, x, y });
+    } catch (e) {
+      setStatus(`贴纸移动失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
   /// 批量移动提交(组合命令,一次撤销)。
   async function onMoveClips(
     entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[]
@@ -1017,6 +1031,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             doc={doc}
             selectedClipIds={selected}
             onSetRect={onSetRect}
+            onStickerMove={onStickerMove}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
           <div style={{ padding: "4px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)" }}>
