@@ -33,7 +33,7 @@ function MiniWaveformInner({ peaks }: { peaks: number[] }) {
         height: 44,
         display: "block",
         borderRadius: 4,
-        background: "#16202e",
+        background: "var(--panel)",
       }}
     />
   );

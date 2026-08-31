@@ -611,7 +611,7 @@ export default function Preview({
     <div
       style={{
         background: "#000",
-        color: "#888",
+        color: "var(--text-dim)",
         height: panelH,
         flexShrink: 0,
         display: "flex",
@@ -709,7 +709,7 @@ export default function Preview({
                     style={{
                       width: "100%",
                       height: "100%",
-                      background: "#111",
+                      background: "var(--surface)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -867,7 +867,7 @@ export default function Preview({
                     top: `calc(${h.y * 100}% - 5px)`,
                     width: 10,
                     height: 10,
-                    background: "#fff",
+                    background: "var(--text)",
                     border: "1px solid #ffd75e",
                     borderRadius: 2,
                     cursor: h.cursor,
@@ -908,7 +908,7 @@ export default function Preview({
                     top: 0,
                     bottom: 0,
                     width: 1,
-                    background: "#4ec9ff",
+                    background: "var(--link)",
                     opacity: 0.8,
                     pointerEvents: "none",
                   }}
@@ -922,7 +922,7 @@ export default function Preview({
                     left: 0,
                     right: 0,
                     height: 1,
-                    background: "#4ec9ff",
+                    background: "var(--link)",
                     opacity: 0.8,
                     pointerEvents: "none",
                   }}
@@ -985,7 +985,7 @@ export default function Preview({
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#555",
+          color: "var(--text-dim)",
           fontSize: 10,
           zIndex: 11,
         }}

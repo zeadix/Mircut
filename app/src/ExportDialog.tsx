@@ -321,7 +321,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 border: "1px solid #2a2c33",
                 borderRadius: 6,
                 padding: 8,
-                color: "#9aa8b8",
+                color: "var(--code)",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-all",
                 maxHeight: 100,
@@ -358,7 +358,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
             )}
           </div>
           {queue.length === 0 && (
-            <div style={{ color: "#667" }}>空:配置预设/路径后点"加入队列"</div>
+            <div style={{ color: "var(--text-dim)" }}>空:配置预设/路径后点"加入队列"</div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {queue.map((t) => (
@@ -399,7 +399,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                         style={{
                           width: `${t.pct}%`,
                           height: "100%",
-                          background: "#3d5a99",
+                          background: "var(--progress)",
                           transition: "width 0.2s",
                         }}
                       />

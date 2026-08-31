@@ -925,7 +925,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, playhead, doc, projectPath, fps]);
 
-  if (!doc) return <div style={{ color: "#ccc", padding: 24 }}>{t("status.loading")}</div>;
+  if (!doc) return <div style={{ color: "var(--text)", padding: 24 }}>{t("status.loading")}</div>;
 
   return (
     <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -982,12 +982,12 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                     onClick={item.fn}
                   >
                     <span>{item.label}</span>
-                    {item.hint && <span style={{ color: "#667" }}>{item.hint}</span>}
+                    {item.hint && <span style={{ color: "var(--text-dim)" }}>{item.hint}</span>}
                   </button>
                 ))}
                 {recentProjects.length > 0 && (
                   <>
-                    <div style={{ borderTop: "1px solid #2a2c33", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "#667" }}>
+                    <div style={{ borderTop: "1px solid #2a2c33", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "var(--text-dim)" }}>
                       {t("menu.recent")}
                     </div>
                     {recentProjects.map((p) => (

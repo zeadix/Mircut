@@ -1,17 +1,24 @@
 /* 设计 token:集中颜色(亮/暗主题经 data-theme 切换) */
 :root {
-  --bg: var(--bg);
-  --panel: var(--panel);
+  --bg: #121317;
+  --panel: #17181c;
   --header: #1a1b20;
-  --card: var(--card);
-  --border: var(--border);
-  --border-strong: var(--border-strong);
-  --accent: var(--accent);
-  --text: var(--text);
-  --text-dim: var(--text-dim);
-  --surface: var(--surface);
-  --btn-bg: var(--btn-bg);
-  --btn-border: var(--btn-border);
+  --card: #1e2026;
+  --border: #2a2c33;
+  --border-strong: #3a3d46;
+  --accent: #ffd75e;
+  --text: #e6e8ec;
+  --text-dim: #8b93a1;
+  --surface: #24262c;
+  --btn-bg: #26282f;
+  --btn-border: #33363f;
+  --btn-hover: #30333c;
+  --tag-bg: #2c3a55;
+  --tag-text: #9db4d8;
+  --ok: #7ed957;
+  --link: #4ec9ff;
+  --progress: #3d5a99;
+  --code: #9aa8b8;
 }
 [data-theme="light"] {
   --bg: #f2f3f5;
@@ -26,6 +33,13 @@
   --surface: #e9ebee;
   --btn-bg: #ffffff;
   --btn-border: #c3c8cf;
+  --btn-hover: #eceef1;
+  --tag-bg: #dbe4f0;
+  --tag-text: #3d5a99;
+  --ok: #2f9e44;
+  --link: #1c7ed6;
+  --progress: #3d5a99;
+  --code: #5c6770;
 }
 
 * { box-sizing: border-box; }

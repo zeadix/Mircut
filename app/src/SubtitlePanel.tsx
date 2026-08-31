@@ -165,7 +165,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       {/* AI 模型管理 */}
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>AI 模型</legend>
         {models.map((m) => (
           <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
@@ -185,7 +185,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
             </span>
             {m.downloaded ? (
               <>
-                <span style={{ color: "#7ed957", fontSize: 10 }}>已下载</span>
+                <span style={{ color: "var(--ok)", fontSize: 10 }}>已下载</span>
                 <button className="btn" style={{ padding: "1px 6px" }} onClick={() => onDeleteModel(m.id)}>
                   删除
                 </button>
@@ -219,7 +219,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
             className="asset-card"
             style={{ display: "flex", gap: 6, alignItems: "center" }}
           >
-            <span style={{ color: "#667", width: 90, flexShrink: 0 }}>
+            <span style={{ color: "var(--text-dim)", width: 90, flexShrink: 0 }}>
               {(c.start / fps).toFixed(1)}-{(c.end / fps).toFixed(1)}s
             </span>
             {editing === i ? (
@@ -242,7 +242,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
                     setDraft(c.text);
                   }}
                 >
-                  {c.text || <em style={{ color: "#556" }}>(空)</em>}
+                  {c.text || <em style={{ color: "var(--text-dim)" }}>(空)</em>}
                 </span>
                 <button className="btn" onClick={() => removeCue(i)}>×</button>
               </>
@@ -250,7 +250,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
           </div>
         ))}
         {track && track.cues.length === 0 && (
-          <div style={{ color: "#556" }}>暂无字幕</div>
+          <div style={{ color: "var(--text-dim)" }}>暂无字幕</div>
         )}
       </div>
     </div>

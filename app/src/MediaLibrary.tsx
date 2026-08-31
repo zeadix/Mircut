@@ -285,11 +285,11 @@ export default function MediaLibrary({
               ) : thumbs[a.id] ? (
                 <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
               ) : (
-                <div style={{ background: "var(--surface)", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>
+                <div style={{ background: "var(--surface)", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 11 }}>
                   {a.has_video ? "视频" : "音频"}
                 </div>
               )}
-              <div style={{ fontSize: 11, marginTop: 4, color: "#aab", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 11, marginTop: 4, color: "var(--text)", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {a.name ?? a.path.split("/").pop()}
                 </span>
@@ -305,11 +305,11 @@ export default function MediaLibrary({
                 >
                   ✎
                 </button>
-                <div style={{ color: "#667", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
+                <div style={{ color: "var(--text-dim)", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
                 {(a.tags ?? []).length > 0 && (
                   <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap", width: "100%" }}>
                     {a.tags!.map((t) => (
-                      <span key={t} style={{ background: "#2c3a55", borderRadius: 3, padding: "1px 4px", fontSize: 10, color: "#9db4d8" }}>
+                      <span key={t} style={{ background: "var(--tag-bg)", borderRadius: 3, padding: "1px 4px", fontSize: 10, color: "var(--tag-text)" }}>
                         {t}
                       </span>
                     ))}

@@ -152,7 +152,7 @@ export default function KeyframeEditor({
       )}
       {sorted.map((k, idx) => (
         <div key={k.t} style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 3, fontSize: 11 }}>
-          <span style={{ color: "#667", width: 48, flexShrink: 0 }}>
+          <span style={{ color: "var(--text-dim)", width: 48, flexShrink: 0 }}>
             {(k.t / tps).toFixed(2)}s
           </span>
           <input

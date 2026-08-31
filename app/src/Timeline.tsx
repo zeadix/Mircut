@@ -1250,7 +1250,7 @@ function TimelineInner({
       onDragLeave={() => { setDropHint(null); dropTargetRef.current = null; }}
       onDrop={onDrop}
     >
-      <div style={{ display: "flex", fontSize: 10, color: "#667", padding: "2px 8px", gap: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", fontSize: 10, color: "var(--text-dim)", padding: "2px 8px", gap: 10, alignItems: "center" }}>
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
         </label>
@@ -1525,7 +1525,7 @@ function TimelineInner({
             width: 6,
             flexShrink: 0,
             cursor: "col-resize",
-            background: "#22242a",
+            background: "var(--border)",
             userSelect: "none",
             display: "flex",
             alignItems: "center",
@@ -1686,14 +1686,14 @@ function TimelineInner({
               标记({doc.markers?.length ?? 0})
             </div>
             {(doc.markers ?? []).length === 0 && (
-              <div style={{ color: "#667" }}>无标记:M 键在播放头打点</div>
+              <div style={{ color: "var(--text-dim)" }}>无标记:M 键在播放头打点</div>
             )}
             {(doc.markers ?? [])
               .slice()
               .sort((a, b) => a.t - b.t)
               .map((m) => (
                 <div key={m.t} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
-                  <span style={{ color: "#4ec9ff", width: 58, flexShrink: 0 }}>
+                  <span style={{ color: "var(--link)", width: 58, flexShrink: 0 }}>
                     {(m.t / tps).toFixed(2)}s
                   </span>
                   <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1885,7 +1885,7 @@ function TimelineInner({
             }}
           >
             <div style={{ fontWeight: "bold", marginBottom: 10 }}>
-              设置片段时间 <span style={{ color: "#667", fontWeight: "normal" }}>{rangeEdit.clipId}</span>
+              设置片段时间 <span style={{ color: "var(--text-dim)", fontWeight: "normal" }}>{rangeEdit.clipId}</span>
             </div>
             {([
               ["start", "时间轴起点(秒)"],

@@ -186,7 +186,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       return (
         <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <h3 style={{ margin: 0, fontSize: 13 }}>已选 {selectedCount} 个片段</h3>
-          <div style={{ color: "#667" }}>批量操作(组合命令,一次撤销)</div>
+          <div style={{ color: "var(--text-dim)" }}>批量操作(组合命令,一次撤销)</div>
           <button className="btn" onClick={() => void onBatchRemove?.()}>
             批量删除
           </button>
@@ -220,7 +220,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       );
     }
     return (
-      <div style={{ padding: 12, color: "#667", fontSize: 12 }}>
+      <div style={{ padding: 12, color: "var(--text-dim)", fontSize: 12 }}>
         选中时间轴片段以编辑属性
       </div>
     );
@@ -367,7 +367,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         >
           按场景自动切分
         </button>
-        {splitStatus && <div style={{ color: "#667", marginTop: 3 }}>{splitStatus}</div>}
+        {splitStatus && <div style={{ color: "var(--text-dim)", marginTop: 3 }}>{splitStatus}</div>}
       </fieldset>
 
       <fieldset style={{ borderColor: "var(--border)" }}>
@@ -398,7 +398,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             />
           </label>
         </div>
-        <div style={{ color: "#667", marginTop: 4 }}>
+        <div style={{ color: "var(--text-dim)", marginTop: 4 }}>
           时长 {((clip.asset.source_out - clip.asset.source_in) / clip.speed).toFixed(2)}s · 快捷键 I/O 用播放头设置
         </div>
       </fieldset>
@@ -542,7 +542,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           onChange={(e) => setLutPath(e.target.value)}
           onBlur={applyLut}
         />
-        {lutPath && <div style={{ color: "#667", marginTop: 4 }}>已应用(强度 100%)</div>}
+        {lutPath && <div style={{ color: "var(--text-dim)", marginTop: 4 }}>已应用(强度 100%)</div>}
       </fieldset>
 
       <fieldset style={{ borderColor: "var(--border)" }}>
@@ -580,7 +580,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             ))}
           </select>
         </label>
-        <div style={{ color: "#667", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
+        <div style={{ color: "var(--text-dim)", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
 
       <fieldset style={{ borderColor: "var(--border)" }}>
@@ -713,7 +713,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           )}
         </div>
         {clip.fx?.alpha_matting ? (
-          <div style={{ color: "#7ed957", marginBottom: 4 }}>
+          <div style={{ color: "var(--ok)", marginBottom: 4 }}>
             已启用(平滑 {clip.fx.alpha_matting.smooth_frames} 帧)
           </div>
         ) : (
@@ -801,7 +801,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             onTouchEnd={applyChromaKey}
           />
         </label>
-        <div style={{ color: "#667", marginTop: 4 }}>
+        <div style={{ color: "var(--text-dim)", marginTop: 4 }}>
           {ck.similarity > 0.01 ? `已启用 (similarity=${ck.similarity})` : "拖动强度启用"}
         </div>
       </fieldset>
@@ -916,7 +916,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.05}
           onRefresh={onRefresh}
         />
-        <div style={{ color: "#667", marginTop: 2 }}>
+        <div style={{ color: "var(--text-dim)", marginTop: 2 }}>
           关键帧按播放头位置添加;缩放/位移 ≥2 帧时优先于画中画静态参数
         </div>
       </fieldset>
@@ -958,7 +958,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             </div>
           </>
         ) : (
-          <span style={{ color: "#667" }}>右侧无相邻片段</span>
+          <span style={{ color: "var(--text-dim)" }}>右侧无相邻片段</span>
         )}
       </fieldset>
     </div>

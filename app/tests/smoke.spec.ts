@@ -105,3 +105,38 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   const voiceSel = rightAside.locator("select").last();
   await expect(voiceSel.locator("option")).toHaveCount(2); // 默认 + mock 音色
 });
+
+test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+
+  // 暗色默认:核心 token 必须已解析(自引用死循环回归门禁)
+  const dark = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    return {
+      bg: cs.getPropertyValue("--bg").trim(),
+      panel: cs.getPropertyValue("--panel").trim(),
+      text: cs.getPropertyValue("--text").trim(),
+      theme: document.documentElement.dataset.theme,
+    };
+  });
+  expect(dark.theme).toBe("dark");
+  expect(dark.bg).toBeTruthy();
+  expect(dark.panel).toBeTruthy();
+  expect(dark.text).toBeTruthy();
+  // 自引用 token 会解析为空 -> 显式断言非空即防回归
+
+  // 切亮色
+  await page.getByRole("button", { name: /切换亮\/暗主题/ }).click();
+  await page.waitForTimeout(300);
+  const light = await page.evaluate(() => ({
+    theme: document.documentElement.dataset.theme,
+    bg: getComputedStyle(document.documentElement).getPropertyValue("--bg").trim(),
+  }));
+  expect(light.theme).toBe("light");
+  expect(light.bg).not.toBe(dark.bg);
+
+  // localStorage 持久化
+  const saved = await page.evaluate(() => localStorage.getItem("veditor-theme"));
+  expect(saved).toBe("light");
+});

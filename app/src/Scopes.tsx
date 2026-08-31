@@ -93,7 +93,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "0 16px 8px", background: "var(--bg)" }}>
       <div>
-        <div style={{ fontSize: 10, color: "#667", marginBottom: 2 }}>
+        <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>
           波形 {(playheadTicks / fps).toFixed(2)}s
         </div>
         <canvas
@@ -104,7 +104,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
         />
       </div>
       <div>
-        <div style={{ fontSize: 10, color: "#667", marginBottom: 2 }}>矢量</div>
+        <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>矢量</div>
         <canvas
           ref={vectRef}
           width={72}
@@ -112,7 +112,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
           style={{ border: "1px solid #2a2c33", borderRadius: 4, display: "block" }}
         />
       </div>
-      {err && <div style={{ fontSize: 10, color: "#556", alignSelf: "center" }}>{err}</div>}
+      {err && <div style={{ fontSize: 10, color: "var(--text-dim)", alignSelf: "center" }}>{err}</div>}
     </div>
   );
 }

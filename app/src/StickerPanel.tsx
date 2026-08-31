@@ -138,7 +138,7 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
       <div>
         <div style={{ color: "var(--text-dim)", marginBottom: 4 }}>素材库图片(单击贴到播放头)</div>
         {imageAssets.length === 0 && (
-          <div style={{ color: "#667" }}>暂无图片素材:顶部"导入"或上方按钮添加</div>
+          <div style={{ color: "var(--text-dim)" }}>暂无图片素材:顶部"导入"或上方按钮添加</div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
           {imageAssets.map((a) => (
@@ -150,7 +150,7 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
               onClick={() => addSticker(a.path)}
             >
               <StickerThumb path={a.path} />
-              <div style={{ fontSize: 10, color: "#aab", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: 10, color: "var(--text)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {a.name ?? a.path.split("/").pop()}
               </div>
             </div>
@@ -216,7 +216,7 @@ function StickerThumb({ path }: { path: string }) {
       {url ? (
         <img src={url} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} alt="" />
       ) : (
-        <span style={{ color: "#555", fontSize: 10 }}>图片</span>
+        <span style={{ color: "var(--text-dim)", fontSize: 10 }}>图片</span>
       )}
     </div>
   );
