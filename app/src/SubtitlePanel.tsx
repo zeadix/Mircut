@@ -132,7 +132,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
         <button className="btn" onClick={onImportAss}>导入 ASS</button>
         <button className="btn" onClick={onExportAss}>导出 ASS</button>
       </div>
-      <div style={{ color: "#8b93a1" }}>{status}</div>
+      <div style={{ color: "var(--text-dim)" }}>{status}</div>
       <div style={{ overflowY: "auto", maxHeight: 300 }}>
         {track?.cues.map((c, i) => (
           <div

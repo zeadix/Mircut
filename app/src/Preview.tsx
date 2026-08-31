@@ -895,7 +895,7 @@ export default function Preview({
               alignItems: "center",
               gap: 4,
               opacity: snapOn ? 1 : 0.5,
-              borderColor: snapOn ? "#ffd75e" : undefined,
+              borderColor: snapOn ? "var(--accent)" : undefined,
               zIndex: 10,
               background: "rgba(20,20,24,0.8)",
             }}

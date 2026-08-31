@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { Document } from "./types";
+import { t } from "./i18n";
+import { useLang } from "./useLang";
 
 interface Props {
   doc: Document;
@@ -29,11 +31,11 @@ const STATUS_LABEL: Record<QueueTask["status"], string> = {
   cancelled: "已取消",
 };
 const STATUS_COLOR: Record<QueueTask["status"], string> = {
-  pending: "#8b93a1",
+  pending: "var(--text-dim)",
   running: "#4ec9ff",
   done: "#7ed957",
   failed: "#ff5f5f",
-  cancelled: "#8b93a1",
+  cancelled: "var(--text-dim)",
 };
 
 /**
@@ -56,6 +58,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const activeIdRef = useRef<number | null>(null);
   activeIdRef.current = activeId;
   const runningRef = useRef(false);
+  useLang(); // 订阅语言变更
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
@@ -222,7 +225,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     >
       <div
         style={{
-          background: "#1e2026",
+          background: "var(--card)",
           border: "1px solid #3a3d46",
           borderRadius: 10,
           padding: 18,
@@ -230,14 +233,14 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           maxHeight: "84vh",
           overflowY: "auto",
           fontSize: 12,
-          color: "#dfe3ea",
+          color: "var(--text)",
           display: "flex",
           flexDirection: "column",
           gap: 12,
         }}
       >
         <div style={{ display: "flex", alignItems: "center" }}>
-          <strong style={{ fontSize: 14 }}>导出视频</strong>
+          <strong style={{ fontSize: 14 }}>{t("export.title")}</strong>
           <span style={{ flex: 1 }} />
           <button className="btn" onClick={onClose} disabled={busy}>
             ✕
@@ -246,7 +249,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
 
         {/* 平台预设 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          预设:
+          {t("export.preset")}
           <select
             className="ti"
             style={{ flex: 1 }}
@@ -263,17 +266,17 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
 
         {/* 视频编码器(硬编探测) */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          编码器:
+          {t("export.encoder")}
           <select
             className="ti"
             value={vcodec}
             onChange={(e) => setVcodec(e.target.value)}
             title="硬件编码可大幅提速;不可用时 ffmpeg 会报错,请回退 libx264"
           >
-            <option value="libx264">软件 libx264</option>
+            <option value="libx264">{t("export.software")}</option>
             {hwEncoders.map((c) => (
               <option key={c} value={c}>
-                硬件 {c}
+                {t("export.hardware")} {c}
               </option>
             ))}
           </select>
@@ -285,12 +288,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
             checked={loudness}
             onChange={(e) => setLoudness(e.target.checked)}
           />
-          响度标准化 (-14 LUFS, 对标流媒体)
+          {t("export.loudness")}
         </label>
 
         {/* 输出路径 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          路径:
+          {t("export.path")}
           <input
             className="ti"
             style={{ flex: 1 }}
@@ -298,21 +301,21 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
             onChange={(e) => setExportPath(e.target.value)}
           />
           <button className="btn" onClick={onPickSavePath}>
-            浏览…
+            {t("export.browse")}
           </button>
         </label>
 
         {/* 命令预览 */}
         <div>
           <button className="btn" onClick={onPreviewCmd}>
-            FFmpeg 命令预览
+            {t("export.cmdPreview")}
           </button>
           {exportCmd && (
             <code
               style={{
                 display: "block",
                 marginTop: 6,
-                background: "#17181c",
+                background: "var(--panel)",
                 border: "1px solid #2a2c33",
                 borderRadius: 6,
                 padding: 8,
@@ -330,17 +333,17 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         </div>
 
         {/* 队列 */}
-        <fieldset style={{ borderColor: "#2a2c33" }}>
-          <legend>导出队列({pendingCount} 等待)</legend>
+        <fieldset style={{ borderColor: "var(--border)" }}>
+          <legend>{t("export.queue")}({pendingCount})</legend>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
             <button className="btn" onClick={onEnqueue} disabled={busy}>
-              加入队列
+              {t("export.enqueue")}
             </button>
             <button className="btn" onClick={onEnqueueAllPresets} disabled={busy}>
-              全部预设入队
+              {t("export.enqueueAll")}
             </button>
             <button className="btn" onClick={() => setPaused((p) => !p)}>
-              {paused ? "▶ 继续" : "⏸ 暂停队列"}
+              {paused ? t("export.resume") : t("export.pause")}
             </button>
             {queue.some((t) => t.status === "done" || t.status === "failed" || t.status === "cancelled") && (
               <button
@@ -348,7 +351,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 onClick={() => setQueue((q) => q.filter((t) => t.status === "pending" || t.status === "running"))}
                 disabled={busy}
               >
-                清理已完成
+                {t("export.cleanup")}
               </button>
             )}
           </div>
@@ -363,7 +366,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
-                  background: "#17181c",
+                  background: "var(--panel)",
                   border: "1px solid #2a2c33",
                   borderRadius: 6,
                   padding: "4px 8px",
@@ -384,7 +387,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                       style={{
                         width: 70,
                         height: 6,
-                        background: "#24262c",
+                        background: "var(--surface)",
                         borderRadius: 3,
                         overflow: "hidden",
                         flexShrink: 0,
@@ -399,7 +402,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                         }}
                       />
                     </div>
-                    <span style={{ color: "#8b93a1", width: 34, textAlign: "right" }}>
+                    <span style={{ color: "var(--text-dim)", width: 34, textAlign: "right" }}>
                       {Math.round(t.pct)}%
                     </span>
                     <button className="btn" style={{ padding: "1px 6px" }} onClick={onCancelRunning}>
@@ -425,13 +428,13 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         {/* 操作行 */}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button className="btn" onClick={onClose} disabled={busy}>
-            关闭
+            {t("export.close")}
           </button>
           <button className="btn" onClick={() => onPublish("douyin")}>
-            一键发布(抖音)
+            {t("export.publishDouyin")}
           </button>
           <button className="btn" onClick={() => onPublish("bilibili")}>
-            一键发布(B站)
+            {t("export.publishBili")}
           </button>
         </div>
       </div>

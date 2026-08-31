@@ -17,9 +17,13 @@ import {
   ArrowClockwise,
   Export,
   Plus,
+  Sun,
   Waves,
 } from "@phosphor-icons/react";
 import { useEditor } from "./store";
+import { toggleTheme } from "./theme";
+import { t } from "./i18n";
+import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
 import RightPanel from "./RightPanel";
 
@@ -64,6 +68,10 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   /// 时间码草稿(非 null = 正在编辑,否则显示当前时间)。
   const [tcDraft, setTcDraft] = useState<string | null>(null);
+  /// 主题(仅用于触发重渲染;真值在 documentElement.dataset.theme)。
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  /// 语言(zh/en)。
+  const [lang, setLangState] = useLang();
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
 
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
@@ -826,22 +834,22 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     return () => window.removeEventListener("keydown", onKey);
   }, [selected, playhead, doc, projectPath, fps]);
 
-  if (!doc) return <div style={{ color: "#ccc", padding: 24 }}>加载中...</div>;
+  if (!doc) return <div style={{ color: "#ccc", padding: 24 }}>{t("status.loading")}</div>;
 
   return (
-    <div style={{ fontFamily: "sans-serif", background: "#121317", color: "#e6e8ec", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* 顶栏 */}
-      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "#1a1b20", borderBottom: "1px solid #2a2c33" }}>
+      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "var(--header)", borderBottom: "1px solid #2a2c33" }}>
         <FilmSlate size={22} />
         <strong>VEditor</strong>
         <span style={{ flex: 1 }} />
-        <button className="btn" onClick={onUndo} title="撤销 (Ctrl+Z)"><ArrowCounterClockwise size={16} /></button>
-        <button className="btn" onClick={onRedo} title="重做 (Ctrl+Shift+Z)"><ArrowClockwise size={16} /></button>
-        <button className="btn" onClick={onSplit} disabled={!selected} title="分割 (S)"><Scissors size={16} /></button>
-        <button className="btn" onClick={onRemove} disabled={!selected} title="删除 (Del)"><Trash size={16} /></button>
-        <button className="btn" onClick={onRippleDelete} disabled={!selected} title="波纹删除"><Waves size={16} /></button>
+        <button className="btn" onClick={onUndo} title={t("menu.undo")}><ArrowCounterClockwise size={16} /></button>
+        <button className="btn" onClick={onRedo} title={t("menu.redo")}><ArrowClockwise size={16} /></button>
+        <button className="btn" onClick={onSplit} disabled={!selected} title={t("menu.split")}><Scissors size={16} /></button>
+        <button className="btn" onClick={onRemove} disabled={!selected} title={t("menu.delete")}><Trash size={16} /></button>
+        <button className="btn" onClick={onRippleDelete} disabled={!selected} title={t("menu.ripple")}><Waves size={16} /></button>
         <div style={{ position: "relative" }}>
-          <button className="btn" onClick={() => setFileMenuOpen((v) => !v)}>文件</button>
+          <button className="btn" onClick={() => setFileMenuOpen((v) => !v)}>{t("menu.file")}</button>
           {fileMenuOpen && (
             <>
               <div
@@ -854,23 +862,23 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                   top: "100%",
                   left: 0,
                   marginTop: 4,
-                  background: "#1e2026",
+                  background: "var(--card)",
                   border: "1px solid #3a3d46",
                   borderRadius: 8,
                   padding: 6,
                   minWidth: 210,
                   fontSize: 12,
-                  color: "#dfe3ea",
+                  color: "var(--text)",
                   boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
                   zIndex: 101,
                 }}
               >
                 {[
-                  { label: "新建工程", fn: onNewProject, hint: "Ctrl+N" },
-                  { label: "打开…", fn: onOpenProject, hint: "Ctrl+O" },
-                  { label: "保存", fn: onSaveProject, hint: "Ctrl+S" },
-                  { label: "另存为…", fn: onSaveAsProject },
-                  { label: "导入剪映草稿…", fn: onImportJianying },
+                  { label: t("menu.new"), fn: onNewProject, hint: "Ctrl+N" },
+                  { label: t("menu.open"), fn: onOpenProject, hint: "Ctrl+O" },
+                  { label: t("menu.save"), fn: onSaveProject, hint: "Ctrl+S" },
+                  { label: t("menu.saveAs"), fn: onSaveAsProject },
+                  { label: t("menu.importJianying"), fn: onImportJianying },
                 ].map((item) => (
                   <button
                     key={item.label}
@@ -889,7 +897,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 {recentProjects.length > 0 && (
                   <>
                     <div style={{ borderTop: "1px solid #2a2c33", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "#667" }}>
-                      最近的工程
+                      {t("menu.recent")}
                     </div>
                     {recentProjects.map((p) => (
                       <button
@@ -913,10 +921,24 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             </>
           )}
         </div>
-        <button className="btn" onClick={onCreateFileTrack} title="创建文件轨道"><Plus size={14} /> 文件轨道</button>
-        <button className="btn" onClick={onDetectBeats} title="节拍检测">节拍</button>
-        <button className="btn" onClick={onRemoveSilence} title="AI 去静音">去静音</button>
-        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> 导出</button>
+        <button className="btn" onClick={onCreateFileTrack} title="创建文件轨道"><Plus size={14} /> {t("menu.fileTrack")}</button>
+        <button
+          className="btn"
+          title={t("menu.theme")}
+          onClick={() => setTheme(toggleTheme())}
+        >
+          <Sun size={16} weight={theme === "light" ? "fill" : "regular"} />
+        </button>
+        <button
+          className="btn"
+          title="Language / 语言"
+          onClick={() => setLangState(lang === "zh" ? "en" : "zh")}
+        >
+          {lang === "zh" ? "EN" : "中"}
+        </button>
+        <button className="btn" onClick={onDetectBeats} title="节拍检测">{t("menu.beats")}</button>
+        <button className="btn" onClick={onRemoveSilence} title="AI 去静音">{t("menu.removeSilence")}</button>
+        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> {t("menu.export")}</button>
       </header>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -936,15 +958,15 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "#17181c" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "var(--panel)" }}>
             <button className="btn" onClick={() => setPlaying(!playing)} title="播放/暂停 (空格)">
-              {playing ? `暂停 ${playSpeed}x` : "播放"}
+              {playing ? `${t("play.pause")} ${playSpeed}x` : t("play.play")}
             </button>
             <select
               className="ti"
               value={String(Math.abs(playSpeed))}
               onChange={(e) => setPlaySpeed(parseFloat(e.target.value))}
-              title="播放倍率"
+              title={t("play.speed")}
             >
               <option value="0.25">0.25x</option>
               <option value="0.5">0.5x</option>
@@ -957,10 +979,10 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               className="ti"
               value={renderMode}
               onChange={(e) => onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
-              title="渲染引擎"
+              title={t("play.engine")}
             >
-              <option value="proxy">代理引擎</option>
-              <option value="realtime">实时引擎(管道)</option>
+              <option value="proxy">{t("play.proxy")}</option>
+              <option value="realtime">{t("play.realtime")}</option>
             </select>
             {/* 时间码输入跳转(支持 ss.s / mm:ss / hh:mm:ss) */}
             <input
@@ -997,7 +1019,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             onSetRect={onSetRect}
           />
           <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
-          <div style={{ padding: "4px 16px", fontSize: 12, color: "#8b93a1", background: "#17181c" }}>
+          <div style={{ padding: "4px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)" }}>
             {status}
           </div>
           <div style={{ flex: 1, minHeight: 220, overflow: "hidden", display: "flex", flexDirection: "column" }}>

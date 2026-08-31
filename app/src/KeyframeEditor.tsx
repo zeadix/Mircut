@@ -137,15 +137,15 @@ export default function KeyframeEditor({
 
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ fontSize: 11, color: "#9aa0ab", marginBottom: 4 }}>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>
         {label} ({draft.length} 帧)
       </div>
       {draft.length > 0 && (
-        <svg width="100%" height="56" style={{ background: "#17181c", borderRadius: 4, border: "1px solid #2a2c33" }}>
+        <svg width="100%" height="56" style={{ background: "var(--panel)", borderRadius: 4, border: "1px solid #2a2c33" }}>
           <polyline
             points={curvePoints}
             fill="none"
-            stroke="#ffd75e"
+            stroke="var(--accent)"
             strokeWidth="1.5"
           />
         </svg>

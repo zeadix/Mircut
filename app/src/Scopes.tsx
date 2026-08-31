@@ -91,7 +91,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
   }, [data]);
 
   return (
-    <div style={{ display: "flex", gap: 8, padding: "0 16px 8px", background: "#121317" }}>
+    <div style={{ display: "flex", gap: 8, padding: "0 16px 8px", background: "var(--bg)" }}>
       <div>
         <div style={{ fontSize: 10, color: "#667", marginBottom: 2 }}>
           波形 {(playheadTicks / fps).toFixed(2)}s

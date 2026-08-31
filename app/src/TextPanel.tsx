@@ -100,7 +100,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       <button className="btn" onClick={addOverlay}>+ 在播放头添加标题</button>
-      <div style={{ color: "#8b93a1" }}>{status}</div>
+      <div style={{ color: "var(--text-dim)" }}>{status}</div>
       {overlays.map((o, i) => (
         <div key={o.id} className="asset-card">
           {editing === i && draft ? (
@@ -171,7 +171,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
         </div>
       ))}
 
-      <fieldset style={{ borderColor: "#2a2c33", marginTop: 4 }}>
+      <fieldset style={{ borderColor: "var(--border)", marginTop: 4 }}>
         <legend>图文成片</legend>
         <textarea
           className="ti"
@@ -184,7 +184,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
         <button className="btn" style={{ marginTop: 6 }} onClick={onArticleToVideo}>生成图文视频</button>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33", marginTop: 4 }}>
+      <fieldset style={{ borderColor: "var(--border)", marginTop: 4 }}>
         <legend>AI 配音 (TTS)</legend>
         <textarea
           className="ti"
@@ -202,11 +202,11 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
 
 /// 花字样式包(一键套用到编辑中的文字)。
 const TEXT_STYLES: [string, Partial<TextOverlay>][] = [
-  ["黄字黑边", { color: "#ffd75e", outline: "#000000", outline2: null, bg_color: null, bold: true }],
+  ["黄字黑边", { color: "var(--accent)", outline: "#000000", outline2: null, bg_color: null, bold: true }],
   ["白字黑边", { color: "#ffffff", outline: "#000000", outline2: null, bg_color: null }],
   ["白字红双层", { color: "#ffffff", outline: "#000000", outline2: "#e03131", bold: true }],
   ["字幕条", { color: "#ffffff", outline: null, outline2: null, bg_color: "#000000", bold: false }],
-  ["综艺大标题", { color: "#ffd75e", outline: "#7a2e00", outline2: "#ffffff", bold: true, font_size: 96, shadow: true, bg_color: null }],
+  ["综艺大标题", { color: "var(--accent)", outline: "#7a2e00", outline2: "#ffffff", bold: true, font_size: 96, shadow: true, bg_color: null }],
 ];
 
 const TextPanel = memo(TextPanelInner);

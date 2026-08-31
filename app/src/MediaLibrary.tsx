@@ -55,7 +55,7 @@ export default function MediaLibrary({
   const fileRef = useRef<HTMLInputElement>(null);
 
   return (
-    <aside style={{ width: 220, background: "#17181c", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
+    <aside style={{ width: 220, background: "var(--panel)", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
         <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
         <span style={{ flex: 1 }} />
@@ -101,8 +101,8 @@ export default function MediaLibrary({
             style={{
               padding: "1px 8px",
               fontSize: 10,
-              borderColor: mediaCat === k ? "#ffd75e" : undefined,
-              color: mediaCat === k ? "#ffd75e" : undefined,
+              borderColor: mediaCat === k ? "var(--accent)" : undefined,
+              color: mediaCat === k ? "var(--accent)" : undefined,
             }}
             onClick={() => setMediaCat(k)}
           >
@@ -147,7 +147,7 @@ export default function MediaLibrary({
               ) : thumbs[a.id] ? (
                 <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
               ) : (
-                <div style={{ background: "#24262c", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>
+                <div style={{ background: "var(--surface)", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontSize: 11 }}>
                   {a.has_video ? "视频" : "音频"}
                 </div>
               )}

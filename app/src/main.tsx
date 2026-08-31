@@ -1,11 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installMockTauri } from "./mockTauri";
+import { initTheme } from "./theme";
+import { initLang } from "./i18n";
 import App from "./App";
 import "./styles.css";
 
 // 冒烟测试模式(VITE_MOCK_TAURI=1):在任何 API 调用前安装 IPC mock
 installMockTauri();
+// 主题恢复(暗色默认,亮色经 localStorage 持久化)
+initTheme();
+initLang();
 
 // 全局错误捕获 -> 后端落盘(~/.veditor/js.log),崩溃诊断用
 async function reportJsError(kind: string, detail: string) {

@@ -391,7 +391,7 @@ function TimelineInner({
         ctx.fillRect(x + cw - foutX - 3, laneTop + 1, 6, 5);
       }
       // 头尾 2px 颜色条带(所有块,指示 10px 修剪触发区)
-      const edgeCol = selectedSet.has(clip.id) ? "#ffd75e" : "rgba(255,255,255,0.28)";
+      const edgeCol = selectedSet.has(clip.id) ? "var(--accent)" : "rgba(255,255,255,0.28)";
       ctx.fillStyle = edgeCol;
       ctx.fillRect(x, laneTop, 2, h);
       ctx.fillRect(x + Math.max(cw, 2) - 2, laneTop, 2, h);
@@ -1209,7 +1209,7 @@ function TimelineInner({
     <div
       data-veditor-drop="timeline"
       style={{
-        background: "#17181c",
+        background: "var(--panel)",
         userSelect: "none",
         display: "flex",
         flexDirection: "column",
@@ -1267,7 +1267,7 @@ function TimelineInner({
       </div>
       {/* 顶部刻度尺(固定在轨道列表上边缘) */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "#1a1b1f", borderBottom: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid #2a2c33" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -1344,7 +1344,7 @@ function TimelineInner({
                     left: 4,
                     right: 4,
                     height: 3,
-                    background: "#ffd75e",
+                    background: "var(--accent)",
                     borderRadius: 2,
                     boxShadow: "0 0 6px #ffd75e88",
                     zIndex: 2,
@@ -1359,7 +1359,7 @@ function TimelineInner({
                     left: 4,
                     right: 4,
                     height: 3,
-                    background: "#ffd75e",
+                    background: "var(--accent)",
                     borderRadius: 2,
                     boxShadow: "0 0 6px #ffd75e88",
                     zIndex: 2,
@@ -1395,7 +1395,7 @@ function TimelineInner({
                 style={{
                   cursor: "grab",
                   alignSelf: "center",
-                  color: reorderHint === ti ? "#ffd75e" : "#565b66",
+                  color: reorderHint === ti ? "var(--accent)" : "#565b66",
                   fontSize: 13,
                   lineHeight: "6px",
                   letterSpacing: "1px",
@@ -1458,8 +1458,8 @@ function TimelineInner({
                       display: "flex",
                       alignItems: "center",
                       opacity: on ? 1 : 0.4,
-                      borderColor: on ? "#ffd75e" : undefined,
-                      color: on ? "#ffd75e" : "#8b93a1",
+                      borderColor: on ? "var(--accent)" : undefined,
+                      color: on ? "var(--accent)" : "var(--text-dim)",
                     }}
                     onClick={() => onToggleTrack?.(track.id, f)}
                     title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}
@@ -1524,7 +1524,7 @@ function TimelineInner({
               width: 2,
               height: 28,
               borderRadius: 2,
-              background: headWDrag.current ? "#ffd75e" : "#3a3d46",
+              background: headWDrag.current ? "var(--accent)" : "var(--border-strong)",
               transition: "background 0.15s",
             }}
           />
@@ -1611,7 +1611,7 @@ function TimelineInner({
 
       {/* 底部刻度尺(固定在轨道列表下边缘)+ 横向滚动条 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "#1a1b1f", borderTop: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderTop: "1px solid #2a2c33" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -1639,7 +1639,7 @@ function TimelineInner({
               position: "absolute",
               left: 8,
               top: 26,
-              background: "#1e2026",
+              background: "var(--card)",
               border: "1px solid #3a3d46",
               borderRadius: 8,
               padding: 8,
@@ -1648,7 +1648,7 @@ function TimelineInner({
               maxHeight: 260,
               overflowY: "auto",
               fontSize: 11,
-              color: "#dfe3ea",
+              color: "var(--text)",
               boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
             }}
             onMouseDown={(e) => e.stopPropagation()}
@@ -1747,13 +1747,13 @@ function TimelineInner({
                   position: "fixed",
                   left: ctxMenu.x,
                   top: ctxMenu.y,
-                  background: "#1e2026",
+                  background: "var(--card)",
                   border: "1px solid #3a3d46",
                   borderRadius: 8,
                   padding: 6,
                   minWidth: 180,
                   fontSize: 12,
-                  color: "#dfe3ea",
+                  color: "var(--text)",
                   boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
                 }}
               >
@@ -1800,13 +1800,13 @@ function TimelineInner({
               position: "fixed",
               left: dropMenu.x,
               top: dropMenu.y,
-              background: "#1e2026",
+              background: "var(--card)",
               border: "1px solid #3a3d46",
               borderRadius: 8,
               padding: 6,
               minWidth: 150,
               fontSize: 12,
-              color: "#dfe3ea",
+              color: "var(--text)",
               boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
             }}
           >
@@ -1846,13 +1846,13 @@ function TimelineInner({
         >
           <div
             style={{
-              background: "#1e2026",
+              background: "var(--card)",
               border: "1px solid #3a3d46",
               borderRadius: 8,
               padding: 16,
               width: 300,
               fontSize: 12,
-              color: "#dfe3ea",
+              color: "var(--text)",
             }}
           >
             <div style={{ fontWeight: "bold", marginBottom: 10 }}>
@@ -1923,7 +1923,7 @@ function RulerBar({
           bottom: 0,
           width: 1,
           height: s % 2 === 0 ? 10 : 5,
-          background: "#3a3d46",
+          background: "var(--border-strong)",
         }}
       />
     );
@@ -1936,7 +1936,7 @@ function RulerBar({
             left: x + 3,
             bottom: 1,
             fontSize: 9,
-            color: "#9aa0ab",
+            color: "var(--text-dim)",
             userSelect: "none",
           }}
         >
@@ -1952,7 +1952,7 @@ function RulerBar({
         position: "relative",
         width: "100%",
         height: 18,
-        background: "#1a1b1f",
+        background: "var(--header)",
         overflow: "hidden",
         cursor: onSeekTicks ? "ew-resize" : undefined,
         userSelect: "none",

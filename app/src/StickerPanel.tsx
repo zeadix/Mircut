@@ -99,11 +99,11 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
       <div style={{ display: "flex", gap: 6 }}>
         <button className="btn" onClick={onImportImage}>导入图片贴纸…</button>
       </div>
-      <div style={{ color: "#8b93a1" }}>{status}</div>
+      <div style={{ color: "var(--text-dim)" }}>{status}</div>
 
       {/* 素材库图片 → 点击贴到播放头 */}
       <div>
-        <div style={{ color: "#9aa0ab", marginBottom: 4 }}>素材库图片(单击贴到播放头)</div>
+        <div style={{ color: "var(--text-dim)", marginBottom: 4 }}>素材库图片(单击贴到播放头)</div>
         {imageAssets.length === 0 && (
           <div style={{ color: "#667" }}>暂无图片素材:顶部"导入"或上方按钮添加</div>
         )}
@@ -127,13 +127,13 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
 
       {/* 已放置的贴纸 */}
       <div>
-        <div style={{ color: "#9aa0ab", marginBottom: 4 }}>已放置({overlays.length})</div>
+        <div style={{ color: "var(--text-dim)", marginBottom: 4 }}>已放置({overlays.length})</div>
         {overlays.map((o, i) => (
           <div key={o.id + i} className="asset-card" style={{ marginBottom: 6 }}>
             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
               <img
                 src={thumbs[o.path] ?? `veditor://preview/${encodeURIComponent(o.path)}`}
-                style={{ width: 36, height: 36, objectFit: "contain", background: "#24262c", borderRadius: 4 }}
+                style={{ width: 36, height: 36, objectFit: "contain", background: "var(--surface)", borderRadius: 4 }}
                 alt=""
               />
               <span style={{ flex: 1, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -151,7 +151,7 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
               ["rotate", "旋转", -180, 180, 1],
               ["opacity", "不透明度", 0, 1, 0.05],
             ] as const).map(([key, label, min, max, step]) => (
-              <label key={key} style={{ display: "block", fontSize: 10, color: "#9aa0ab" }}>
+              <label key={key} style={{ display: "block", fontSize: 10, color: "var(--text-dim)" }}>
                 {label}
                 <input
                   type="range"
@@ -179,7 +179,7 @@ function StickerThumb({ path }: { path: string }) {
       .catch(() => {});
   }, [path]);
   return (
-    <div style={{ background: "#24262c", height: 56, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ background: "var(--surface)", height: 56, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
       {url ? (
         <img src={url} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} alt="" />
       ) : (

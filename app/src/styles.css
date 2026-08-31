@@ -1,9 +1,39 @@
+/* 设计 token:集中颜色(亮/暗主题经 data-theme 切换) */
+:root {
+  --bg: var(--bg);
+  --panel: var(--panel);
+  --header: #1a1b20;
+  --card: var(--card);
+  --border: var(--border);
+  --border-strong: var(--border-strong);
+  --accent: var(--accent);
+  --text: var(--text);
+  --text-dim: var(--text-dim);
+  --surface: var(--surface);
+  --btn-bg: var(--btn-bg);
+  --btn-border: var(--btn-border);
+}
+[data-theme="light"] {
+  --bg: #f2f3f5;
+  --panel: #ffffff;
+  --header: #fafbfc;
+  --card: #ffffff;
+  --border: #d9dce1;
+  --border-strong: #b9bfc8;
+  --accent: #b8860b;
+  --text: #1d2126;
+  --text-dim: #6b7280;
+  --surface: #e9ebee;
+  --btn-bg: #ffffff;
+  --btn-border: #c3c8cf;
+}
+
 * { box-sizing: border-box; }
 
 /* 原生软件感:全局禁用文本选择与网页拖拽行为 */
 html, body {
   margin: 0;
-  background: #121317;
+  background: var(--bg);
   height: 100%;
   min-height: 100vh;
   user-select: none;
@@ -52,14 +82,14 @@ textarea::selection {
   color: #fff;
 }
 
-body { background: #121317; }
+body { background: var(--bg); }
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #26282f;
-  color: #dfe3ea;
-  border: 1px solid #33363f;
+  background: var(--btn-bg);
+  color: var(--text);
+  border: 1px solid var(--btn-border);
   border-radius: 6px;
   padding: 5px 10px;
   font-size: 12px;
@@ -70,17 +100,17 @@ body { background: #121317; }
 .btn.primary { background: #3d5a99; border-color: #4d6cb3; }
 .btn.primary:hover { background: #4668ad; }
 .asset-card {
-  background: #1e2026;
-  border: 1px solid #2a2c33;
+  background: var(--card);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px;
   margin-bottom: 8px;
 }
 .asset-card:hover { border-color: #3d5a99; }
 .ti {
-  background: #1e2026;
-  border: 1px solid #33363f;
-  color: #dfe3ea;
+  background: var(--card);
+  border: 1px solid var(--btn-border);
+  color: var(--text);
   border-radius: 6px;
   padding: 5px 8px;
   font-size: 12px;
@@ -93,7 +123,7 @@ body { background: #121317; }
 
 /* 时间轴横向滚动容器:隐藏横向原生滚动条(自绘条接管),纵向原生滚动条保留可见 */
 .timeline-wrap::-webkit-scrollbar { width: 10px; height: 0; }
-.timeline-wrap::-webkit-scrollbar-thumb { background: #3a3d46; border-radius: 5px; }
-.timeline-wrap::-webkit-scrollbar-track { background: #1a1b1f; }
+.timeline-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+.timeline-wrap::-webkit-scrollbar-track { background: var(--header); }
 .timeline-wrap { scrollbar-width: thin; }
-.timeline-wrap { scrollbar-color: #3a3d46 #1a1b1f; }
+.timeline-wrap { scrollbar-color: var(--border-strong) var(--header); }

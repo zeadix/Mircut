@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { t } from "./i18n";
+import { useLang } from "./useLang";
 import type { Document } from "./types";
 import Inspector from "./Inspector";
 import SubtitlePanel from "./SubtitlePanel";
@@ -17,11 +19,11 @@ interface Props {
 
 type Tab = "inspector" | "subtitles" | "texts" | "stickers";
 
-const TABS: [Tab, string][] = [
-  ["inspector", "属性"],
-  ["subtitles", "字幕"],
-  ["texts", "文字"],
-  ["stickers", "贴纸"],
+const TAB_KEYS: [Tab, string][] = [
+  ["inspector", "panel.inspector"],
+  ["subtitles", "panel.subtitles"],
+  ["texts", "panel.texts"],
+  ["stickers", "panel.stickers"],
 ];
 
 /**
@@ -37,12 +39,13 @@ export default function RightPanel({
   onBatchAudio,
 }: Props) {
   const [tab, setTab] = useState<Tab>("inspector");
+  useLang(); // 订阅语言变更触发重渲染
   const selOne = selectedClipIds.length === 1 ? selectedClipIds[0] : null;
 
   return (
-    <aside style={{ width: 240, background: "#17181c", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
+    <aside style={{ width: 240, background: "var(--panel)", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
       <div style={{ display: "flex", borderBottom: "1px solid #2a2c33" }}>
-        {TABS.map(([k, label]) => (
+        {TAB_KEYS.map(([k, key]) => (
           <button
             key={k}
             className="btn"
@@ -54,7 +57,7 @@ export default function RightPanel({
             }}
             onClick={() => setTab(k)}
           >
-            {label}
+            {t(key)}
           </button>
         ))}
       </div>

@@ -344,7 +344,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <h3 style={{ margin: 0, fontSize: 13 }}>{clip.id}</h3>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>智能分割</legend>
         <button
           className="btn"
@@ -363,7 +363,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         {splitStatus && <div style={{ color: "#667", marginTop: 3 }}>{splitStatus}</div>}
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>截取范围(素材内,秒)</legend>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <label>
@@ -412,7 +412,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           }
         />
         {(clip.fx?.speed?.keyframes?.length ?? 0) >= 2 && (
-          <span style={{ color: "#ffd75e", fontSize: 10, marginLeft: 4 }}>
+          <span style={{ color: "var(--accent)", fontSize: 10, marginLeft: 4 }}>
             速度关键帧生效中
           </span>
         )}
@@ -449,7 +449,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         定格帧
       </button>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>特效预设</legend>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {["电影感", "复古", "黑白", "音频降噪", "平滑淡入淡出"].map((n) => (
@@ -460,7 +460,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </div>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>音频滤镜</legend>
         {([
           ["fade_in", "淡入(s)", 0, 3, 0.1],
@@ -503,7 +503,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </label>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>LUT (.cube)</legend>
         <input
           className="ti"
@@ -516,7 +516,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         {lutPath && <div style={{ color: "#667", marginTop: 4 }}>已应用(强度 100%)</div>}
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>画中画(上层轨道片段)</legend>
         {([["scale", "大小", 0.05, 1.0], ["x", "横向位置", 0, 1], ["y", "纵向位置", 0, 1]] as const).map(
           ([key, label, min, max]) => (
@@ -554,7 +554,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         <div style={{ color: "#667", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>蒙版</legend>
         <label style={{ display: "block", marginBottom: 4 }}>
           <input
@@ -592,7 +592,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           ))}
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>调色</legend>
         <label style={{ display: "block", marginBottom: 6 }}>
           预设滤镜:{" "}
@@ -646,7 +646,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </label>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>智能抠像(绿幕/纯色背景)</legend>
         <button
           className="btn"
@@ -705,7 +705,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </div>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>关键帧</legend>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
           <button className="btn" onClick={() => addKeyframe("opacity")}>
@@ -820,7 +820,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </div>
       </fieldset>
 
-      <fieldset style={{ borderColor: "#2a2c33" }}>
+      <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>转场(与右侧片段)</legend>
         {rightNeighbor ? (
           <>
