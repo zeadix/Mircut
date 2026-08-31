@@ -849,6 +849,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           break;
         case " ":
           e.preventDefault();
+          if (playing) setPlayhead(playheadRef.current); // C4 同上
           setPlaying(!playing);
           break;
         case "j": {
@@ -858,6 +859,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           break;
         }
         case "k":
+          // C4:暂停先回写播放头真值(rAF 直写领先 store 最多 200ms,
+          // 否则下一次渲染把 ref 拉回旧值 -> 播放头回跳)
+          setPlayhead(playheadRef.current);
           setPlaying(false);
           setPlaySpeed(1);
           break;
@@ -1048,7 +1052,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "var(--panel)" }}>
-            <button className="btn" onClick={() => setPlaying(!playing)} title="播放/暂停 (空格)">
+            <button
+              className="btn"
+              onClick={() => {
+                if (playing) setPlayhead(playheadRef.current); // C4
+                setPlaying(!playing);
+              }}
+              title="播放/暂停 (空格)"
+            >
               {playing ? `${t("play.pause")} ${playSpeed}x` : t("play.play")}
             </button>
             <select

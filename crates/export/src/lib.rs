@@ -424,7 +424,13 @@ fn build_video_chain_ex(
             ",rotate=a='({rot_expr})*PI/180':c=black@0:ow=iw:oh=ih,premultiply=inplace=1"
         ));
     }
-    chain.push_str(&format!(",format=yuv420p{label}"));
+    // A5:色度抠像需 alpha 存活到 concat 后的黑底合成,
+    // 链尾保持 yuva420p(无抠像片段不受影响)
+    if c.fx.chroma_key.enabled() {
+        chain.push_str(&format!(",format=yuva420p{label}"));
+    } else {
+        chain.push_str(&format!(",format=yuv420p{label}"));
+    }
 
     chain
 }
@@ -556,6 +562,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         |clip_id: &str| -> usize { uses.iter().position(|u| u.clip_id == clip_id).unwrap_or(0) };
 
     let mut filters: Vec<String> = Vec::new();
+    // 额外输入(alpha 序列/贴纸)全局索引计数(uses 只统计片段输入)
+    let mut next_input_idx = uses.len();
 
     if let Some(ref vt) = video_track {
         let clips = doc.clips_on_lane(vt, veditor_core::Lane::Video);
@@ -615,11 +623,20 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 // RVM AI 抠像:alpha 序列输入追加在片段输入之后,
                 // 片段流与灰度 alpha blend('A*alpha'),可选 tmix 时序平滑
                 if let Some(am) = &c.fx.alpha_matting {
-                    let alpha_idx = uses.len();
+                    // B1:alpha 序列目录丢失(系统清理/换机器)时跳过抠像
+                    // 并在命令参数头部注入诊断标记(app 层转为提示)
+                    let dir = std::path::Path::new(&am.dir);
+                    if !dir.is_dir() {
+                        args.push("__MATTING_DIR_MISSING__".into());
+                    }
+                    // A3:额外输入索引全局递增(uses 只含片段输入)
+                    let alpha_idx = next_input_idx;
+                    next_input_idx += 1;
                     args.push("-i".into());
                     args.push(format!("{}/rvm_%05d.png", am.dir));
                     let dur_secs = doc.timebase.secs(c.duration);
-                    // alpha 流:灰度 + 平滑;时长对齐片段(重复首帧兜底 loop)
+                    // alpha 流:读真实序列(framerate 对齐 + tpad 补尾帧,
+                    // 不再 loop 首帧丢弃后续帧);灰度 + 平滑 + 精修
                     let smooth = if am.smooth_frames > 1 {
                         format!(",tmix=frames={}", am.smooth_frames)
                     } else {
@@ -634,8 +651,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     };
                     // 片段链的输出 label 改为中间标签,再 blend 生成 [v{i}]
                     chain = chain.replace(&format!("[v{i}]"), "[vaI]");
+                    // A1:blend 变量只有 A/B(无 'alpha',实测被 ffmpeg 拒绝);
+                    // 第二输入为灰度 alpha -> A*B 即抠像合成
+                    let pad = format!(",tpad=stop_mode=clone:stop_duration={:.3}", dur_secs + 1.0);
                     chain.push_str(&format!(
-                        ";[{alpha_idx}:v]format=gray,loop=loop=-1:size=1{smooth}{refine},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*alpha':shortest=1,format=yuv420p[v{i}]"
+                        ";[{alpha_idx}:v]format=gray,framerate=30{smooth}{refine}{pad},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*B':shortest=1,format=yuv420p[v{i}]"
                     ));
                 }
                 chain_parts.push(chain);
@@ -748,6 +768,35 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                                 fade_in,
                             },
                         ));
+                        // A4:转场路径同样应用 AI 抠像(alpha 序列 blend),
+                        // 此前 chain_parts 版本被整体丢弃导致静默失效
+                        if let Some(am) = &c.fx.alpha_matting {
+                            let alpha_idx = next_input_idx;
+                            next_input_idx += 1;
+                            args.push("-i".into());
+                            args.push(format!("{}/rvm_%05d.png", am.dir));
+                            let dur_secs = doc.timebase.secs(c.duration);
+                            let smooth = if am.smooth_frames > 1 {
+                                format!(",tmix=frames={}", am.smooth_frames)
+                            } else {
+                                String::new()
+                            };
+                            let refine = if am.refine > 0.01 {
+                                format!(",unsharp=5:5:{:.2}:5:5:0", am.refine.clamp(0.1, 2.0))
+                            } else {
+                                String::new()
+                            };
+                            let pad = format!(
+                                ",tpad=stop_mode=clone:stop_duration={:.3}",
+                                dur_secs + 1.0
+                            );
+                            let mid = format!("[vtmA{i}]");
+                            filters.push(format!("{vlabel}format=yuva420p{mid}"));
+                            filters.push(format!(
+                                "[{alpha_idx}:v]format=gray,framerate=30{smooth}{refine}{pad},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aM{i}];{mid}[aM{i}]blend=all_expr='A*B':shortest=1,format=yuv420p{vlabel}"
+                            ));
+                            // 覆盖后续引用:vlabel 已是最终标签(重新生成同名单标签)
+                        }
                     }
                     // 尾部淡出:有左侧转场时,本片段出点前 d 秒 fade out(alpha)
                     if let Some(t) = trans_out {
@@ -964,7 +1013,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     // 贴纸(图片叠层):每张图独立输入(-i 追加在片段输入后),
     // 单帧输入经 overlay 默认 eof_action=repeat 重复,enable 控制时间窗。
     if !doc.image_overlays.is_empty() && video_track.is_some() {
-        let base_idx = uses.len();
+        let base_idx = next_input_idx;
         for io in &doc.image_overlays {
             args.push("-i".into());
             args.push(io.path.clone());
@@ -1499,6 +1548,72 @@ mod tests {
 
     /// 性能回归门禁(宽松阈值,防滤镜图编译 O(n²) 级回退):
     /// 100 片段工程编译应在 2s 内(正常 <100ms;CI 抖动余量 20 倍)。
+    /// AI 抠像真实 e2e:生成真实 alpha PNG 序列 + run_export 验证滤镜图
+    /// 在真实 ffmpeg 下成立(A1/A2 回归门禁:此前表达式非法从未跑通)。
+    #[test]
+    fn e2e_alpha_matting_exports() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !std::path::Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let dir = "/tmp/veditor-matting-e2e";
+        let _ = std::fs::remove_dir_all(dir);
+        std::fs::create_dir_all(dir).unwrap();
+        for i in 0..3 {
+            let v = 60 + i * 50;
+            let out = Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    &format!("color=c=gray:duration=0.1:size=320x240:rate=10,geq=lum='{v}':cb=128:cr=128"),
+                ])
+                .args(["-frames:v", "1"])
+                .arg(format!("{dir}/rvm_{i:05}.png"))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "alpha 帧生成失败");
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        d.assets[0].has_audio = false;
+        d.clips[0].fx.alpha_matting = Some(veditor_core::AlphaMatting {
+            dir: dir.into(),
+            smooth_frames: 1,
+            refine: 0.0,
+        });
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_matting.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        run_export(&compile_ffmpeg_cmd(&d, &params)).unwrap();
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let dur: f64 = String::from_utf8_lossy(&probe.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        assert!((dur - 1.0).abs() < 0.3, "抠像导出时长应 ~1s, got {dur}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// AI 抠像 e2e:alpha 序列(image2 输入)blend 进片段流,
     /// 真实 ffmpeg 验证滤镜图成立 + 时序平滑可开关。
     #[test]
@@ -1528,10 +1643,12 @@ mod tests {
             .map(|(_, b)| b.clone())
             .unwrap();
         assert!(
-            fc2.contains("format=gray,loop=loop=-1:size=1,tmix=frames=3,unsharp=5:5:0.80:5:5:0"),
+            fc2.contains("format=gray,framerate=30,tmix=frames=3,unsharp=5:5:0.80:5:5:0"),
             "fc = {fc2}"
         );
-        assert!(fc2.contains("blend=all_expr='A*alpha'"), "fc = {fc2}");
+        // A1:表达式必须是 A*B('alpha' 不是 blend 的合法变量)
+        assert!(fc2.contains("blend=all_expr='A*B'"), "fc = {fc2}");
+        assert!(fc2.contains("tpad=stop_mode=clone"), "fc = {fc2}");
         // alpha 序列输入存在
         assert!(
             args2.contains(&"/tmp/veditor-matting-test/rvm_%05d.png".to_string()),

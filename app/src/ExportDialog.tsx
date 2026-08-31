@@ -62,6 +62,8 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
+    // B3:硬件编码器探测接入(此前下拉永远只有 libx264)
+    api.detectHwEncoders().then(setHwEncoders).catch(() => {});
   }, []);
 
   // 导出进度事件 -> 活动任务进度

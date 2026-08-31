@@ -61,7 +61,7 @@ pub(crate) fn list_models() -> Vec<serde_json::Value> {
             let p = dir.join(m.id);
             let downloaded = p.exists()
                 && p.metadata()
-                    .map(|meta| meta.len() > m.size / 2)
+                    .map(|meta| meta.len() >= m.size * 98 / 100)
                     .unwrap_or(false);
             let engine_ok = if m.id.starts_with("ggml-") {
                 whisper_ok
@@ -118,17 +118,19 @@ pub(crate) fn download_model(app: tauri::AppHandle, id: String) -> Result<(), St
             "需要 curl 或 wget 下载模型(离线环境请手动放置模型文件到 ~/.veditor/models/)".into(),
         );
     }
+    // B4:启动时清扫残留 .part(进程被杀时遗留)
+    clean_part_files(&dir);
     let tmp = dir.join(format!("{}.part", entry.id));
     let status = if curl {
         std::process::Command::new("curl")
-            .args(["-L", "--fail", "--progress-bar", "-o"])
+            .args(["-L", "--fail", "--retry", "3", "--max-time", "3600", "-o"])
             .arg(&tmp)
             .arg(entry.url)
             .status()
             .map_err(|e| e.to_string())?
     } else {
         std::process::Command::new("wget")
-            .args(["-O"])
+            .args(["-O", "--tries=3", "--timeout=60"])
             .arg(&tmp)
             .arg(entry.url)
             .status()
@@ -142,10 +144,13 @@ pub(crate) fn download_model(app: tauri::AppHandle, id: String) -> Result<(), St
             entry.url
         ));
     }
-    // 完整性粗校验(大小过半即认为完整;精确哈希需注册表提供)
+    // 完整性校验:精确字节(±2% 容差,防半截模型;此前"过半"过松)
     let ok = tmp
         .metadata()
-        .map(|m| m.len() > entry.size / 2)
+        .map(|m| {
+            let len = m.len();
+            len >= entry.size * 98 / 100 && len <= entry.size * 102 / 100
+        })
         .unwrap_or(false);
     if !ok {
         let _ = std::fs::remove_file(&tmp);
@@ -158,6 +163,18 @@ pub(crate) fn download_model(app: tauri::AppHandle, id: String) -> Result<(), St
         serde_json::json!({ "id": id, "percent": 100.0, "done": true }),
     );
     Ok(())
+}
+
+/// 清扫下载残留(.part)。
+fn clean_part_files(dir: &std::path::Path) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("part") {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
 }
 
 /// 删除本地模型(释放磁盘)。

@@ -25,6 +25,32 @@ fn packs_dir() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().join("veditor-packs"))
 }
 
+/// 路径安全校验:拒绝绝对路径与 `..` 路径段(素材包条目 file/id
+/// 只允许包内相对路径,防穿越读包外文件)。
+fn safe_rel_path(p: &str) -> Option<std::path::PathBuf> {
+    if p.is_empty() || p.starts_with('/') || p.contains("..") {
+        return None;
+    }
+    // Windows 盘符也拒
+    if p.len() > 1 && p.as_bytes()[1] == b':' {
+        return None;
+    }
+    Some(std::path::PathBuf::from(p))
+}
+
+/// 解析条目资源路径:强制落在包目录内(canonicalize 前缀校验)。
+fn pack_file_path(pack_dir: &std::path::Path, file: &str) -> Option<std::path::PathBuf> {
+    let rel = safe_rel_path(file)?;
+    let joined = pack_dir.join(rel);
+    let canon = joined.canonicalize().ok()?;
+    let base = pack_dir.canonicalize().ok()?;
+    if canon.starts_with(&base) {
+        Some(canon)
+    } else {
+        None
+    }
+}
+
 fn read_manifest(dir: &std::path::Path) -> Option<PackManifest> {
     let content = std::fs::read_to_string(dir.join("veditor-pack.json")).ok()?;
     serde_json::from_str::<PackManifest>(&content).ok()
@@ -63,7 +89,9 @@ pub(crate) fn import_pack(dir: String) -> Result<serde_json::Value, String> {
     if manifest.format != "veditor-pack" {
         return Err("format 字段必须是 veditor-pack".into());
     }
-    let dest = packs_dir().join(&manifest.id);
+    // B2:id 参与目标路径拼接,拒绝穿越(防任意目录删除/覆盖)
+    let safe_id = safe_rel_path(&manifest.id).ok_or("素材包 id 含非法路径")?;
+    let dest = packs_dir().join(safe_id);
     if dest.exists() {
         let _ = std::fs::remove_dir_all(&dest);
     }
@@ -222,7 +250,9 @@ pub(crate) fn apply_pack_item(
                 .and_then(|n| n.as_str())
                 .unwrap_or("贴纸")
                 .to_string();
-            let path = packs_dir().join(&pack_id).join(file);
+            // B2:路径穿越防护(file 只允许包内相对路径)
+            let pack_dir = packs_dir().join(&pack_id);
+            let path = pack_file_path(&pack_dir, file).ok_or("贴纸路径非法(仅允许包内相对路径)")?;
             if !path.exists() {
                 return Err(format!("贴纸文件不存在: {}", path.to_string_lossy()));
             }

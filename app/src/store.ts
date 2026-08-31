@@ -122,12 +122,3 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 }));
-
-/// 供 rAF 播放循环直写的播放头真值(不经 store,避免每帧重渲染)。
-export const playheadRef = { current: 0 };
-/// 同步真值到 ref(播放循环读取)。
-export function bindPlayhead() {
-  useEditor.subscribe((s) => {
-    playheadRef.current = s.playhead;
-  });
-}

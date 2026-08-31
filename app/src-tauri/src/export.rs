@@ -52,7 +52,13 @@ pub(crate) fn export_video(
             .iter()
             .map(|c| doc.timebase.secs(c.start + c.duration))
             .fold(0.0_f64, f64::max);
-        (veditor_export::compile_ffmpeg_cmd(&doc, &params), total)
+        let mut args = veditor_export::compile_ffmpeg_cmd(&doc, &params);
+        // B1:alpha 序列目录丢失 -> 明确错误(而非 ffmpeg 原始 stderr)
+        if args.iter().any(|a| a == "__MATTING_DIR_MISSING__") {
+            return Err("AI 抠像序列已丢失(系统清理或工程来自其他机器):请在检查器对该片段重新执行 AI 人像抠像,或移除抠像后导出".into());
+        }
+        args.retain(|a| a != "__MATTING_DIR_MISSING__");
+        (args, total)
     };
     // 注册取消句柄并后台执行,进度经事件推送
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

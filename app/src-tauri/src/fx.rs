@@ -200,9 +200,16 @@ pub(crate) fn auto_matting(
             "RVM 抠像不可用:需安装 rvm-cli(或 rvm/robust-video-matting)并下载 RVM 模型(字幕面板 AI 模型区)。降级方案:用'自动识别背景抠像'(纯色背景)".into(),
         );
     };
-    let out_dir = std::env::temp_dir()
-        .join("veditor-matting")
-        .join(format!("{}_{:.2}_{:.2}", clip_id, source_in, span));
+    // B1:alpha 序列落 ~/.veditor/matting(tmp 清理会丢;含 clip+区间哈希)
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in format!("{clip_id}{source_in:.2}{span:.2}").bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    let out_dir = std::env::var("HOME")
+        .map(|home| std::path::PathBuf::from(home).join(".veditor/matting"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("veditor-matting"))
+        .join(format!("{clip_id}_{h:016x}"));
     let _ = std::fs::remove_dir_all(&out_dir);
     let produced = rvm
         .extract_alpha(std::path::Path::new(&path), source_in, span, &out_dir)
