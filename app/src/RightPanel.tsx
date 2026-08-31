@@ -6,6 +6,7 @@ import Inspector from "./Inspector";
 import SubtitlePanel from "./SubtitlePanel";
 import TextPanel from "./TextPanel";
 import StickerPanel from "./StickerPanel";
+import PackPanel from "./PackPanel";
 
 interface Props {
   doc: Document;
@@ -13,17 +14,19 @@ interface Props {
   playhead: number;
   fps: number;
   onRefresh: () => Promise<void>;
+  onStatus: (msg: string) => void;
   onBatchRemove: () => Promise<void>;
   onBatchAudio: (volume: number | null, muted: boolean | null) => Promise<void>;
 }
 
-type Tab = "inspector" | "subtitles" | "texts" | "stickers";
+type Tab = "inspector" | "subtitles" | "texts" | "stickers" | "packs";
 
 const TAB_KEYS: [Tab, string][] = [
   ["inspector", "panel.inspector"],
   ["subtitles", "panel.subtitles"],
   ["texts", "panel.texts"],
   ["stickers", "panel.stickers"],
+  ["packs", "panel.packs"],
 ];
 
 /**
@@ -35,6 +38,7 @@ export default function RightPanel({
   playhead,
   fps,
   onRefresh,
+  onStatus,
   onBatchRemove,
   onBatchAudio,
 }: Props) {
@@ -79,8 +83,10 @@ export default function RightPanel({
         />
       ) : tab === "texts" ? (
         <TextPanel playheadTicks={playhead} onRefresh={onRefresh} />
-      ) : (
+      ) : tab === "stickers" ? (
         <StickerPanel doc={doc} playheadTicks={playhead} onRefresh={onRefresh} />
+      ) : (
+        <PackPanel doc={doc} playheadTicks={playhead} onRefresh={onRefresh} onStatus={onStatus} />
       )}
     </aside>
   );

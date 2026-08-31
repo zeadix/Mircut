@@ -94,10 +94,43 @@ function StickerPanelInner({ doc, playheadTicks, onRefresh }: Props) {
     await onRefresh();
   }
 
+  /// 导出贴纸包:把已放置贴纸(去重文件)打包为 veditor-pack。
+  async function onExportPack() {
+    if (overlays.length === 0) {
+      setStatus("无已放置贴纸可导出");
+      return;
+    }
+    const picked = await openDialog({ defaultPath: "packs", directory: true });
+    const destDir = Array.isArray(picked) ? picked[0] : picked;
+    if (!destDir) return;
+    const seen = new Set<string>();
+    const items: Record<string, unknown>[] = [];
+    for (const o of overlays) {
+      if (seen.has(o.path)) continue;
+      seen.add(o.path);
+      const file = o.path.split("/").pop() ?? "sticker.png";
+      items.push({ id: `st${items.length + 1}`, name: file, file, source: o.path });
+    }
+    try {
+      const dir = await api.exportPack(destDir, {
+        format: "veditor-pack",
+        version: 1,
+        id: "stickers-export",
+        name: "我的贴纸包",
+        kind: "stickers",
+        items,
+      });
+      setStatus(`贴纸包已导出: ${dir}`);
+    } catch (e) {
+      setStatus(`导出失败: ${String(e).slice(0, 160)}`);
+    }
+  }
+
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", gap: 6 }}>
         <button className="btn" onClick={onImportImage}>导入图片贴纸…</button>
+        <button className="btn" onClick={onExportPack}>导出贴纸包</button>
       </div>
       <div style={{ color: "var(--text-dim)" }}>{status}</div>
 

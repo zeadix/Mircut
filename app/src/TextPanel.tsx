@@ -1,5 +1,7 @@
 import { useEffect, useState, memo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import * as api from "./api";
 import type { TextOverlay } from "./types";
 
 interface Props {
@@ -60,6 +62,31 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
     await onRefresh();
   }
 
+  /// 导出文字样式包(内置 TEXT_STYLES 全量)。
+  async function onExportStyles() {
+    const picked = await openDialog({ defaultPath: "packs", directory: true });
+    const destDir = Array.isArray(picked) ? picked[0] : picked;
+    if (!destDir) return;
+    try {
+      const dir = await api.exportPack(destDir, {
+        format: "veditor-pack",
+        version: 1,
+        id: "text-styles-export",
+        name: "花字样式包",
+        kind: "text-styles",
+        items: TEXT_STYLES.map(([name, st]) => ({
+          id: `ts${name}`,
+          name,
+          text: "标题文字",
+          style: st,
+        })),
+      });
+      setStatus(`样式包已导出: ${dir}`);
+    } catch (e) {
+      setStatus(`导出失败: ${e}`);
+    }
+  }
+
   /// 图文成片:文案按句生成文字卡排列到时间轴。
   async function onArticleToVideo() {
     if (!articleText.trim()) {
@@ -100,6 +127,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
       <button className="btn" onClick={addOverlay}>+ 在播放头添加标题</button>
+      <button className="btn" onClick={onExportStyles}>导出样式包</button>
       <div style={{ color: "var(--text-dim)" }}>{status}</div>
       {overlays.map((o, i) => (
         <div key={o.id} className="asset-card">

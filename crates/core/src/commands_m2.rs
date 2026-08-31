@@ -259,6 +259,34 @@ impl Command for SetImageOverlays {
     }
 }
 
+/// 字幕样式快照命令(可撤销)。
+pub struct SetSubtitleStyle {
+    pub style: crate::subtitle::SubtitleStyle,
+    old: crate::subtitle::SubtitleStyle,
+}
+
+impl SetSubtitleStyle {
+    pub fn new(style: crate::subtitle::SubtitleStyle) -> Self {
+        Self {
+            style,
+            old: crate::subtitle::SubtitleStyle::default(),
+        }
+    }
+}
+
+impl Command for SetSubtitleStyle {
+    fn label(&self) -> &str {
+        "字幕样式"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.old = doc.subtitles.style.clone();
+        doc.subtitles.style = self.style.clone();
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        doc.subtitles.style = self.old.clone();
+    }
+}
+
 /// 字幕 cue 整表快照命令(可撤销;字幕样式走 SetSubtitleStyle)。
 pub struct SetSubtitleCues {
     pub cues: Vec<crate::subtitle::SubtitleCue>,

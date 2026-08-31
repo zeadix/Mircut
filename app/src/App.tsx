@@ -1076,6 +1076,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           playhead={playhead}
           fps={fps}
           onRefresh={refresh}
+          onStatus={setStatus}
           onBatchRemove={onBatchRemove}
           onBatchAudio={onBatchAudio}
         />

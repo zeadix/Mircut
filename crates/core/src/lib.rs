@@ -19,7 +19,7 @@ pub use subtitle::{
 pub use commands_m2::{
     AddTrack, DetachAudio, FreezeFrame, RemoveTrack, RemoveTransition, ReorderTrack, RippleDelete,
     SetAssetMeta, SetClipAudio, SetClipRange, SetFx, SetImageOverlays, SetSpeed, SetSpeedAnim,
-    SetSubtitleCues, SetTextOverlays, SetTrackFlags, SetTransition, TagAsset,
+    SetSubtitleCues, SetSubtitleStyle, SetTextOverlays, SetTrackFlags, SetTransition, TagAsset,
 };
 pub use fx::{
     bezier_eval, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect, Interpolation,

@@ -348,6 +348,38 @@ export async function listExportPresets(): Promise<ExportPresetInfo[]> {
   return invoke("list_export_presets");
 }
 
+/// 设置片段 fx(整体覆写,保留其余字段由调用方组装)。
+export async function setClipFx(clipId: string, fx: NonNullable<import("./types").Clip["fx"]>): Promise<boolean> {
+  return invoke("set_clip_fx", { clipId, fx });
+}
+
+// ---------- 素材包 ----------
+export interface PackInfo {
+  id: string;
+  name: string;
+  kind: string;
+  items: Record<string, unknown>[];
+}
+export async function listPacks(): Promise<PackInfo[]> {
+  return invoke("list_packs");
+}
+export async function importPack(dir: string): Promise<PackInfo> {
+  return invoke("import_pack", { dir });
+}
+/// manifest 需为完整 veditor-pack 清单(stickers 条目可带 source 绝对路径)。
+export async function exportPack(destDir: string, manifest: Record<string, unknown>): Promise<string> {
+  return invoke("export_pack", { destDir, manifest });
+}
+/// 应用素材包条目(贴纸/文字样式/字幕样式;filters 走 set_clip_fx)。
+export async function applyPackItem(
+  packId: string,
+  item: Record<string, unknown>,
+  t: number,
+  dur: number
+): Promise<void> {
+  await invoke("apply_pack_item", { packId, item, t, dur });
+}
+
 /// 当前文档快照(导出入队用)。
 export async function getDocSnapshot(): Promise<Document> {
   return invoke("get_doc_snapshot");

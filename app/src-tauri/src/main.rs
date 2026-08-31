@@ -5,6 +5,7 @@ mod diag;
 mod export;
 mod fx;
 mod media;
+mod packs;
 mod plugins;
 mod project;
 mod render;
@@ -21,6 +22,8 @@ use export::*;
 use fx::*;
 #[allow(unused_imports)]
 use media::*;
+#[allow(unused_imports)]
+use packs::*;
 #[allow(unused_imports)]
 use plugins::*;
 #[allow(unused_imports)]
@@ -308,6 +311,10 @@ fn main() {
             seek_frame,
             export_video,
             get_doc_snapshot,
+            list_packs,
+            import_pack,
+            export_pack,
+            apply_pack_item,
             preview_export_cmd
         ])
         .on_window_event(|_window, event| {
