@@ -830,32 +830,32 @@ mod tests {
         }
     }
 
-    /// 分块策略(按拖放区域)。
+    /// 分块策略(File 轨双块语义:hint 不再裁剪,双流素材始终双块)。
     #[test]
     fn lanes_for_drop_by_zone() {
-        // 拖到音频区(大小写不敏感):只出音频块
+        // 半区 hint 只是视觉参考,双流素材永远双块
         assert_eq!(
             lanes_for_drop(true, true, Some("Audio")),
-            vec![veditor_core::Lane::Audio]
+            vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]
         );
         assert_eq!(
-            lanes_for_drop(true, true, Some("audio")),
-            vec![veditor_core::Lane::Audio]
+            lanes_for_drop(true, true, Some("video")),
+            vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]
         );
-        // 拖到视频区:只出视频块
+        // 无 hint 同样双块
         assert_eq!(
-            lanes_for_drop(true, true, Some("Video")),
-            vec![veditor_core::Lane::Video]
+            lanes_for_drop(true, true, None),
+            vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]
         );
-        // 无声视频拖到音频区:退化视频块
+        // 无声视频(无音频流):只有视频块
         assert_eq!(
             lanes_for_drop(true, false, Some("Audio")),
             vec![veditor_core::Lane::Video]
         );
-        // 无提示:拆双块
+        // 纯音频素材:只有音频块
         assert_eq!(
-            lanes_for_drop(true, true, None),
-            vec![veditor_core::Lane::Video, veditor_core::Lane::Audio]
+            lanes_for_drop(false, true, Some("Video")),
+            vec![veditor_core::Lane::Audio]
         );
     }
 

@@ -125,7 +125,28 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       mockDoc.clips = mockDoc.clips.filter((c) => !ids.includes(c.id));
       return true;
     }
-    case "drop_asset":
+    case "drop_asset": {
+      // 双块语义(与后端一致):视频素材同时生成视频块+音频块
+      const asset = mockDoc.assets.find((a) => a.id === String(args.assetId));
+      const tid = (args.trackId as string) ?? mockDoc.tracks[0]?.id ?? "f1";
+      const lanes: ("Video" | "Audio")[] = [];
+      if (asset?.has_video !== false) lanes.push("Video");
+      if (asset?.has_audio !== false) lanes.push("Audio");
+      const mk = (lane: "Video" | "Audio") => ({
+        id: `c${++counter}`,
+        track_id: tid,
+        start: Number(args.start ?? 0),
+        duration: 90,
+        asset: { asset_id: String(args.assetId), source_in: 0, source_out: 3 },
+        speed: 1,
+        volume: 1,
+        muted: false,
+        lane,
+        fx: mockDoc.clips[0]?.fx ?? undefined,
+      });
+      for (const l of lanes) mockDoc.clips.push(mk(l) as Document["clips"][number]);
+      return true;
+    }
     case "add_clip":
       mockDoc.clips.push({
         id: `c${++counter}`,
@@ -164,8 +185,23 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "tag_asset":
     case "rename_track":
     case "reorder_track":
-    case "set_track_flags":
-    case "set_track_media":
+    case "set_track_flags": {
+      const tr = mockDoc.tracks.find((x) => x.id === String(args.trackId));
+      if (tr) {
+        if (args.locked != null) tr.locked = !!args.locked;
+        if (args.hidden != null) tr.hidden = !!args.hidden;
+        if (args.muted != null) tr.muted = !!args.muted;
+      }
+      return true;
+    }
+    case "set_track_media": {
+      const tr = mockDoc.tracks.find((x) => x.id === String(args.trackId));
+      if (tr) {
+        if (args.videoOn != null) tr.video_on = !!args.videoOn;
+        if (args.audioOn != null) tr.audio_on = !!args.audioOn;
+      }
+      return true;
+    }
     case "detach_audio":
     case "ripple_delete":
     case "roll_edit":
@@ -296,6 +332,8 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
 export function installMockTauri() {
   if (import.meta.env.VITE_MOCK_TAURI !== "1") return;
   const w = window as unknown as Record<string, unknown>;
+  // 暴露 mock 文档给测试断言(e2e 无法读 canvas)
+  w.__mockDoc = mockDoc;
   w.__TAURI_INTERNALS__ = {
     invoke: (cmd: string, args?: Record<string, unknown>) =>
       Promise.resolve(mockInvoke(cmd, args)),

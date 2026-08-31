@@ -140,3 +140,37 @@ test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page
   const saved = await page.evaluate(() => localStorage.getItem("veditor-theme"));
   expect(saved).toBe("light");
 });
+
+test("冒烟:文件轨双块生成 + 视频/音频开关隐藏", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+
+  // 1. 双击素材上轨(mock 双块语义):视频块+音频块
+  const assetCard = page.locator(".asset-card").first();
+  await assetCard.dblclick();
+  await page.waitForTimeout(600);
+  const clipCount = await page.evaluate(() => {
+    // 从时间轴 canvas 不可读数据;改用 mock 状态(暴露 window 供测试)
+    return (window as unknown as { __mockDoc?: { clips: unknown[] } }).__mockDoc?.clips.length ?? -1;
+  });
+  // mock 初始 1 块 + 拖入 2 块 = 3
+  expect(clipCount).toBe(3);
+
+  // 2. 轨道头'视频'开关(按 title 精确定位,避免与左上角屏蔽开关重名):
+  // 点击关闭后 video_on=false(绘制/命中同步隐藏)
+  // 轨道头视频开关按钮(title 含"参与合成"或"已关闭")
+  const videoToggle = page
+    .locator("button[title*='参与合成'], button[title*='已关闭']")
+    .filter({ hasText: "视频" })
+    .first();
+  await expect(videoToggle).toBeVisible();
+  await videoToggle.click();
+  await page.waitForTimeout(500);
+  const videoOn = await page.evaluate(() => {
+    const d = (window as unknown as { __mockDoc?: { tracks: { video_on?: boolean }[] } }).__mockDoc;
+    return d?.tracks[0]?.video_on;
+  });
+  expect(videoOn).toBe(false);
+  // 开关再点回来(不影响后续用例)
+  await videoToggle.click();
+});

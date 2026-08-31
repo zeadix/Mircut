@@ -310,6 +310,10 @@ function TimelineInner({
     doc.clips.forEach((clip) => {
       const row = clipRow(clip);
       if (!row) return;
+      // 轨道头合成开关:关闭的 lane 完全不绘制(视觉"不显示该轨")
+      const clipTrack = doc.tracks.find((t) => t.id === clip.track_id);
+      if (clipTrack && clip.lane === "Video" && clipTrack.video_on === false) return;
+      if (clipTrack && clip.lane === "Audio" && clipTrack.audio_on === false) return;
       // 左上角屏蔽开关:被屏蔽 lane 的块画半透明(仅显示弱化,不影响合成)
       const laneHidden =
         (clip.lane === "Video" && !viewVideo) || (clip.lane === "Audio" && !viewAudio);
@@ -713,6 +717,10 @@ function TimelineInner({
     // 在该行内搜索(没有 Y 时退化为全文档)
     const candidates = row >= 0 ? doc.clips.filter((c) => c.track_id === doc.tracks[row]?.id) : doc.clips;
     for (const c of candidates) {
+      // 合成开关关闭的 lane 不可命中(与视觉隐藏一致)
+      const cTrack = doc.tracks.find((x) => x.id === c.track_id);
+      if (cTrack && c.lane === "Video" && cTrack.video_on === false) continue;
+      if (cTrack && c.lane === "Audio" && cTrack.audio_on === false) continue;
       if (laneFilter !== undefined) {
         const cLane = c.lane ?? null;
         if (laneFilter === "__TOP__") {

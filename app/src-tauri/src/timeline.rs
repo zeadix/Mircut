@@ -529,42 +529,24 @@ pub(crate) fn duplicate_clip(
     Ok(new_id)
 }
 
+/// 拖放生成的 lane 集合。
+/// File 轨语义(用户需求):双流素材(视频+音频)拖入**始终双块**,
+/// 半区 hint 只是落点视觉参考,不影响块生成;hint 仅用于挑轨
+/// 类型校验(视频半区/视频轨优先 Video 校验,音频反之)。
 pub(crate) fn lanes_for_drop(
     has_video: bool,
     has_audio: bool,
     lane: Option<&str>,
 ) -> Vec<veditor_core::Lane> {
-    let lc = lane.map(|s| s.to_ascii_lowercase());
-    match lc.as_deref() {
-        Some("video") => {
-            if has_video {
-                vec![veditor_core::Lane::Video]
-            } else if has_audio {
-                vec![veditor_core::Lane::Audio]
-            } else {
-                vec![]
-            }
-        }
-        Some("audio") => {
-            if has_audio {
-                vec![veditor_core::Lane::Audio]
-            } else if has_video {
-                vec![veditor_core::Lane::Video]
-            } else {
-                vec![]
-            }
-        }
-        _ => {
-            let mut v = Vec::new();
-            if has_video {
-                v.push(veditor_core::Lane::Video);
-            }
-            if has_audio {
-                v.push(veditor_core::Lane::Audio);
-            }
-            v
-        }
+    let _ = lane; // File 轨语义下 hint 不再裁剪块生成
+    let mut v = Vec::new();
+    if has_video {
+        v.push(veditor_core::Lane::Video);
     }
+    if has_audio {
+        v.push(veditor_core::Lane::Audio);
+    }
+    v
 }
 
 #[tauri::command]
