@@ -455,12 +455,48 @@ pub(crate) fn drop_asset(
         }
     }
     let first_id = clips_to_add[0].id.clone();
+    // 双块 id/lane 快照(循环 move 后用于对齐检查)
+    let dual = if clips_to_add.len() == 2 {
+        let is_v_first = clips_to_add[0].lane == Some(veditor_core::Lane::Video);
+        Some((
+            clips_to_add[0].id.clone(),
+            clips_to_add[1].id.clone(),
+            is_v_first,
+        ))
+    } else {
+        None
+    };
     for c in clips_to_add {
         inner.exec(Box::new(AddClip { clip: c }));
     }
     // 调度消重叠(以视频 lane 为准)
     let _ = total;
     inner.schedule_track(&target_track, Some(&first_id));
+    // 双块对齐保障:磁吸推挤可能把视频/音频块推到不同起点,
+    // 以视频块位置为准强制音频块对齐(同 start/同 duration)
+    if let Some((id0, id1, is_v_first)) = dual {
+        let (vid, aid) = if is_v_first { (id0, id1) } else { (id1, id0) };
+        let (v_start, v_dur) = match inner.doc.clip(&vid) {
+            Some(v) => (v.start, v.duration),
+            None => return Ok(first_id),
+        };
+        let needs = inner
+            .doc
+            .clip(&aid)
+            .map(|a| a.start != v_start || a.duration != v_dur)
+            .unwrap_or(false);
+        if needs {
+            inner.exec(Box::new(veditor_core::MoveClip::new(
+                aid.clone(),
+                v_start,
+                target_track.clone(),
+            )));
+            // duration 对齐(TrimClip:同 start,无源位移)
+            inner.exec(Box::new(veditor_core::TrimClip::new(
+                aid, v_start, v_dur, 0.0,
+            )));
+        }
+    }
     Ok(first_id)
 }
 
