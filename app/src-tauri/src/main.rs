@@ -259,6 +259,7 @@ fn main() {
             add_track,
             remove_track,
             set_track_flags,
+            set_track_media,
             ripple_delete,
             set_speed,
             set_clip_audio,
@@ -373,6 +374,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -429,6 +432,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             // 模拟用户当前 autosave 的重叠:c1=[1890,3356], c2=[0,1922] 重叠 32
             for (id, start) in [("c1", 1890i64), ("c2", 0i64)] {
@@ -478,6 +483,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -542,6 +549,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "mp3".into(),
@@ -565,6 +574,8 @@ mod tests {
                     locked: false,
                     hidden: false,
                     muted: false,
+                    video_on: true,
+                    audio_on: true,
                 };
                 let id = auto.id.clone();
                 inner.exec(Box::new(AddTrack { track: auto }));
@@ -604,6 +615,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             };
             let id = track.id.clone();
             inner.exec(Box::new(AddTrack { track }));
@@ -627,6 +640,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -719,6 +734,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -857,6 +874,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -937,6 +956,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             let mk = |id: &str, lane: veditor_core::Lane, start: i64| Clip {
                 id: id.into(),
@@ -1039,6 +1060,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(asset.clone());
         }
@@ -1128,6 +1151,8 @@ mod tests {
                 locked: false,
                 hidden: false,
                 muted: false,
+                video_on: true,
+                audio_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),

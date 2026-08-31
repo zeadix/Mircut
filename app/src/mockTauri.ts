@@ -165,6 +165,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "rename_track":
     case "reorder_track":
     case "set_track_flags":
+    case "set_track_media":
     case "detach_audio":
     case "ripple_delete":
     case "roll_edit":

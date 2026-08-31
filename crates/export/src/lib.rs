@@ -507,19 +507,25 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut args: Vec<String> = vec!["-y".into()];
 
     // 视频轨:全部非隐藏视频轨,自下而上;主轨(最下)全尺寸,上层 overlay
+    // File 轨视频/音频合成开关:video_on=false 时该轨视频块不参与合成
     let video_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .filter(|t| (t.kind == TrackKind::Video || t.kind == TrackKind::File) && !t.hidden)
+        .filter(|t| {
+            (t.kind == TrackKind::Video || t.kind == TrackKind::File) && !t.hidden && t.video_on
+        })
         .map(|t| t.id.clone())
         .collect();
     // 合成底 = 视频层中"最下"(tracks 数组最末,与 UI 自上而下排列一致)
     let video_track = video_tracks.last().cloned(); // 底层轨
                                                     // 音频轨:所有轨
+                                                    // audio_on=false 时该轨音频块不参与混音(含 File 轨音频块)
     let audio_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Audio || t.kind == TrackKind::File)
+        .filter(|t| {
+            (t.kind == TrackKind::Audio || t.kind == TrackKind::File) && !t.muted && t.audio_on
+        })
         .map(|t| t.id.clone())
         .collect();
 
@@ -1504,6 +1510,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         doc.tracks.push(Track {
             id: "t2".into(),
@@ -1512,6 +1520,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         doc.assets.push(Asset {
             id: "a1".into(),
@@ -1940,6 +1950,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         d.clips.push(Clip {
             id: "cpip".into(),
@@ -2011,7 +2023,9 @@ mod tests {
     }
 
     #[test]
-    fn compile_track_muted_zeros_volume() {
+    fn compile_track_muted_excludes_audio() {
+        // audio_on=false/muted 轨:整轨从混音中排除(比 volume=0 更彻底,
+        // 也省一遍解码)
         let mut d = doc();
         d.tracks[1].muted = true;
         let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
@@ -2021,7 +2035,39 @@ mod tests {
             .find(|(a, _)| a == &"-filter_complex")
             .map(|(_, b)| b.clone())
             .unwrap();
-        assert!(fc.contains("volume=0.000"), "fc = {fc}");
+        // 静音轨被排除:c2 的音频块整轨消失(无音频链)
+        assert!(!fc.contains("atrim"), "静音轨不应有音频链: fc = {fc}");
+    }
+
+    #[test]
+    fn compile_file_track_switches_filter_lanes() {
+        let mut d = doc();
+        // t1 转 File 轨(含 c1 视频块),c2 音频块挂 t2
+        d.tracks[0].kind = TrackKind::File;
+        // 视频关:主轨视频块消失 -> 无视频输出链
+        d.tracks[0].video_on = false;
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(!fc.contains("[v0]"), "视频关时不应有视频链: fc = {fc}");
+        // 音频仍在
+        assert!(fc.contains("amix"), "fc = {fc}");
+        // 音频关:音频链消失
+        let mut d3 = doc();
+        d3.tracks[0].kind = TrackKind::File;
+        d3.tracks[1].audio_on = false;
+        let args3 = compile_ffmpeg_cmd(&d3, &ExportParams::default());
+        let fc3 = args3
+            .iter()
+            .zip(args3.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(!fc3.contains("atrim"), "音频关时不应有音频链: fc = {fc3}");
     }
 
     #[test]
@@ -2402,6 +2448,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         d.clips[1].track_id = "v2".into();
         d.clips[1].start = 0;
@@ -2707,6 +2755,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         // 主轨 t1: 0-1s;上层 v2: 0.2-1.2s(重叠窗口)
         d.clips[1].track_id = "v2".into();

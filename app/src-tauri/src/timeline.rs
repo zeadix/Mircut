@@ -335,6 +335,8 @@ pub(crate) fn drop_asset(
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         };
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
@@ -365,6 +367,8 @@ pub(crate) fn drop_asset(
                         locked: false,
                         hidden: false,
                         muted: false,
+                        video_on: true,
+                        audio_on: true,
                     };
                     let id = track.id.clone();
                     inner.exec(Box::new(AddTrack { track }));
@@ -397,6 +401,8 @@ pub(crate) fn drop_asset(
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         };
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
@@ -537,6 +543,8 @@ pub(crate) fn create_file_track(state: State<'_, AppState>) -> Result<Track, Str
         locked: false,
         hidden: false,
         muted: false,
+        video_on: true,
+        audio_on: true,
     };
     inner.exec(Box::new(AddTrack {
         track: track.clone(),
@@ -642,6 +650,42 @@ pub(crate) fn trim_clip(
     }
 
     let track_id = clip.track_id.clone();
+    // File 轨双块联动:同轨同素材同区间的另一半(视频/音频)同步修剪,
+    // 保持视频/音频始终对齐(用户要求:调首尾同时调两块)
+    {
+        let is_file = inner.doc.track(&track_id).map(|t| t.kind) == Some(TrackKind::File);
+        if is_file {
+            let siblings: Vec<String> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| {
+                    c.id != clip.id
+                        && c.track_id == track_id
+                        && c.asset.asset_id == clip.asset.asset_id
+                        && (c.asset.source_in - clip.asset.source_in).abs() < 1e-6
+                        && (c.asset.source_out - clip.asset.source_out).abs() < 1e-6
+                        && c.lane != clip.lane
+                })
+                .map(|c| c.id.clone())
+                .collect();
+            for sid in siblings {
+                // 与主块完全同步:同起点/同时长/同源入点位移
+                let new_start_s = if edge == "left" { start } else { clip.start };
+                let delta_secs = if edge == "left" {
+                    tb.secs((start - clip.start).max(0)) * clip.speed.max(1e-3)
+                } else {
+                    0.0
+                };
+                inner.exec(Box::new(veditor_core::TrimClip::new(
+                    sid,
+                    new_start_s,
+                    dur,
+                    delta_secs,
+                )));
+            }
+        }
+    }
     if ripple {
         // 波纹:后方片段前移填补空隙(仅尾修剪缩短时)
         if dur < clip.duration {
@@ -752,6 +796,8 @@ pub(crate) fn add_track(
         locked: false,
         hidden: false,
         muted: false,
+        video_on: true,
+        audio_on: true,
     };
     inner.exec(Box::new(AddTrack {
         track: track.clone(),
@@ -777,6 +823,21 @@ pub(crate) fn set_track_flags(
     let mut inner = state.inner.lock().unwrap();
     inner.exec(Box::new(SetTrackFlags::new(
         track_id, locked, hidden, muted,
+    )));
+    true
+}
+
+/// File 轨视频/音频合成开关(预览+导出同时生效;可撤销)。
+#[tauri::command]
+pub(crate) fn set_track_media(
+    track_id: String,
+    video_on: Option<bool>,
+    audio_on: Option<bool>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(veditor_core::SetTrackMedia::new(
+        track_id, video_on, audio_on,
     )));
     true
 }

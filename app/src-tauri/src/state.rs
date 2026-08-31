@@ -226,6 +226,8 @@ impl Inner {
                     locked: false,
                     hidden: false,
                     muted: false,
+                    video_on: true,
+                    audio_on: true,
                 });
             }
             let r = ProxyRenderer::new(

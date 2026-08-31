@@ -422,6 +422,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         });
         doc.assets.push(Asset {
             id: "a1".into(),

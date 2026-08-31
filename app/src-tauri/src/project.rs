@@ -26,6 +26,8 @@ pub(crate) fn new_project(state: State<'_, AppState>) -> Result<Document, String
         locked: false,
         hidden: false,
         muted: false,
+        video_on: true,
+        audio_on: true,
     });
     inner.project_path = None;
     inner.stack = CommandStack::new();

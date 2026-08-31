@@ -218,6 +218,15 @@ export async function rollEdit(leftId: string, rightId: string, delta: number): 
   await invoke("roll_edit", { leftId, rightId, delta });
 }
 
+/// File 轨视频/音频合成开关(预览+导出同时生效;可撤销)。
+export async function setTrackMedia(
+  trackId: string,
+  videoOn: boolean | null,
+  audioOn: boolean | null
+): Promise<boolean> {
+  return invoke("set_track_media", { trackId, videoOn, audioOn });
+}
+
 export async function rippleDelete(clipId: string): Promise<boolean> {
   return invoke("ripple_delete", { clipId });
 }

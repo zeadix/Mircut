@@ -30,6 +30,8 @@ function audioClipsAt(doc: Document, t: number): BusClip[] {
   const out: BusClip[] = [];
   for (const tr of doc.tracks) {
     if (tr.kind !== "Audio" && tr.kind !== "File") continue;
+    // File 轨音频合成开关:audio_on=false 时该轨音频不监听(与导出一致)
+    if (tr.audio_on === false) continue;
     for (const c of doc.clips) {
       if (c.track_id !== tr.id) continue;
       // lane 语义与 core clips_on_lane 相同:File 轨缺省视为视频块

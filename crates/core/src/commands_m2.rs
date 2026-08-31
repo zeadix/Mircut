@@ -314,6 +314,55 @@ impl Command for SetSubtitleCues {
     }
 }
 
+/// File 轨视频/音频合成开关(预览+导出同时生效;undo 回滚)。
+pub struct SetTrackMedia {
+    pub track_id: String,
+    /// None = 不变。
+    pub video_on: Option<bool>,
+    pub audio_on: Option<bool>,
+    old: Option<(bool, bool)>,
+}
+
+impl SetTrackMedia {
+    pub fn new(
+        track_id: impl Into<String>,
+        video_on: Option<bool>,
+        audio_on: Option<bool>,
+    ) -> Self {
+        Self {
+            track_id: track_id.into(),
+            video_on,
+            audio_on,
+            old: None,
+        }
+    }
+}
+
+impl Command for SetTrackMedia {
+    fn label(&self) -> &str {
+        "轨道视频/音频开关"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        if let Some(t) = doc.tracks.iter_mut().find(|t| t.id == self.track_id) {
+            self.old = Some((t.video_on, t.audio_on));
+            if let Some(v) = self.video_on {
+                t.video_on = v;
+            }
+            if let Some(a) = self.audio_on {
+                t.audio_on = a;
+            }
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some((v, a)) = self.old.take() {
+            if let Some(t) = doc.tracks.iter_mut().find(|t| t.id == self.track_id) {
+                t.video_on = v;
+                t.audio_on = a;
+            }
+        }
+    }
+}
+
 /// 素材元数据(显示名/标签整体覆写;undo 回滚)。
 pub struct SetAssetMeta {
     pub asset_id: String,
@@ -916,6 +965,8 @@ mod tests {
             locked: false,
             hidden: false,
             muted: false,
+            video_on: true,
+            audio_on: true,
         };
         stack.execute(&mut doc, Box::new(AddTrack { track }));
         stack.execute(

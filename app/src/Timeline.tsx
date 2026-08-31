@@ -37,6 +37,10 @@ interface Props {
   onClipMove?: (clipId: string, newStart: number, trackId: string, laneHint?: "Video" | "Audio") => void;
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
+  /// File 轨视频/音频合成开关(预览+导出生效)。
+  onToggleTrackMedia?: (trackId: string, which: "video" | "audio") => void;
+  /// 时间轴左上角显示屏蔽(仅影响时间轴显示,不改合成)。
+  onToggleLaneView?: (lane: "video" | "audio", on: boolean) => void;
   waveforms?: Record<string, number[]>;
   alignEdges?: number[];
   onDropAsset?: (assetId: string, trackId: string | null, startTicks: number, laneHint: "Video" | "Audio" | null) => void;
@@ -124,6 +128,8 @@ function TimelineInner({
   onSetVolumeKeyframe,
   onSetAudioFade,
   onRollEdit,
+  onToggleTrackMedia,
+  onToggleLaneView,
   onRemoveMarker,
   onMoveClips,
   onDropPackItem,
@@ -190,6 +196,9 @@ function TimelineInner({
   const [fadeLive, setFadeLive] = useState<{ clipId: string; edge: "in" | "out"; secs: number } | null>(null);
   /// 标记列表面板开关。
   const [showMarkers, setShowMarkers] = useState(false);
+  /// 左上角屏蔽开关(仅时间轴显示;不影响合成)。
+  const [viewVideo, setViewVideo] = useState(true);
+  const [viewAudio, setViewAudio] = useState(true);
   /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
   const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
@@ -301,6 +310,9 @@ function TimelineInner({
     doc.clips.forEach((clip) => {
       const row = clipRow(clip);
       if (!row) return;
+      // 左上角屏蔽开关:被屏蔽 lane 的块画半透明(仅显示弱化,不影响合成)
+      const laneHidden =
+        (clip.lane === "Video" && !viewVideo) || (clip.lane === "Audio" && !viewAudio);
       const { laneTop, h } = row;
       const x = clip.start * pxPerTick;
       const cw = clip.duration * pxPerTick;
@@ -309,11 +321,13 @@ function TimelineInner({
       const track = doc.tracks[ti];
       const isAudioBlock = clip.lane === "Audio" || track.kind === "Audio";
       const [c0, c1] = isAudioBlock ? GRAD_AUDIO : GRAD_VIDEO;
+      ctx.globalAlpha = laneHidden ? 0.25 : 1;
       const grad = ctx.createLinearGradient(0, laneTop, 0, laneTop + h);
       grad.addColorStop(0, c0);
       grad.addColorStop(1, c1);
       ctx.fillStyle = grad;
       ctx.fillRect(x, laneTop, Math.max(cw, 2), h);
+      ctx.globalAlpha = 1;
       // 波形(视口内部分)
       const wf = waveforms?.[clip.asset.asset_id];
       if (wf && cw > 8) {
@@ -579,7 +593,7 @@ function TimelineInner({
         ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
       }
     }
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -1279,6 +1293,14 @@ function TimelineInner({
         <label title="修剪/删除后后方片段自动前移填补">
           <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
         </label>
+        <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }} title="时间轴显示屏蔽(仅弱化显示,不影响预览/导出合成)">
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10 }}>
+            <input type="checkbox" checked={viewVideo} onChange={(e) => { setViewVideo(e.target.checked); onToggleLaneView?.("video", e.target.checked); }} /> 视频
+          </label>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10 }}>
+            <input type="checkbox" checked={viewAudio} onChange={(e) => { setViewAudio(e.target.checked); onToggleLaneView?.("audio", e.target.checked); }} /> 音频
+          </label>
+        </span>
         <button
           className="btn"
           style={{ padding: "1px 6px", fontSize: 10 }}
@@ -1523,6 +1545,42 @@ function TimelineInner({
                   </button>
                 );
               })}
+              {track.kind === "File" && (
+                <>
+                  <button
+                    className="btn"
+                    style={{
+                      alignSelf: "center",
+                      padding: "2px 4px",
+                      display: "flex",
+                      alignItems: "center",
+                      opacity: track.video_on !== false ? 1 : 0.35,
+                      borderColor: track.video_on !== false ? "var(--accent)" : undefined,
+                      color: track.video_on !== false ? "#5f9e73" : "#8b93a1",
+                    }}
+                    title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"}
+                    onClick={() => onToggleTrackMedia?.(track.id, "video")}
+                  >
+                    视频
+                  </button>
+                  <button
+                    className="btn"
+                    style={{
+                      alignSelf: "center",
+                      padding: "2px 4px",
+                      display: "flex",
+                      alignItems: "center",
+                      opacity: track.audio_on !== false ? 1 : 0.35,
+                      borderColor: track.audio_on !== false ? "var(--accent)" : undefined,
+                      color: track.audio_on !== false ? "#5f83b8" : "#8b93a1",
+                    }}
+                    title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"}
+                    onClick={() => onToggleTrackMedia?.(track.id, "audio")}
+                  >
+                    音频
+                  </button>
+                </>
+              )}
               <button
                 className="btn"
                 style={{

@@ -249,8 +249,12 @@ export default function Preview({
   const layers: Layer[] = useMemo(() => {
     if (!doc) return [];
     const t = playheadTicks;
+    // File 轨视频合成开关:video_on=false 时该轨视频块不进预览
     const visible = doc.tracks.filter(
-      (tr) => (tr.kind === "Video" || tr.kind === "File") && !tr.hidden
+      (tr) =>
+        (tr.kind === "Video" || tr.kind === "File") &&
+        !tr.hidden &&
+        tr.video_on !== false
     );
     // tracks 数组自上而下(上层在前);DOM 顺序底层先,故倒序
     const ordered = [...visible].reverse();

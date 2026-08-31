@@ -5,6 +5,9 @@ export interface Track {
   locked: boolean;
   hidden: boolean;
   muted: boolean;
+  /// File 轨:视频/音频块是否参与合成(预览+导出;默认 true)。
+  video_on?: boolean;
+  audio_on?: boolean;
 }
 
 /// 文件轨道分块区:Video=上半(绿) Audio=下半(蓝)。

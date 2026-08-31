@@ -766,6 +766,27 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     await refresh();
   }
 
+  /// File 轨视频/音频合成开关(预览+导出同时生效;可撤销)。
+  async function onToggleTrackMedia(trackId: string, which: "video" | "audio") {
+    const track = doc!.tracks.find((t) => t.id === trackId)!;
+    const cur = which === "video" ? track.video_on !== false : track.audio_on !== false;
+    try {
+      await api.setTrackMedia(
+        trackId,
+        which === "video" ? !cur : null,
+        which === "audio" ? !cur : null
+      );
+    } catch (e) {
+      setStatus(`切换失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }
+
+  /// 时间轴显示屏蔽(仅 UI;不改合成)。
+  function onToggleLaneView(_lane: "video" | "audio", _on: boolean) {
+    // 纯前端显示状态(Timeline 内部 useState),无需后端
+  }
+
   async function onToggleTrack(trackId: string, flag: "hidden" | "muted" | "locked") {
     const track = doc!.tracks.find(t => t.id === trackId)!;
     await api.setTrackFlags(
@@ -1144,6 +1165,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}
               onToggleTrack={onToggleTrack}
+              onToggleTrackMedia={onToggleTrackMedia}
+              onToggleLaneView={onToggleLaneView}
               waveforms={waveforms}
               alignEdges={alignEdges}
               onDropAsset={onDropAsset}
