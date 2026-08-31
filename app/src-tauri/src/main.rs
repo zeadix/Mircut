@@ -281,6 +281,8 @@ fn main() {
             tts_synthesize,
             separate_stems,
             stem_engine_status,
+            auto_matting,
+            clear_matting,
             save_project,
             open_project,
             new_project,

@@ -22,8 +22,8 @@ pub use commands_m2::{
     SetSubtitleCues, SetSubtitleStyle, SetTextOverlays, SetTrackFlags, SetTransition, TagAsset,
 };
 pub use fx::{
-    bezier_eval, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect, Interpolation,
-    Keyframe, Mask, MaskKind, Transition, TransitionKind,
+    bezier_eval, AlphaMatting, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect,
+    Interpolation, Keyframe, Mask, MaskKind, Transition, TransitionKind,
 };
 
 /// 有理数时间基(如 30fps -> 1/30)。

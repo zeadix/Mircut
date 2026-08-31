@@ -175,6 +175,66 @@ pub(crate) fn set_chroma_key(
     true
 }
 
+/// AI 人像抠像(RVM):对片段源区间提取 alpha 序列到缓存目录,
+/// 写入 fx.alpha_matting(导出时 blend;可撤销)。缺引擎/模型时返回
+/// 明确指引(降级路径:auto_chroma_key 纯色背景)。
+#[tauri::command(async)]
+pub(crate) fn auto_matting(
+    clip_id: String,
+    smooth_frames: u32,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let (path, source_in, span) = {
+        let inner = state.inner.lock().unwrap();
+        let c = inner.doc.clip(&clip_id).cloned().ok_or("片段不存在")?;
+        let a = inner
+            .doc
+            .asset(&c.asset.asset_id)
+            .cloned()
+            .ok_or("素材不存在")?;
+        (a.path, c.asset.source_in, c.source_range_secs())
+    };
+    let Some(rvm) = veditor_ai::RvmMatting::detect() else {
+        return Err(
+            "RVM 抠像不可用:需安装 rvm-cli(或 rvm/robust-video-matting)并下载 RVM 模型(字幕面板 AI 模型区)。降级方案:用'自动识别背景抠像'(纯色背景)".into(),
+        );
+    };
+    let out_dir = std::env::temp_dir()
+        .join("veditor-matting")
+        .join(format!("{}_{:.2}_{:.2}", clip_id, source_in, span));
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let produced = rvm
+        .extract_alpha(std::path::Path::new(&path), source_in, span, &out_dir)
+        .map_err(|e| format!("抠像失败: {e}"))?;
+    // 写入 fx(保留其余)
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(clip) = inner.doc.clip(&clip_id).cloned() {
+        let mut fx = clip.fx;
+        fx.alpha_matting = Some(veditor_core::AlphaMatting {
+            dir: produced.to_string_lossy().to_string(),
+            smooth_frames: smooth_frames.clamp(1, 9),
+        });
+        inner.exec(Box::new(SetFx::new(clip_id, fx)));
+    }
+    Ok(format!(
+        "AI 抠像完成:alpha 序列已生成({} 引擎,平滑 {} 帧)",
+        rvm.engine, smooth_frames
+    ))
+}
+
+/// 移除 AI 抠像(fx.alpha_matting = None)。
+#[tauri::command]
+pub(crate) fn clear_matting(clip_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(clip) = inner.doc.clip(&clip_id).cloned() {
+        let mut fx = clip.fx;
+        fx.alpha_matting = None;
+        inner.exec(Box::new(SetFx::new(clip_id, fx)));
+        return true;
+    }
+    false
+}
+
 #[tauri::command(async)]
 pub(crate) fn auto_chroma_key(
     clip_id: String,

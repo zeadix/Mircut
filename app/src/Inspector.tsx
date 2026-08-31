@@ -39,6 +39,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   const [blend, setBlend] = useState<string>("Normal");
   /// 人声分离忙态。
   const [stemBusy, setStemBusy] = useState(false);
+  /// AI 抠像忙态 + 时序平滑窗口。
+  const [mattingBusy, setMattingBusy] = useState(false);
+  const [mattingSmooth, setMattingSmooth] = useState(3);
   const [splitStatus, setSplitStatus] = useState("");
   const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
   /// 批量音量输入。
@@ -646,6 +649,66 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             onChange={(e) => setGrade({ ...grade, temperature: parseFloat(e.target.value) })}
             onMouseUp={applyGrade}
             onTouchEnd={applyGrade}
+          />
+        </label>
+      </fieldset>
+
+      <fieldset style={{ borderColor: "var(--border)" }}>
+        <legend>AI 人像抠像(RVM 视频时序)</legend>
+        <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+          <button
+            className="btn"
+            style={{ flex: 1 }}
+            disabled={mattingBusy}
+            title="需 rvm-cli 引擎 + RVM 模型(字幕面板 AI 模型区下载);alpha 序列按片段源区间提取,导出时 blend"
+            onClick={async () => {
+              setMattingBusy(true);
+              setSplitStatus("抠像中...(RVM 逐帧提取 alpha)");
+              try {
+                const msg = await api.autoMatting(clip.id, mattingSmooth);
+                setSplitStatus(msg);
+                await onRefresh();
+              } catch (e) {
+                setSplitStatus(`抠像失败: ${String(e).slice(0, 200)}`);
+              } finally {
+                setMattingBusy(false);
+              }
+            }}
+          >
+            {mattingBusy ? "抠像中…" : "AI 人像抠像"}
+          </button>
+          {clip.fx?.alpha_matting && (
+            <button
+              className="btn"
+              title="移除 AI 抠像"
+              onClick={async () => {
+                await api.clearMatting(clip.id);
+                await onRefresh();
+              }}
+            >
+              移除
+            </button>
+          )}
+        </div>
+        {clip.fx?.alpha_matting ? (
+          <div style={{ color: "#7ed957", marginBottom: 4 }}>
+            已启用(平滑 {clip.fx.alpha_matting.smooth_frames} 帧)
+          </div>
+        ) : (
+          <div style={{ color: "var(--text-dim)", marginBottom: 4 }}>
+            视频时序 matting(边缘不闪烁);纯色背景用下方色度抠像
+          </div>
+        )}
+        <label style={{ display: "block", fontSize: 10, color: "var(--text-dim)" }}>
+          时序平滑 {mattingSmooth} 帧(压边缘闪烁,1=关)
+          <input
+            type="range"
+            min={1}
+            max={9}
+            step={2}
+            value={mattingSmooth}
+            onChange={(e) => setMattingSmooth(parseInt(e.target.value))}
+            style={{ width: "100%" }}
           />
         </label>
       </fieldset>

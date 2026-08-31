@@ -330,6 +330,19 @@ pub struct ClipFx {
     /// 混合模式(画中画,默认无 = 正常 overlay)。
     #[serde(default)]
     pub blend_mode: Option<BlendMode>,
+    /// RVM 抠像 alpha 序列目录(帧文件 rvm_%05d.png;None = 未启用)。
+    /// 时序平滑(导出 tmix)自动生效。
+    #[serde(default)]
+    pub alpha_matting: Option<AlphaMatting>,
+}
+
+/// AI 人像抠像(RVM alpha 序列叠层)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AlphaMatting {
+    /// alpha 序列目录(绝对路径,帧 rvm_%05d.png)。
+    pub dir: String,
+    /// 时序平滑窗口帧数(1 = 关;3/5 常用,压边缘闪烁)。
+    pub smooth_frames: u32,
 }
 
 #[cfg(test)]

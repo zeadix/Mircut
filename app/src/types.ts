@@ -94,6 +94,13 @@ export interface ClipFx {
   mask?: Mask;
   blend_mode?: "Normal" | "Multiply" | "Screen" | "Overlay" | "Darken" | "Lighten" | "Difference" | "Addition";
   rect?: FxRect;
+  /// AI 人像抠像(RVM alpha 序列)。
+  alpha_matting?: AlphaMatting;
+}
+
+export interface AlphaMatting {
+  dir: string;
+  smooth_frames: number;
 }
 
 export interface Clip {

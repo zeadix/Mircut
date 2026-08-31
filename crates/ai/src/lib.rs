@@ -260,6 +260,66 @@ impl Transcriber for SilenceSegments {
     }
 }
 
+/// RVM 人像抠像引擎(视频时序 matting)。
+/// 外置 CLI 探测:robust-video-matting CLI / rvm-cli / python -m;
+/// 模型权重(rvm_mobilenetv3.onnx ~26MB)经模型管理器按需下载。
+pub struct RvmMatting {
+    pub engine: String,
+    /// 模型权重路径(~/.veditor/models/)。
+    pub model: PathBuf,
+}
+
+impl RvmMatting {
+    /// 探测可用引擎 + 本地模型(None = 不可用)。
+    pub fn detect() -> Option<Self> {
+        let bins = ["rvm-cli", "rvm", "robust-video-matting"];
+        let engine = bins.iter().find(|b| which_bin(b))?.to_string();
+        let model = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".veditor/models/rvm_mobilenetv3.onnx"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("rvm_mobilenetv3.onnx"));
+        if !model.exists() {
+            return None;
+        }
+        Some(Self { engine, model })
+    }
+
+    /// 对视频区间生成 alpha 序列(PNG,灰度 mask)到 out_dir。
+    /// 返回输出目录(帧文件 rvm_%05d.png)。
+    pub fn extract_alpha(
+        &self,
+        media: &Path,
+        source_in: f64,
+        duration: f64,
+        out_dir: &Path,
+    ) -> Result<PathBuf> {
+        ensure!(
+            self.model.exists(),
+            "RVM 模型不存在: {}",
+            self.model.display()
+        );
+        std::fs::create_dir_all(out_dir)?;
+        // 常见 rvm CLI 约定:--input/--model/--output-dir(逐帧灰度 PNG)
+        let out = Command::new(&self.engine)
+            .args(["--input"])
+            .arg(media)
+            .args(["--model"])
+            .arg(&self.model)
+            .args(["--start", &format!("{source_in:.3}")])
+            .args(["--duration", &format!("{duration:.3}")])
+            .args(["--output-dir"])
+            .arg(out_dir)
+            .args(["--alpha-only"])
+            .output()
+            .context("启动 RVM 引擎失败")?;
+        ensure!(
+            out.status.success(),
+            "RVM 抠像失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(out_dir.to_path_buf())
+    }
+}
+
 /// TTS:调用外部命令(espeak-ng 或 piper),返回 wav 路径。
 pub struct Tts {
     /// "espeak-ng" | "piper"

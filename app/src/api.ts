@@ -401,6 +401,14 @@ export async function deleteModel(id: string): Promise<void> {
 export async function stemEngineStatus(): Promise<{ available: boolean; engine: string | null }> {
   return invoke("stem_engine_status");
 }
+/// AI 人像抠像(RVM):提取 alpha 序列并写入片段 fx(可撤销)。
+export async function autoMatting(clipId: string, smoothFrames: number): Promise<string> {
+  return invoke("auto_matting", { clipId, smoothFrames });
+}
+export async function clearMatting(clipId: string): Promise<boolean> {
+  return invoke("clear_matting", { clipId });
+}
+
 /// 真实人声分离(demucs/UVR):生成人声/伴奏两条音频块(组合命令)。
 export async function separateStems(clipId: string): Promise<string> {
   return invoke("separate_stems", { clipId });

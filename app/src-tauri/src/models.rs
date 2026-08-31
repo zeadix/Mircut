@@ -34,6 +34,13 @@ pub(crate) const MODELS: &[ModelEntry] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
         size: 487_000_000,
     },
+    ModelEntry {
+        id: "rvm_mobilenetv3.onnx",
+        name: "RVM 视频抠像",
+        desc: "AI 人像抠像(视频时序 matting,需 rvm-cli 引擎,~26MB)",
+        url: "https://huggingface.co/onnx-community/rvm_mobilenetv3/resolve/main/rvm_mobilenetv3.onnx",
+        size: 26_000_000,
+    },
 ];
 
 /// 模型目录。
@@ -56,13 +63,22 @@ pub(crate) fn list_models() -> Vec<serde_json::Value> {
                 && p.metadata()
                     .map(|meta| meta.len() > m.size / 2)
                     .unwrap_or(false);
+            let engine_ok = if m.id.starts_with("ggml-") {
+                whisper_ok
+            } else if m.id.starts_with("rvm_") {
+                cmd_available("rvm-cli")
+                    || cmd_available("rvm")
+                    || cmd_available("robust-video-matting")
+            } else {
+                true
+            };
             serde_json::json!({
                 "id": m.id,
                 "name": m.name,
                 "desc": m.desc,
                 "size": m.size,
                 "downloaded": downloaded,
-                "engineAvailable": m.id.starts_with("ggml-") && whisper_ok,
+                "engineAvailable": engine_ok,
             })
         })
         .collect()

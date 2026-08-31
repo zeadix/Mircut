@@ -604,7 +604,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     ));
                     continue;
                 }
-                let chain = build_video_chain(
+                let mut chain = build_video_chain(
                     doc,
                     params,
                     c,
@@ -612,6 +612,25 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     &format!("[v{i}]"),
                     &format!("cmd_{i}"),
                 );
+                // RVM AI 抠像:alpha 序列输入追加在片段输入之后,
+                // 片段流与灰度 alpha blend('A*alpha'),可选 tmix 时序平滑
+                if let Some(am) = &c.fx.alpha_matting {
+                    let alpha_idx = uses.len();
+                    args.push("-i".into());
+                    args.push(format!("{}/rvm_%05d.png", am.dir));
+                    let dur_secs = doc.timebase.secs(c.duration);
+                    // alpha 流:灰度 + 平滑;时长对齐片段(重复首帧兜底 loop)
+                    let smooth = if am.smooth_frames > 1 {
+                        format!(",tmix=frames={}", am.smooth_frames)
+                    } else {
+                        String::new()
+                    };
+                    // 片段链的输出 label 改为中间标签,再 blend 生成 [v{i}]
+                    chain = chain.replace(&format!("[v{i}]"), "[vaI]");
+                    chain.push_str(&format!(
+                        ";[{alpha_idx}:v]format=gray,loop=loop=-1:size=1{smooth},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*alpha':shortest=1,format=yuv420p[v{i}]"
+                    ));
+                }
                 chain_parts.push(chain);
             }
             let has_transitions = clips.len() > 1 && !doc.transitions.is_empty();
@@ -1473,6 +1492,45 @@ mod tests {
 
     /// 性能回归门禁(宽松阈值,防滤镜图编译 O(n²) 级回退):
     /// 100 片段工程编译应在 2s 内(正常 <100ms;CI 抖动余量 20 倍)。
+    /// AI 抠像 e2e:alpha 序列(image2 输入)blend 进片段流,
+    /// 真实 ffmpeg 验证滤镜图成立 + 时序平滑可开关。
+    #[test]
+    fn compile_alpha_matting_blends_sequence() {
+        let d = doc();
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        // 无 alpha_matting 时不引入 image2 序列
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(!fc.contains("blend=all_expr"), "fc = {fc}");
+
+        let mut d2 = doc();
+        d2.clips[0].fx.alpha_matting = Some(veditor_core::AlphaMatting {
+            dir: "/tmp/veditor-matting-test".into(),
+            smooth_frames: 3,
+        });
+        let args2 = compile_ffmpeg_cmd(&d2, &ExportParams::default());
+        let fc2 = args2
+            .iter()
+            .zip(args2.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc2.contains("format=gray,loop=loop=-1:size=1,tmix=frames=3"),
+            "fc = {fc2}"
+        );
+        assert!(fc2.contains("blend=all_expr='A*alpha'"), "fc = {fc2}");
+        // alpha 序列输入存在
+        assert!(
+            args2.contains(&"/tmp/veditor-matting-test/rvm_%05d.png".to_string()),
+            "应有 alpha 序列输入"
+        );
+    }
+
     #[test]
     fn compile_vaapi_adds_hwupload_and_device() {
         let d = doc();
