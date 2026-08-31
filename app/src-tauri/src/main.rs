@@ -830,6 +830,94 @@ mod tests {
         }
     }
 
+    /// 双流素材拖入 File 轨:双块落库 + 调度后首尾完全对齐
+    /// (回归:调度器曾以视频块为锚,把同区间的音频块推到身后)。
+    #[test]
+    fn drop_dual_clip_aligned() {
+        use veditor_core::Lane;
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "F1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            });
+            inner.doc.assets.push(Asset {
+                id: "mp4".into(),
+                path: "/tmp/v.mp4".into(),
+                duration_secs: 3.0,
+                has_video: true,
+                has_audio: true,
+                width: Some(320),
+                height: Some(240),
+                name: None,
+                fps: None,
+                tags: vec![],
+            });
+            // 与 drop_asset 完全相同的落库序列:双块 AddClip
+            let mk = |lane: Lane, id: &str| Clip {
+                id: id.into(),
+                track_id: "f1".into(),
+                start: 30,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: "mp4".into(),
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+            };
+            inner.exec(Box::new(AddClip {
+                clip: mk(Lane::Video, "cv"),
+            }));
+            inner.exec(Box::new(AddClip {
+                clip: mk(Lane::Audio, "ca"),
+            }));
+            // drop_asset 的调度调用(双块时 anchor=None)
+            inner.schedule_track("f1", None);
+            // 双块对齐保障(与 drop_asset 尾部一致)
+            let (v_start, v_dur) = {
+                let v = inner.doc.clip("cv").unwrap();
+                (v.start, v.duration)
+            };
+            let a = inner.doc.clip("ca").unwrap();
+            if a.start != v_start || a.duration != v_dur {
+                inner.exec(Box::new(veditor_core::MoveClip::new(
+                    "ca".to_string(),
+                    v_start,
+                    "f1".to_string(),
+                )));
+                inner.exec(Box::new(veditor_core::TrimClip::new(
+                    "ca".to_string(),
+                    v_start,
+                    v_dur,
+                    0.0,
+                )));
+            }
+            let a = inner.doc.clip("ca").unwrap();
+            let v = inner.doc.clip("cv").unwrap();
+            assert_eq!(v.start, 30, "视频块应在拖入位置: {}", v.start);
+            assert_eq!(
+                a.start, v.start,
+                "音频块起点未对齐: v={} a={}",
+                v.start, a.start
+            );
+            assert_eq!(a.duration, v.duration, "音频块时长未对齐");
+        }
+    }
+
     /// 分块策略(File 轨双块语义:hint 不再裁剪,双流素材始终双块)。
     #[test]
     fn lanes_for_drop_by_zone() {

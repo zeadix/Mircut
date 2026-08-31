@@ -469,9 +469,15 @@ pub(crate) fn drop_asset(
     for c in clips_to_add {
         inner.exec(Box::new(AddClip { clip: c }));
     }
-    // 调度消重叠(以视频 lane 为准)
     let _ = total;
-    inner.schedule_track(&target_track, Some(&first_id));
+    // 调度消重叠:双块场景不传锚(视频块作锚会把同区间的音频块
+    // 当重叠者推到身后 -> 双块错位);单块保持锚位语义
+    let anchor = if dual.is_some() {
+        None
+    } else {
+        Some(first_id.as_str())
+    };
+    inner.schedule_track(&target_track, anchor);
     // 双块对齐保障:磁吸推挤可能把视频/音频块推到不同起点,
     // 以视频块位置为准强制音频块对齐(同 start/同 duration)
     if let Some((id0, id1, is_v_first)) = dual {
