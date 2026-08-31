@@ -246,7 +246,9 @@ impl RealtimeRenderer {
         if clip.asset.asset_id != p.asset_id || clip.start != p.clip_start {
             return false;
         }
-        let need_src = clip.asset.source_in + self.doc.timebase.secs(t - clip.start) * clip.speed;
+        // 速度关键帧(>=2)按积分求源时间(与 ProxyRenderer/前端一致)
+        let need_src =
+            clip.asset.source_in + clip.source_secs_at(&self.doc.timebase, t - clip.start);
         let decoded_src = p.source_start + p.frames_read as f64 / p.src_fps;
         decoded_src <= need_src + 1.0 / p.src_fps.max(1.0)
     }
@@ -263,8 +265,8 @@ impl RealtimeRenderer {
             .get(&clip.asset.asset_id)
             .cloned()
             .unwrap_or_else(|| PathBuf::from(&asset.path));
-        let offset_secs = self.doc.timebase.secs(t - clip.start) * clip.speed;
-        let source_start = clip.asset.source_in + offset_secs;
+        let source_start =
+            clip.asset.source_in + clip.source_secs_at(&self.doc.timebase, t - clip.start);
         // 真实帧率(导入时 ffprobe;缺失回退 30)
         let src_fps = asset.fps.filter(|f| *f > 1.0).unwrap_or(30.0);
         let mut child = Command::new("ffmpeg")
@@ -348,7 +350,7 @@ impl Renderer for RealtimeRenderer {
             .cloned()
             .unwrap_or_else(|| PathBuf::from(&asset.path));
         let source_secs =
-            clip.asset.source_in + self.doc.timebase.secs(t - clip.start) * clip.speed;
+            clip.asset.source_in + clip.source_secs_at(&self.doc.timebase, t - clip.start);
         let cache_dir = std::env::temp_dir().join("veditor-render-cache-rt");
         std::fs::create_dir_all(&cache_dir)?;
         let jpeg = cache_dir.join(format!(

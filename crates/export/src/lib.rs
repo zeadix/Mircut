@@ -1089,9 +1089,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let ms = (need_delay * 1000.0).round() as i64;
                 chain.push_str(&format!(",adelay={ms}:all=1"));
             }
-            // 音频滤镜(淡入淡出/降噪/变声/EQ)
+            // 音频滤镜(淡入淡出/降噪/变声/EQ):
+            // 基准 = 时间轴秒(链上 afade 作用于 atempo 后的流,时长即时间轴时长;
+            // 与预览手柄/变速曲线路径一致,修复 speed≠1 时淡出起点错位)
             if !c.fx.audio_fx.is_noop() {
-                let dur = c.source_span_secs(&doc.timebase);
+                let dur = doc.timebase.secs(c.duration);
                 for f in c.fx.audio_fx.to_ffmpeg_chain(dur) {
                     chain.push(',');
                     chain.push_str(&f);
@@ -1253,9 +1255,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     if params.vcodec == "libx264" {
         // 软编:CRF 质量模式
         args.extend(["-crf".into(), params.crf.to_string()]);
+    } else if params.vcodec.ends_with("qsv") {
+        // qsv:无 -qp 私有选项(会被 ffmpeg 静默忽略),用 global_quality(ICQ)
+        args.extend(["-global_quality".into(), params.crf.to_string()]);
     } else {
-        // nvenc/qsv:qp 模式(nvenc/qsv 直接接受软帧输入;
-        // vaapi 需滤镜图 hwupload 配合,暂不暴露,见路线图批次 4)
+        // nvenc:qp 模式(有 -qp 私有选项;vaapi 需滤镜图 hwupload 配合,暂不暴露)
         args.extend(["-qp".into(), params.crf.to_string()]);
     }
     args.extend([

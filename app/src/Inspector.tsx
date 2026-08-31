@@ -404,7 +404,18 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           value={speed}
           onChange={(e) => setSpeed(e.target.value)}
           onBlur={() => applySpeed(speed)}
+          disabled={(clip.fx?.speed?.keyframes?.length ?? 0) >= 2}
+          title={
+            (clip.fx?.speed?.keyframes?.length ?? 0) >= 2
+              ? "存在速度关键帧:静态变速不生效,请在下方关键帧编辑器调整曲线"
+              : "静态变速倍率"
+          }
         />
+        {(clip.fx?.speed?.keyframes?.length ?? 0) >= 2 && (
+          <span style={{ color: "#ffd75e", fontSize: 10, marginLeft: 4 }}>
+            速度关键帧生效中
+          </span>
+        )}
       </label>
 
       <label>
