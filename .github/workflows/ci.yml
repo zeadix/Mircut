@@ -59,3 +59,6 @@ jobs:
 
       - name: 性能基准(命令延迟/快照)
         run: cargo bench -p veditor-core --bench commands
+
+      - name: 性能基准(滤镜图编译吞吐)
+        run: cargo bench -p veditor-export --bench compile

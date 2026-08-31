@@ -10,3 +10,8 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "compile"
+harness = false

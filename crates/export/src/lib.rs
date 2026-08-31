@@ -1451,6 +1451,39 @@ mod tests {
         doc
     }
 
+    /// 性能回归门禁(宽松阈值,防滤镜图编译 O(n²) 级回退):
+    /// 100 片段工程编译应在 2s 内(正常 <100ms;CI 抖动余量 20 倍)。
+    #[test]
+    fn perf_compile_100_clips_under_2s() {
+        let mut d = doc();
+        for i in 1..100 {
+            d.clips.push(Clip {
+                id: format!("cp{i}"),
+                start: (i * 30),
+                duration: 30,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 1.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                track_id: "t1".into(),
+                fx: Default::default(),
+            });
+        }
+        let t0 = std::time::Instant::now();
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let elapsed = t0.elapsed();
+        assert!(args.len() > 100, "应产出完整命令");
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "100 片段滤镜图编译超时: {elapsed:?}"
+        );
+    }
+
     #[test]
     fn compile_produces_inputs_and_maps() {
         let args = compile_ffmpeg_cmd(&doc(), &ExportParams::default());
