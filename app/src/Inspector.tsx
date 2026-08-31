@@ -2,6 +2,7 @@ import { useEffect, useState, memo } from "react";
 import * as api from "./api";
 import type { Clip, Document } from "./types";
 import KeyframeEditor from "./KeyframeEditor";
+import TransPreview from "./TransPreview";
 
 interface Props {
   doc: Document;
@@ -834,16 +835,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
                 <option key={t[0]} value={t[0]}>{t[1]}</option>
               ))}
             </select>{" "}
-            <span
-              title={`${TRANSITIONS.find((t) => t[0] === transKind)?.[1] ?? ""} 预览`}
-              style={{
-                display: "inline-block",
-                width: 44,
-                height: 22,
-                borderRadius: 3,
-                border: "1px solid var(--border)",
-                background: transPreviewCss(transKind),
-              }}
+            <TransPreview
+              kind={transKind}
+              label={`${TRANSITIONS.find((t) => t[0] === transKind)?.[1] ?? ""} 预览`}
             />
             <input
               className="ti"
@@ -869,44 +863,6 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       </fieldset>
     </div>
   );
-}
-
-/// 转场视觉预览(CSS 渐变模拟;真实缩略图后续接入素材抽帧)。
-function transPreviewCss(kind: string): string {
-  switch (kind) {
-    case "fade":
-      return "linear-gradient(90deg, #333 0%, #777 100%)";
-    case "dissolve":
-      return "linear-gradient(90deg, #333 0%, #3a3a3a 30%, #777 70%, #333 100%)";
-    case "fadeblack":
-      return "linear-gradient(90deg, #000 40%, #666 50%, #000 60%)";
-    case "fadewhite":
-      return "linear-gradient(90deg, #ddd 40%, #fff 50%, #ddd 60%)";
-    case "slideleft":
-      return "linear-gradient(135deg, #333 50%, #777 50%)";
-    case "slideright":
-      return "linear-gradient(315deg, #777 50%, #333 50%)";
-    case "wipeleft":
-      return "linear-gradient(90deg, #777 50%, #333 50%)";
-    case "wiperight":
-      return "linear-gradient(90deg, #333 50%, #777 50%)";
-    case "wipeup":
-      return "linear-gradient(180deg, #777 50%, #333 50%)";
-    case "wipedown":
-      return "linear-gradient(180deg, #333 50%, #777 50%)";
-    case "circleopen":
-      return "radial-gradient(circle, #333 30%, #777 70%)";
-    case "circleclose":
-      return "radial-gradient(circle, #777 20%, #333 60%)";
-    case "radial":
-      return "conic-gradient(from 0deg, #777 0 90deg, #333 90deg 180deg, #777 180deg 270deg, #333 270deg 360deg)";
-    case "pixelize":
-      return "repeating-conic-gradient(#333 0% 25%, #777 0% 50%) 0 0 / 8px 8px";
-    case "zoom":
-      return "radial-gradient(circle at 50% 50%, #333 0%, #555 40%, #777 100%)";
-    default:
-      return "#333";
-  }
 }
 
 /// 转场画廊(与导出 xfade 映射一一对应)。

@@ -472,6 +472,79 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     await refresh();
   }
 
+  /// 导入素材包(目录选择)。
+  async function onImportPack() {
+    const picked = await openDialog({ multiple: false, directory: true });
+    const dir = Array.isArray(picked) ? picked[0] : picked;
+    if (!dir) return;
+    try {
+      const info = await api.importPack(dir);
+      setStatus(`素材包已导入: ${info.name}`);
+    } catch (e) {
+      setStatus(`导入失败: ${String(e).slice(0, 160)}`);
+    }
+  }
+
+  /// 应用素材包条目到播放头(媒体库模板分类单击)。
+  async function onApplyPackItem(
+    packId: string,
+    item: Record<string, unknown>,
+    kind: string
+  ) {
+    if (!doc) return;
+    const tps = doc.timebase.num / doc.timebase.den;
+    try {
+      if (kind === "filters") {
+        if (selected.length !== 1) {
+          setStatus("滤镜:请先选中一个片段");
+          return;
+        }
+        const clip = doc.clips.find((c) => c.id === selected[0]);
+        if (!clip) return;
+        const grade = (item.grade ?? {}) as Partial<{
+          brightness: number; contrast: number; saturation: number; temperature: number;
+        }>;
+        const fx: import("./types").ClipFx = {
+          ...(clip.fx as import("./types").ClipFx),
+          grade: {
+            brightness: grade.brightness ?? 0,
+            contrast: grade.contrast ?? 1,
+            saturation: grade.saturation ?? 1,
+            temperature: grade.temperature ?? 0,
+          },
+        };
+        await api.setClipFx(clip.id, fx);
+      } else if (kind === "transitions") {
+        setStatus("转场素材包:请在检查器转场画廊选择");
+        return;
+      } else {
+        await api.applyPackItem(packId, { ...item, _kind: kind }, playhead, Math.round(3 * tps));
+      }
+      await refresh();
+      setStatus(`已应用: ${String(item.name ?? "")}`);
+    } catch (e) {
+      setStatus(`应用失败: ${String(e).slice(0, 160)}`);
+    }
+  }
+
+  /// 模板条目拖放(时间轴位置)。
+  async function onDropPackItem(
+    packId: string,
+    item: Record<string, unknown>,
+    kind: string,
+    t: number
+  ) {
+    if (!doc) return;
+    const tps = doc.timebase.num / doc.timebase.den;
+    try {
+      await api.applyPackItem(packId, { ...item, _kind: kind }, t, Math.round(3 * tps));
+      await refresh();
+      setStatus(`已放置到 ${(t / tps).toFixed(1)}s: ${String(item.name ?? "")}`);
+    } catch (e) {
+      setStatus(`放置失败: ${String(e).slice(0, 160)}`);
+    }
+  }
+
   /// 贴纸拖拽提交(更新位置)。
   async function onStickerMove(id: string, x: number, y: number) {
     if (!doc) return;
@@ -967,6 +1040,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           onDragKind={setDragKind}
           onAssetPreview={setAssetPreview}
           onAddToTimeline={addToTimeline}
+          onImportPack={onImportPack}
+          onApplyPackItem={onApplyPackItem}
           onRefresh={refresh}
         />
 
@@ -1052,6 +1127,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               onRollEdit={onRollEdit}
               onRemoveMarker={onRemoveMarker}
               onMoveClips={onMoveClips}
+              onDropPackItem={onDropPackItem}
               selectedClipIds={selected}
               onClipMove={onClipMove}
               onClipTrim={onClipTrim}

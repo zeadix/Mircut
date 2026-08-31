@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import * as api from "./api";
 import type { Document } from "./types";
 import MiniWaveform from "./MiniWaveform";
+import TransPreview from "./TransPreview";
 import { FolderOpen } from "@phosphor-icons/react";
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
   onDragKind: (k: "video" | "audio") => void;
   onAssetPreview: (p: { path: string; secs: number }) => void;
   onAddToTimeline: (assetId: string) => void;
+  onImportPack: () => void;
+  onApplyPackItem: (packId: string, item: Record<string, unknown>, kind: string) => void;
   onRefresh: () => Promise<void>;
 }
 
@@ -45,16 +48,30 @@ export default function MediaLibrary({
   onDragKind,
   onAssetPreview,
   onAddToTimeline,
+  onImportPack,
+  onApplyPackItem,
   onRefresh,
 }: Props) {
   const [mediaGrid, setMediaGrid] = useState(false);
-  const [mediaCat, setMediaCat] = useState<"all" | "video" | "audio" | "image">("all");
+  const [mediaCat, setMediaCat] = useState<
+    "all" | "video" | "audio" | "image" | "templates"
+  >("all");
+  /// 素材包(模板分类用)。
+  const [packs, setPacks] = useState<api.PackInfo[]>([]);
   const [mediaQuery, setMediaQuery] = useState("");
   const [editingAsset, setEditingAsset] = useState<string | null>(null);
   const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
   /// 素材多选(Ctrl/Shift 点击;批量上轨用)。
   const [mediaSel, setMediaSel] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  const KIND_LABEL: Record<string, string> = {
+    stickers: "贴纸",
+    "text-styles": "文字样式",
+    "subtitle-styles": "字幕样式",
+    filters: "滤镜",
+    transitions: "转场",
+  };
+  const tps = doc ? doc.timebase.num / doc.timebase.den : 30;
 
   function onCardClick(e: React.MouseEvent, assetId: string, path: string, secs: number) {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -126,6 +143,7 @@ export default function MediaLibrary({
           ["video", "视频"],
           ["audio", "音频"],
           ["image", "图片"],
+          ["templates", "模板"],
         ] as const).map(([k, label]) => (
           <button
             key={k}
@@ -142,6 +160,90 @@ export default function MediaLibrary({
           </button>
         ))}
       </div>
+      {/* 模板分类:素材包条目(拖拽到时间轴放置 / 单击应用) */}
+      {mediaCat === "templates" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button className="btn" onClick={onImportPack}>导入素材包…</button>
+          {packs.length === 0 && (
+            <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
+              暂无素材包:~/.veditor/packs 或点上方导入
+            </div>
+          )}
+          {packs.map((p) => (
+            <div key={p.id} className="asset-card">
+              <div style={{ fontSize: 11, color: "var(--text)", marginBottom: 4 }}>
+                {p.name}
+                <span style={{ color: "var(--text-dim)", marginLeft: 6 }}>
+                  {KIND_LABEL[p.kind] ?? p.kind} · {p.items.length}
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+                {p.items.map((it, i) => {
+                  const item = it as Record<string, unknown>;
+                  const st = item.style as Record<string, unknown> | undefined;
+                  if (p.kind === "transitions") {
+                    return (
+                      <TransPreview
+                        key={i}
+                        kind={String(item.kind ?? item.id ?? "fade")}
+                        label={`${String(item.name ?? "")} - 转场预览`}
+                        size={84}
+                      />
+                    );
+                  }
+                  return (
+                    <div
+                      key={i}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(
+                          "application/x-veditor-pack-item",
+                          JSON.stringify({ packId: p.id, item, kind: p.kind })
+                        );
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onClick={() => onApplyPackItem(p.id, item, p.kind)}
+                      title={`${String(item.name ?? "")} - 拖到时间轴放置(3s)/单击应用到播放头`}
+                      style={{
+                        cursor: "grab",
+                        borderRadius: 6,
+                        border: "1px solid var(--border)",
+                        height: 52,
+                        display: "flex",
+                        alignItems: "flex-end",
+                        background:
+                          p.kind === "text-styles" || p.kind === "subtitle-styles"
+                            ? String(st?.color ?? "#ffffff")
+                            : p.kind === "filters"
+                              ? "linear-gradient(135deg,#355,#577)"
+                              : "var(--surface)",
+                        borderLeft: `6px solid ${String(st?.outline ?? "#000000")}`,
+                        padding: 2,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 9,
+                          color: "var(--text)",
+                          background: "rgba(0,0,0,0.45)",
+                          borderRadius: 4,
+                          padding: "0 4px",
+                          maxWidth: "100%",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {String(item.name ?? "")}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div style={{ display: mediaGrid ? "grid" : "block", gridTemplateColumns: mediaGrid ? "1fr 1fr" : undefined, gap: 6 }}>
         {doc.assets
           .filter((a) => {
@@ -254,6 +356,7 @@ export default function MediaLibrary({
             </div>
           ))}
       </div>
+      )}
     </aside>
   );
 }

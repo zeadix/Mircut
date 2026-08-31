@@ -23,6 +23,13 @@ interface Props {
   onRemoveMarker?: (t: number) => void;
   /// 批量移动提交(组合命令)。
   onMoveClips?: (entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[]) => void;
+  /// 模板条目拖放(素材包条目落到时间轴位置)。
+  onDropPackItem?: (
+    packId: string,
+    item: Record<string, unknown>,
+    kind: string,
+    t: number
+  ) => void;
   /// 淡入淡出手柄提交(秒)。
   onSetAudioFade?: (clipId: string, fadeIn: number, fadeOut: number) => void;
   selectedClipIds: string[];
@@ -97,6 +104,7 @@ function TimelineInner({
   onRollEdit,
   onRemoveMarker,
   onMoveClips,
+  onDropPackItem,
   selectedClipIds,
   onClipMove,
   onClipTrim,
@@ -1164,6 +1172,27 @@ function TimelineInner({
 
   function onDrop(e: React.DragEvent) {
     const assetId = e.dataTransfer.getData("application/x-veditor-asset");
+    // 模板条目拖放:落到时间轴位置(贴纸/文字样式在 drop ticks 处放置 3s)
+    const packItemRaw = e.dataTransfer.getData("application/x-veditor-pack-item");
+    if (!assetId && packItemRaw) {
+      e.preventDefault();
+      try {
+        const pi = JSON.parse(packItemRaw) as {
+          packId: string;
+          item: Record<string, unknown>;
+          kind: string;
+        };
+        const rect = canvasRef.current?.getBoundingClientRect();
+        const t = rect
+          ? Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick))
+          : playheadTicks;
+        onDropPackItem?.(pi.packId, pi.item, pi.kind, t);
+      } catch {
+        /* 无效载荷忽略 */
+      }
+      setDropHint(null);
+      return;
+    }
     setDropHint(null);
     if (!assetId) return;
     e.preventDefault();
