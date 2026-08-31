@@ -58,6 +58,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     "export.close": "关闭",
     "export.publishDouyin": "一键发布(抖音)",
     "export.publishBili": "一键发布(B站)",
+    "export.start": "导出视频",
+    "export.exporting": "导出中…",
+    "export.cancel": "取消",
+    "export.remove": "移除任务",
+    "export.queueEmpty": "空:配置预设/路径后点'加入队列'",
     "status.loading": "加载中...",
   },
   en: {
@@ -113,6 +118,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     "export.close": "Close",
     "export.publishDouyin": "Publish (Douyin)",
     "export.publishBili": "Publish (Bilibili)",
+    "export.start": "Export Video",
+    "export.exporting": "Exporting…",
+    "export.cancel": "Cancel",
+    "export.remove": "Remove task",
+    "export.queueEmpty": "Empty: set preset/path then 'Add to queue'",
     "status.loading": "Loading...",
   },
 };

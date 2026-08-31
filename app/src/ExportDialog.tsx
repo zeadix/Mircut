@@ -358,12 +358,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
             )}
           </div>
           {queue.length === 0 && (
-            <div style={{ color: "var(--text-dim)" }}>空:配置预设/路径后点"加入队列"</div>
+            <div style={{ color: "var(--text-dim)" }}>{t("export.queueEmpty")}</div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {queue.map((t) => (
+            {queue.map((task) => (
               <div
-                key={t.id}
+                key={task.id}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -374,16 +374,16 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                   padding: "4px 8px",
                 }}
               >
-                <span style={{ color: STATUS_COLOR[t.status], flexShrink: 0, width: 44 }}>
-                  {STATUS_LABEL[t.status]}
+                <span style={{ color: STATUS_COLOR[task.status], flexShrink: 0, width: 44 }}>
+                  {STATUS_LABEL[task.status]}
                 </span>
                 <span
                   style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  title={t.req.outPath}
+                  title={task.req.outPath}
                 >
-                  {t.name}
+                  {task.name}
                 </span>
-                {t.status === "running" && (
+                {task.status === "running" && (
                   <>
                     <div
                       style={{
@@ -397,7 +397,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                     >
                       <div
                         style={{
-                          width: `${t.pct}%`,
+                          width: `${task.pct}%`,
                           height: "100%",
                           background: "var(--progress)",
                           transition: "width 0.2s",
@@ -405,19 +405,19 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                       />
                     </div>
                     <span style={{ color: "var(--text-dim)", width: 34, textAlign: "right" }}>
-                      {Math.round(t.pct)}%
+                      {Math.round(task.pct)}%
                     </span>
                     <button className="btn" style={{ padding: "1px 6px" }} onClick={onCancelRunning}>
-                      取消
+                      {t("export.cancel")}
                     </button>
                   </>
                 )}
-                {t.status === "pending" && (
+                {task.status === "pending" && (
                   <button
                     className="btn"
                     style={{ padding: "1px 6px" }}
-                    title="移除任务"
-                    onClick={() => setQueue((q) => q.filter((x) => x.id !== t.id))}
+                    title={t("export.remove")}
+                    onClick={() => setQueue((q) => q.filter((x) => x.id !== task.id))}
                   >
                     ×
                   </button>
@@ -437,6 +437,15 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           </button>
           <button className="btn" onClick={() => onPublish("bilibili")}>
             {t("export.publishBili")}
+          </button>
+          {/* 主操作:导出到上方配置的路径(入队即开始,队列自动执行) */}
+          <button
+            className="btn primary"
+            disabled={busy}
+            title={`导出到 ${exportPath}`}
+            onClick={onEnqueue}
+          >
+            {busy ? t("export.exporting") : t("export.start")}
           </button>
         </div>
       </div>
