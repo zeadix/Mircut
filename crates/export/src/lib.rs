@@ -2213,6 +2213,73 @@ mod tests {
         assert!((dur - 1.0).abs() < 0.35, "动画 PiP 时长应 ~1s, got {dur}");
     }
 
+    /// 贴纸 e2e:单帧 PNG 贴纸叠层导出,验证真实 ffmpeg 接受并产出正确时长。
+    #[test]
+    fn e2e_sticker_overlay_exports() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        let sticker = "/tmp/veditor-media-tests/sticker.png";
+        if !std::path::Path::new(sticker).exists() {
+            // 生成合法单帧 PNG(lavfi color)
+            let _ = Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red@0.9:size=160x160,format=rgba",
+                    "-frames:v",
+                    "1",
+                ])
+                .arg(sticker)
+                .output();
+        }
+        if !std::path::Path::new(fixture).exists() || !std::path::Path::new(sticker).exists() {
+            eprintln!("fixture/贴纸不存在,跳过");
+            return;
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        d.assets[0].has_audio = false;
+        d.image_overlays.push(veditor_core::ImageOverlay {
+            id: "st1".into(),
+            start: 0,
+            end: 60,
+            path: sticker.into(),
+            x: 0.3,
+            y: 0.3,
+            scale: 0.25,
+            rotate: 15.0,
+            opacity: 0.9,
+        });
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_sticker.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        run_export(&compile_ffmpeg_cmd(&d, &params)).unwrap();
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let dur: f64 = String::from_utf8_lossy(&probe.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        assert!((dur - 1.0).abs() < 0.3, "贴纸导出时长应 ~1s, got {dur}");
+    }
+
     /// 转场 e2e(总长不变):两相邻片段 1s+1s,0.5s 转场 -- 成片应仍为 2s
     /// (旧 xfade 语义会缩短到 1.5s 且音画错位)。
     #[test]

@@ -278,8 +278,9 @@ pub(crate) fn add_text_overlay(
     if o.id.is_empty() {
         o.id = format!("tx{}", inner.doc.text_overlays.len() + 1);
     }
-    inner.doc.text_overlays.push(o.clone());
-    inner.autosave();
+    let mut next = inner.doc.text_overlays.clone();
+    next.push(o.clone());
+    inner.exec(Box::new(veditor_core::SetTextOverlays::new(next)));
     Ok(o)
 }
 
@@ -290,18 +291,24 @@ pub(crate) fn update_text_overlay(
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if let Some(o) = inner.doc.text_overlays.get_mut(index) {
-        *o = overlay;
+    if index >= inner.doc.text_overlays.len() {
+        return false;
     }
+    let mut next = inner.doc.text_overlays.clone();
+    next[index] = overlay;
+    inner.exec(Box::new(veditor_core::SetTextOverlays::new(next)));
     true
 }
 
 #[tauri::command]
 pub(crate) fn remove_text_overlay(index: usize, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if index < inner.doc.text_overlays.len() {
-        inner.doc.text_overlays.remove(index);
+    if index >= inner.doc.text_overlays.len() {
+        return false;
     }
+    let mut next = inner.doc.text_overlays.clone();
+    next.remove(index);
+    inner.exec(Box::new(veditor_core::SetTextOverlays::new(next)));
     true
 }
 
@@ -321,8 +328,9 @@ pub(crate) fn add_image_overlay(
     if o.id.is_empty() {
         o.id = format!("st{}", inner.doc.image_overlays.len() + 1);
     }
-    inner.doc.image_overlays.push(o.clone());
-    inner.autosave();
+    let mut next = inner.doc.image_overlays.clone();
+    next.push(o.clone());
+    inner.exec(Box::new(veditor_core::SetImageOverlays::new(next)));
     Ok(o)
 }
 
@@ -333,18 +341,24 @@ pub(crate) fn update_image_overlay(
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if let Some(o) = inner.doc.image_overlays.get_mut(index) {
-        *o = overlay;
+    if index >= inner.doc.image_overlays.len() {
+        return false;
     }
+    let mut next = inner.doc.image_overlays.clone();
+    next[index] = overlay;
+    inner.exec(Box::new(veditor_core::SetImageOverlays::new(next)));
     true
 }
 
 #[tauri::command]
 pub(crate) fn remove_image_overlay(index: usize, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if index < inner.doc.image_overlays.len() {
-        inner.doc.image_overlays.remove(index);
+    if index >= inner.doc.image_overlays.len() {
+        return false;
     }
+    let mut next = inner.doc.image_overlays.clone();
+    next.remove(index);
+    inner.exec(Box::new(veditor_core::SetImageOverlays::new(next)));
     true
 }
 
@@ -359,11 +373,12 @@ pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Resu
     let den = inner.doc.timebase.den as f64;
     let mut cursor = 0i64;
     let mut count = 0usize;
+    let mut overlays = inner.doc.text_overlays.clone();
     for (i, s) in sentences.iter().enumerate() {
         let chars = s.chars().count().max(1);
         let dur_secs = (chars as f64 * 0.35).clamp(1.0, 8.0);
         let dur = (dur_secs * num / den).round() as i64;
-        inner.doc.text_overlays.push(veditor_core::TextOverlay {
+        overlays.push(veditor_core::TextOverlay {
             id: format!("art{}", i + 1),
             start: cursor,
             end: cursor + dur,
@@ -382,7 +397,7 @@ pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Resu
         cursor += dur;
         count += 1;
     }
-    inner.autosave();
+    inner.exec(Box::new(veditor_core::SetTextOverlays::new(overlays)));
     Ok(count)
 }
 

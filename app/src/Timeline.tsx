@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
-import { valueAt } from "./anim";
+import { sourceSecsAt, valueAt } from "./anim";
 import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash, X } from "@phosphor-icons/react";
 
 interface Props {
@@ -292,8 +292,11 @@ function TimelineInner({
         const x0 = Math.max(x, vx0);
         const x1 = Math.min(x + cw, vx1);
         for (let px = x0; px < x1; px += 3) {
-          const secsInClip = ((px / pxPerTick) - clip.start) / tps * clip.speed;
-          const srcSecs = clip.asset.source_in + secsInClip;
+          // 源秒映射:速度关键帧按积分(与预览/导出一致)
+          const tickAt = Math.round(px / pxPerTick) - clip.start;
+          const srcSecs =
+            clip.asset.source_in +
+            sourceSecsAt(clip.speed, clip.fx?.speed?.keyframes, tps, 1, tickAt);
           const peak = wf[Math.floor(srcSecs * 10)] ?? 0;
           if (peak > 0.01) {
             const ph = peak * (h - 4) * 0.9;

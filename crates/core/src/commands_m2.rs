@@ -205,6 +205,87 @@ impl Command for SetSpeed {
     }
 }
 
+/// 文字叠层整表快照命令(可撤销)。
+pub struct SetTextOverlays {
+    pub overlays: Vec<crate::fx_ext::TextOverlay>,
+    old: Vec<crate::fx_ext::TextOverlay>,
+}
+
+impl SetTextOverlays {
+    pub fn new(overlays: Vec<crate::fx_ext::TextOverlay>) -> Self {
+        Self {
+            overlays,
+            old: Vec::new(),
+        }
+    }
+}
+
+impl Command for SetTextOverlays {
+    fn label(&self) -> &str {
+        "文字叠层"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.old = std::mem::replace(&mut doc.text_overlays, self.overlays.clone());
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        doc.text_overlays = std::mem::take(&mut self.old);
+    }
+}
+
+/// 贴纸(图片叠层)整表快照命令(可撤销)。
+pub struct SetImageOverlays {
+    pub overlays: Vec<crate::fx_ext::ImageOverlay>,
+    old: Vec<crate::fx_ext::ImageOverlay>,
+}
+
+impl SetImageOverlays {
+    pub fn new(overlays: Vec<crate::fx_ext::ImageOverlay>) -> Self {
+        Self {
+            overlays,
+            old: Vec::new(),
+        }
+    }
+}
+
+impl Command for SetImageOverlays {
+    fn label(&self) -> &str {
+        "贴纸"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.old = std::mem::replace(&mut doc.image_overlays, self.overlays.clone());
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        doc.image_overlays = std::mem::take(&mut self.old);
+    }
+}
+
+/// 字幕 cue 整表快照命令(可撤销;字幕样式走 SetSubtitleStyle)。
+pub struct SetSubtitleCues {
+    pub cues: Vec<crate::subtitle::SubtitleCue>,
+    old: Vec<crate::subtitle::SubtitleCue>,
+}
+
+impl SetSubtitleCues {
+    pub fn new(cues: Vec<crate::subtitle::SubtitleCue>) -> Self {
+        Self {
+            cues,
+            old: Vec::new(),
+        }
+    }
+}
+
+impl Command for SetSubtitleCues {
+    fn label(&self) -> &str {
+        "字幕"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.old = std::mem::replace(&mut doc.subtitles.cues, self.cues.clone());
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        doc.subtitles.cues = std::mem::take(&mut self.old);
+    }
+}
+
 /// 素材元数据(显示名/标签整体覆写;undo 回滚)。
 pub struct SetAssetMeta {
     pub asset_id: String,

@@ -37,11 +37,12 @@ pub(crate) fn export_video(
             loudness_normalize: req.loudness_normalize,
             ..Default::default()
         };
+        // 进度分母 = 时间轴总长(所有片段中最晚的出点;此前误用最长单片段时长)
         let total = inner
             .doc
             .clips
             .iter()
-            .map(|c| inner.doc.timebase.secs(c.duration))
+            .map(|c| inner.doc.timebase.secs(c.start + c.duration))
             .fold(0.0_f64, f64::max);
         (
             veditor_export::compile_ffmpeg_cmd(&inner.doc, &params),

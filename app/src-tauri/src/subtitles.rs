@@ -49,7 +49,7 @@ pub(crate) fn apply_subtitle_segments(
     let mut inner = state.inner.lock().unwrap();
     let tb = inner.doc.timebase;
     let tps = tb.num / tb.den.max(1);
-    inner.doc.subtitles.cues = segments
+    let cues: Vec<veditor_core::SubtitleCue> = segments
         .into_iter()
         .map(|s| veditor_core::SubtitleCue {
             start: (s.start_secs as i64 * tps) + offset_ticks,
@@ -57,6 +57,7 @@ pub(crate) fn apply_subtitle_segments(
             text: s.text,
         })
         .collect();
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(cues)));
     true
 }
 
@@ -73,25 +74,33 @@ pub(crate) fn set_subtitle_cue(
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if let Some(c) = inner.doc.subtitles.cues.get_mut(index) {
-        *c = cue;
+    if index >= inner.doc.subtitles.cues.len() {
+        return false;
     }
+    let mut next = inner.doc.subtitles.cues.clone();
+    next[index] = cue;
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(next)));
     true
 }
 
 #[tauri::command]
 pub(crate) fn add_subtitle_cue(cue: veditor_core::SubtitleCue, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    inner.doc.subtitles.cues.push(cue);
+    let mut next = inner.doc.subtitles.cues.clone();
+    next.push(cue);
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(next)));
     true
 }
 
 #[tauri::command]
 pub(crate) fn remove_subtitle_cue(index: usize, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    if index < inner.doc.subtitles.cues.len() {
-        inner.doc.subtitles.cues.remove(index);
+    if index >= inner.doc.subtitles.cues.len() {
+        return false;
     }
+    let mut next = inner.doc.subtitles.cues.clone();
+    next.remove(index);
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(next)));
     true
 }
 
@@ -103,7 +112,7 @@ pub(crate) fn import_srt(path: String, state: State<'_, AppState>) -> Result<usi
     let tps = tb.num / tb.den.max(1);
     let cues = veditor_core::parse_srt(&content, tps);
     let n = cues.len();
-    inner.doc.subtitles.cues = cues;
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(cues)));
     Ok(n)
 }
 
@@ -124,7 +133,7 @@ pub(crate) fn import_ass(path: String, state: State<'_, AppState>) -> Result<usi
     let tps = tb.num / tb.den.max(1);
     let cues = veditor_core::parse_ass(&content, tps);
     let n = cues.len();
-    inner.doc.subtitles.cues = cues;
+    inner.exec(Box::new(veditor_core::SetSubtitleCues::new(cues)));
     Ok(n)
 }
 
