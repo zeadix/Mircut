@@ -132,7 +132,13 @@ pub(crate) fn detect_hw_encoders() -> Vec<String> {
     };
     let text = String::from_utf8_lossy(&out.stdout);
     let mut found = Vec::new();
-    for name in ["h264_nvenc", "h264_qsv", "h264_vaapi", "hevc_nvenc", "hevc_qsv"] {
+    for name in [
+        "h264_nvenc",
+        "h264_qsv",
+        "h264_vaapi",
+        "hevc_nvenc",
+        "hevc_qsv",
+    ] {
         if text.contains(name) {
             found.push(name.to_string());
         }
