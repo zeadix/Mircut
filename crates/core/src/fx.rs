@@ -343,6 +343,9 @@ pub struct AlphaMatting {
     pub dir: String,
     /// 时序平滑窗口帧数(1 = 关;3/5 常用,压边缘闪烁)。
     pub smooth_frames: u32,
+    /// 边缘精修强度(0 = 关;0.5-1.5,unsharp 锐化 alpha 边界带)。
+    #[serde(default)]
+    pub refine: f64,
 }
 
 #[cfg(test)]

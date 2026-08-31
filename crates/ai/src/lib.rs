@@ -260,6 +260,26 @@ impl Transcriber for SilenceSegments {
     }
 }
 
+/// piper 音色探测(~/.veditor/voices/*.onnx,同名 .json 为配置)。
+pub fn list_piper_voices() -> Vec<String> {
+    let dir = std::env::var("HOME")
+        .map(|h| PathBuf::from(h).join(".veditor/voices"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("veditor-voices"));
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("onnx") {
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    out.push(stem.to_string());
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// RVM 人像抠像引擎(视频时序 matting)。
 /// 外置 CLI 探测:robust-video-matting CLI / rvm-cli / python -m;
 /// 模型权重(rvm_mobilenetv3.onnx ~26MB)经模型管理器按需下载。
@@ -325,6 +345,8 @@ pub struct Tts {
     /// "espeak-ng" | "piper"
     pub engine: String,
     pub out_dir: PathBuf,
+    /// piper 音色模型路径(~/.veditor/voices/*.onnx;空 = piper 默认)。
+    pub voice: Option<PathBuf>,
 }
 
 impl Tts {
@@ -346,6 +368,9 @@ impl Tts {
                     .arg(text);
             }
             "piper" => {
+                if let Some(v) = &self.voice {
+                    cmd.args(["-m"]).arg(v);
+                }
                 cmd.args(["--output_file"]).arg(&wav);
                 cmd.stdin(std::process::Stdio::piped());
                 let _ = &raw;

@@ -17,6 +17,13 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
   const [draft, setDraft] = useState<TextOverlay | null>(null);
   const [ttsText, setTtsText] = useState("");
   const [articleText, setArticleText] = useState("");
+  /// TTS 音色(piper 多音色;~/.veditor/voices/)。
+  const [voices, setVoices] = useState<{ id: string; name: string }[]>([]);
+  const [voice, setVoice] = useState("");
+
+  useEffect(() => {
+    import("./api").then((m) => m.listTtsVoices().then(setVoices).catch(() => {}));
+  }, []);
 
   async function load() {
     setOverlays(await invoke("list_text_overlays"));
@@ -115,6 +122,7 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
       const wav = await invoke<string>("tts_synthesize", {
         text: ttsText,
         id: `tts_${Date.now()}`,
+        voice: voice || null,
       });
       await invoke("import_media", { path: wav });
       await onRefresh();
@@ -222,6 +230,21 @@ function TextPanelInner({ playheadTicks, onRefresh }: Props) {
           value={ttsText}
           onChange={(e) => setTtsText(e.target.value)}
         />
+        <label style={{ display: "block", marginBottom: 6 }}>
+          音色(piper):
+          <select
+            className="ti"
+            style={{ width: "100%" }}
+            value={voice}
+            onChange={(e) => setVoice(e.target.value)}
+            title="音色模型放 ~/.veditor/voices/*.onnx(含同名 .json);空 = piper 默认"
+          >
+            <option value="">默认</option>
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>{v.name}</option>
+            ))}
+          </select>
+        </label>
         <button className="btn" style={{ marginTop: 6 }} onClick={onTts}>生成配音</button>
       </fieldset>
     </div>

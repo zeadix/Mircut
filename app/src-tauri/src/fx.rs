@@ -182,6 +182,7 @@ pub(crate) fn set_chroma_key(
 pub(crate) fn auto_matting(
     clip_id: String,
     smooth_frames: u32,
+    refine: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     let (path, source_in, span) = {
@@ -213,6 +214,7 @@ pub(crate) fn auto_matting(
         fx.alpha_matting = Some(veditor_core::AlphaMatting {
             dir: produced.to_string_lossy().to_string(),
             smooth_frames: smooth_frames.clamp(1, 9),
+            refine: refine.unwrap_or(0.0).clamp(0.0, 2.0),
         });
         inner.exec(Box::new(SetFx::new(clip_id, fx)));
     }

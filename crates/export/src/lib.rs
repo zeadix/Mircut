@@ -625,10 +625,17 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     } else {
                         String::new()
                     };
+                    // 边缘精修:unsharp 锐化 alpha(边界带对比度增强,
+                    // 发丝级细节的可控近似;0 = 关)
+                    let refine = if am.refine > 0.01 {
+                        format!(",unsharp=5:5:{:.2}:5:5:0", am.refine.clamp(0.1, 2.0))
+                    } else {
+                        String::new()
+                    };
                     // 片段链的输出 label 改为中间标签,再 blend 生成 [v{i}]
                     chain = chain.replace(&format!("[v{i}]"), "[vaI]");
                     chain.push_str(&format!(
-                        ";[{alpha_idx}:v]format=gray,loop=loop=-1:size=1{smooth},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*alpha':shortest=1,format=yuv420p[v{i}]"
+                        ";[{alpha_idx}:v]format=gray,loop=loop=-1:size=1{smooth}{refine},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*alpha':shortest=1,format=yuv420p[v{i}]"
                     ));
                 }
                 chain_parts.push(chain);
@@ -1511,6 +1518,7 @@ mod tests {
         d2.clips[0].fx.alpha_matting = Some(veditor_core::AlphaMatting {
             dir: "/tmp/veditor-matting-test".into(),
             smooth_frames: 3,
+            refine: 0.8,
         });
         let args2 = compile_ffmpeg_cmd(&d2, &ExportParams::default());
         let fc2 = args2
@@ -1520,7 +1528,7 @@ mod tests {
             .map(|(_, b)| b.clone())
             .unwrap();
         assert!(
-            fc2.contains("format=gray,loop=loop=-1:size=1,tmix=frames=3"),
+            fc2.contains("format=gray,loop=loop=-1:size=1,tmix=frames=3,unsharp=5:5:0.80:5:5:0"),
             "fc = {fc2}"
         );
         assert!(fc2.contains("blend=all_expr='A*alpha'"), "fc = {fc2}");

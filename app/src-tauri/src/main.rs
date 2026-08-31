@@ -283,6 +283,7 @@ fn main() {
             stem_engine_status,
             auto_matting,
             clear_matting,
+            list_tts_voices,
             save_project,
             open_project,
             new_project,

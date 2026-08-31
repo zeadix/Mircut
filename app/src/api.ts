@@ -71,6 +71,11 @@ export async function setAssetMeta(
   return invoke("set_asset_meta", { assetId, name, tags });
 }
 
+/// TTS 音色清单(piper)。
+export async function listTtsVoices(): Promise<{ id: string; name: string }[]> {
+  return invoke("list_tts_voices");
+}
+
 export async function addMarker(t: number, label: string): Promise<boolean> {
   return invoke("add_marker", { t, label });
 }
@@ -402,8 +407,12 @@ export async function stemEngineStatus(): Promise<{ available: boolean; engine: 
   return invoke("stem_engine_status");
 }
 /// AI 人像抠像(RVM):提取 alpha 序列并写入片段 fx(可撤销)。
-export async function autoMatting(clipId: string, smoothFrames: number): Promise<string> {
-  return invoke("auto_matting", { clipId, smoothFrames });
+export async function autoMatting(
+  clipId: string,
+  smoothFrames: number,
+  refine?: number
+): Promise<string> {
+  return invoke("auto_matting", { clipId, smoothFrames, refine: refine ?? null });
 }
 export async function clearMatting(clipId: string): Promise<boolean> {
   return invoke("clear_matting", { clipId });

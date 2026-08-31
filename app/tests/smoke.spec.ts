@@ -19,10 +19,11 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
   await expect(assetCard).toBeVisible();
   await assetCard.dblclick();
 
-  // 3. 时间轴画布(轨道区)可点击选中片段
+  // 3. 时间轴画布:点击片段实际区域选中(mock 片段在 canvas 左端 45px 内)
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   await expect(canvas).toBeVisible();
-  await canvas.click({ position: { x: 200, y: 30 } });
+  const cbox = await canvas.boundingBox();
+  await page.mouse.click(cbox.x + 20, cbox.y + 20);
 
   // 4. 快捷键 S 分割(选中后)
   await page.keyboard.press("s");
@@ -70,4 +71,37 @@ test("冒烟:标记打点与列表", async ({ page }) => {
   await markerBtn.click();
   await expect(page.locator("text=标记(")).toBeVisible();
   await expect(page.locator("button", { hasText: "跳转" }).first()).toBeVisible();
+});
+
+test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+
+  // 1. 字幕面板:AI 模型区(mock 清单含 Whisper base)
+  const rightAside = page.locator("aside").last();
+  await rightAside.getByRole("button", { name: "字幕", exact: true }).click();
+  await expect(rightAside.getByText("AI 模型")).toBeVisible();
+  await expect(rightAside.getByText("Whisper base")).toBeVisible();
+  await expect(rightAside.getByRole("button", { name: "下载" }).first()).toBeVisible();
+
+  // 2. 属性面板:选中片段后 AI 抠像按钮 + 音频滤镜区 AI 人声分离按钮
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const cbox = await canvas.boundingBox();
+  await page.mouse.click(cbox.x + 20, cbox.y + 20);
+  await rightAside.getByRole("button", { name: "属性", exact: true }).click();
+  await expect(
+    rightAside.getByRole("button", { name: /AI 人像抠像/ })
+  ).toBeVisible();
+  await expect(
+    rightAside.getByRole("button", { name: /AI 人声分离/ })
+  ).toBeVisible();
+  // 抠像滑条存在(时序平滑 + 边缘精修)
+  await expect(rightAside.getByText(/时序平滑 \d+ 帧/)).toBeVisible();
+  await expect(rightAside.getByText(/边缘精修 \d+\.\d/)).toBeVisible();
+
+  // 3. 文字面板:音色下拉(piper 多音色)
+  await rightAside.getByRole("button", { name: "文字", exact: true }).click();
+  await expect(rightAside.getByText(/音色\(piper\)/)).toBeVisible();
+  const voiceSel = rightAside.locator("select").last();
+  await expect(voiceSel.locator("option")).toHaveCount(2); // 默认 + mock 音色
 });

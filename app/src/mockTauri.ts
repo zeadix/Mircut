@@ -221,6 +221,10 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "stem_engine_status":
       return { available: false, engine: null };
+    case "auto_matting":
+      return "mock:RVM 抠像完成";
+    case "clear_matting":
+      return true;
     case "separate_stems":
       return "mock:未安装分离引擎";
     case "detect_hw_encoders":
@@ -247,6 +251,8 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "tts_synthesize":
       return "/tmp/mock-tts.wav";
+    case "list_tts_voices":
+      return [{ id: "zh_CN-huayan", name: "zh_CN-huayan" }];
     case "detect_beats":
       return [0.5, 1.0, 1.5];
     case "remove_silence":

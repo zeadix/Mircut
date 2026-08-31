@@ -42,6 +42,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   /// AI 抠像忙态 + 时序平滑窗口。
   const [mattingBusy, setMattingBusy] = useState(false);
   const [mattingSmooth, setMattingSmooth] = useState(3);
+  const [mattingRefine, setMattingRefine] = useState(0.8);
   const [splitStatus, setSplitStatus] = useState("");
   const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
   /// 批量音量输入。
@@ -508,6 +509,27 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             <option value="Instrumental">伴奏提取</option>
           </select>
         </label>
+        <button
+          className="btn"
+          style={{ marginTop: 4, width: "100%" }}
+          disabled={stemBusy}
+          title="demucs/UVR 真实分离:生成人声/伴奏两条音频块(可撤销);未安装引擎时提示降级用法"
+          onClick={async () => {
+            setStemBusy(true);
+            setSplitStatus("分离中...(demucs 首次运行需下载模型)");
+            try {
+              const msg = await api.separateStems(clip.id);
+              setSplitStatus(msg);
+              await onRefresh();
+            } catch (e) {
+              setSplitStatus(`分离失败: ${String(e).slice(0, 160)}`);
+            } finally {
+              setStemBusy(false);
+            }
+          }}
+        >
+          {stemBusy ? "分离中…" : "AI 人声分离(真实引擎)"}
+        </button>
       </fieldset>
 
       <fieldset style={{ borderColor: "var(--border)" }}>
@@ -665,7 +687,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               setMattingBusy(true);
               setSplitStatus("抠像中...(RVM 逐帧提取 alpha)");
               try {
-                const msg = await api.autoMatting(clip.id, mattingSmooth);
+                const msg = await api.autoMatting(clip.id, mattingSmooth, mattingRefine);
                 setSplitStatus(msg);
                 await onRefresh();
               } catch (e) {
@@ -708,6 +730,18 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             step={2}
             value={mattingSmooth}
             onChange={(e) => setMattingSmooth(parseInt(e.target.value))}
+            style={{ width: "100%" }}
+          />
+        </label>
+        <label style={{ display: "block", fontSize: 10, color: "var(--text-dim)" }}>
+          边缘精修 {mattingRefine.toFixed(1)}(发丝细节锐化,0=关)
+          <input
+            type="range"
+            min={0}
+            max={2}
+            step={0.1}
+            value={mattingRefine}
+            onChange={(e) => setMattingRefine(parseFloat(e.target.value))}
             style={{ width: "100%" }}
           />
         </label>

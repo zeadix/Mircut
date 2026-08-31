@@ -101,6 +101,8 @@ export interface ClipFx {
 export interface AlphaMatting {
   dir: string;
   smooth_frames: number;
+  /// 边缘精修强度(0=关)。
+  refine?: number;
 }
 
 export interface Clip {

@@ -4,16 +4,45 @@ use crate::util::env_has;
 use tauri::State;
 use veditor_core::{Asset, AssetRef, Clip, Command, Compound, SetFx};
 
+/// TTS 音色清单(piper:~/.veditor/voices/*.onnx;espeak 无音色概念)。
+#[tauri::command]
+pub(crate) fn list_tts_voices() -> Vec<serde_json::Value> {
+    if !env_has("piper") {
+        return vec![];
+    }
+    veditor_ai::list_piper_voices()
+        .into_iter()
+        .map(|v| serde_json::json!({ "id": v, "name": v }))
+        .collect()
+}
+
 #[tauri::command(async)]
-pub(crate) fn tts_synthesize(text: String, id: String) -> Result<String, String> {
+pub(crate) fn tts_synthesize(
+    text: String,
+    id: String,
+    voice: Option<String>,
+) -> Result<String, String> {
     let engine = if env_has("piper") {
         "piper"
     } else {
         "espeak-ng"
     };
+    let voice_path = voice.and_then(|v| {
+        let p = std::env::var("HOME").ok().map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".veditor/voices")
+                .join(format!("{v}.onnx"))
+        })?;
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    });
     let tts = veditor_ai::Tts {
         engine: engine.into(),
         out_dir: std::env::temp_dir().join("veditor-tts"),
+        voice: voice_path,
     };
     let wav = tts.synthesize(&text, &id).map_err(|e| e.to_string())?;
     Ok(wav.to_string_lossy().to_string())
