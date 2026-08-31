@@ -256,6 +256,35 @@ fn build_video_chain(
     label: &str,
     cmd_tag: &str,
 ) -> String {
+    build_video_chain_ex(
+        doc,
+        params,
+        c,
+        input_idx,
+        label,
+        cmd_tag,
+        &ChainMode::default(),
+    )
+}
+
+/// 链构建模式:时间轴定位(overlay 合成路径)与转场淡入。
+#[derive(Default)]
+struct ChainMode {
+    /// 输出流起点平移到的 时间轴秒。
+    tl_start: f64,
+    /// 转场淡入秒数(fade=t=in alpha=1)。
+    fade_in: Option<f64>,
+}
+
+fn build_video_chain_ex(
+    doc: &Document,
+    params: &ExportParams,
+    c: &veditor_core::Clip,
+    input_idx: usize,
+    label: &str,
+    cmd_tag: &str,
+    mode: &ChainMode,
+) -> String {
     let src = format!("[{}:v]", input_idx);
     let label_owned = label.to_string();
     let label = &label_owned;
@@ -273,7 +302,15 @@ fn build_video_chain(
     }
     // 变速:时间轴时长 = 源时长 / speed
     if c.speed > 1e-3 && (c.speed - 1.0).abs() > 1e-3 {
-        chain.push_str(&format!(",setpts=PTS/{}", c.speed));
+        chain.push_str(&format!(",setpts=PTS/{:.4}", c.speed));
+    }
+    // 时间轴定位(overlay 合成路径):流起点平移到片段时间轴位置
+    if mode.tl_start.abs() > 1e-9 {
+        chain.push_str(&format!(",setpts=PTS+{:.3}/TB", mode.tl_start));
+    }
+    // 转场淡入:alpha 通道 0->1(与另一条淡出流交叠混合)
+    if let Some(d) = mode.fade_in.filter(|d| *d > 1e-3) {
+        chain.push_str(&format!(",format=yuva420p,fade=t=in:st=0:d={d:.3}:alpha=1"));
     }
     // 宽高比保持缩放(黑边填充)
     let scale = format!(
@@ -587,48 +624,138 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 combined.push_str(&format!(";{inputs}concat=n={}:v=1:a=0[vcat]", clips.len()));
                 filters.push(combined);
             } else {
-                // xfade 链:逐对叠加转场(无转场的相邻对用极短 fade 衔接)
-                let mut prev_label = "[v0]".to_string();
-                let mut acc = doc.timebase.secs(clips[0].duration);
-                let mut last_label = String::new();
-                for (i, c) in clips.iter().enumerate().skip(1) {
-                    let trans = doc.transitions.iter().find(|t| t.right_clip_id == c.id);
-                    let (kind_str, dur) = match trans {
-                        Some(t) => (
-                            match t.kind {
-                                veditor_core::TransitionKind::Fade => "fade",
-                                veditor_core::TransitionKind::Dissolve => "dissolve",
-                                veditor_core::TransitionKind::SlideLeft => "slideleft",
-                                veditor_core::TransitionKind::SlideRight => "slideright",
-                                // 修正:此前名不副实地映射成 smoothleft
-                                veditor_core::TransitionKind::Zoom => "zoomin",
-                                veditor_core::TransitionKind::WipeLeft => "wipeleft",
-                                veditor_core::TransitionKind::WipeRight => "wiperight",
-                                veditor_core::TransitionKind::WipeUp => "wipeup",
-                                veditor_core::TransitionKind::WipeDown => "wipedown",
-                                veditor_core::TransitionKind::CircleOpen => "circleopen",
-                                veditor_core::TransitionKind::CircleClose => "circleclose",
-                                veditor_core::TransitionKind::FadeBlack => "fadeblack",
-                                veditor_core::TransitionKind::FadeWhite => "fadewhite",
-                                veditor_core::TransitionKind::Radial => "radial",
-                                veditor_core::TransitionKind::Pixelize => "pixelize",
+                // 转场合成(总长不变,与预览/时间轴同构):
+                // - 片段仍按时间轴位置各自生成 [v{i}](链内 setpts 定位)
+                // - 转场对:右片段源窗口前借 d,提前 d 秒淡入入场;
+                //   左片段尾部同窗口 fade out;两流 overlay=alpha 交叠
+                // - 成片总长 = 时间轴总长(转场消耗重叠,不消耗总长)
+                // 注意:此路径不使用 chain_parts(上面已按无转场模式构建),
+                // 转场路径片段链单独生成(带时间轴定位与淡入淡出)。
+                let black = "[vblack]";
+                // 黑底画布:与主轨同长(后续 overlay 全部 onto 它)
+                let tl_total: f64 = doc
+                    .timebase
+                    .secs(clips.last().map(|c| c.start + c.duration).unwrap_or(0));
+                filters.push(format!(
+                    "color=c=black:s={}x{}:d={tl_total:.3}:r={}{}",
+                    params.width, params.height, params.fps, black
+                ));
+                let mut vcur = black.to_string();
+                let mut ov_n = 0usize;
+                for (i, c) in clips.iter().enumerate() {
+                    let input_idx = input_of(&c.id);
+                    let tl_start = doc.timebase.secs(c.start);
+                    let end = doc.timebase.secs(c.start + c.duration);
+                    // 右侧转场:本片段提前入场(前借源窗口 + 淡入)
+                    let trans_in = doc.transitions.iter().find(|t| t.right_clip_id == c.id);
+                    // 左侧转场:本片段尾部淡出
+                    let trans_out = doc.transitions.iter().find(|t| t.left_clip_id == c.id);
+                    let mut sc = (**c).clone();
+                    let mut pre = 0.0f64; // 提前入场秒数
+                    if let Some(t) = trans_in {
+                        let asset_dur = doc
+                            .asset(&c.asset.asset_id)
+                            .map(|a| a.duration_secs)
+                            .unwrap_or(f64::MAX);
+                        let want = t.duration_secs.min(0.9 * doc.timebase.secs(c.duration));
+                        // 前借量受源起点限制
+                        pre = want.min(c.asset.source_in).min(
+                            (asset_dur - c.asset.source_in - c.source_span_secs(&doc.timebase))
+                                .max(0.0),
+                        );
+                        sc.asset.source_in = (c.asset.source_in - pre).max(0.0);
+                        sc.asset.source_out =
+                            sc.asset.source_in + c.source_span_secs(&doc.timebase);
+                    }
+                    let vlabel = format!("[vt{i}]");
+                    // 淡入时长 = 前借量(交叠窗口);无前借则无淡入
+                    let fade_in = if pre > 1e-3 { Some(pre) } else { None };
+                    let segs = speed_segments(c, &doc.timebase);
+                    if segs.len() > 1 {
+                        // 变速曲线 × 转场共存:分段恒速 concat 出整段流,
+                        // 再统一定位到时间轴(位置/总长与时间轴一致)
+                        let mut seg_labels: Vec<String> = Vec::new();
+                        for (j, seg) in segs.iter().enumerate() {
+                            let mut sp = (**c).clone();
+                            sp.asset.source_in = c.asset.source_in + seg.src_start;
+                            sp.asset.source_out = c.asset.source_in + seg.src_end;
+                            sp.duration = seg.ticks;
+                            sp.speed = seg.speed;
+                            sp.fx.speed = Default::default();
+                            let slabel = format!("[vt{i}s{j}]");
+                            filters.push(build_video_chain(
+                                doc,
+                                params,
+                                &sp,
+                                input_idx,
+                                &slabel,
+                                &format!("cmd_tr{i}s{j}"),
+                            ));
+                            seg_labels.push(slabel);
+                        }
+                        let cat = format!("[vt{i}c]");
+                        filters.push(format!(
+                            "{}concat=n={}:v=1:a=0{cat}",
+                            seg_labels.concat(),
+                            seg_labels.len()
+                        ));
+                        // 定位(+可选淡入):前借时同步提前
+                        if let Some(d) = fade_in {
+                            filters.push(format!(
+                                "{cat}setpts=PTS+{:.3}/TB,format=yuva420p,fade=t=in:st=0:d={d:.3}:alpha=1{vlabel}",
+                                tl_start - pre
+                            ));
+                        } else {
+                            filters
+                                .push(format!("{cat}setpts=PTS+{:.3}/TB{vlabel}", tl_start - pre));
+                        }
+                    } else {
+                        filters.push(build_video_chain_ex(
+                            doc,
+                            params,
+                            &sc,
+                            input_idx,
+                            &vlabel,
+                            &format!("cmd_tr{i}"),
+                            &ChainMode {
+                                tl_start: tl_start - pre,
+                                fade_in,
                             },
-                            t.duration_secs,
-                        ),
-                        None => ("fade", 0.001),
-                    };
-                    let out = format!("[vx{i}]");
-                    let offset = (acc - dur).max(0.0);
+                        ));
+                    }
+                    // 尾部淡出:有左侧转场时,本片段出点前 d 秒 fade out(alpha)
+                    if let Some(t) = trans_out {
+                        let d = t
+                            .duration_secs
+                            .min(0.9 * doc.timebase.secs(c.duration))
+                            .min(doc.timebase.secs(c.duration));
+                        if d > 1e-3 {
+                            let flabel = format!("[vtf{i}]");
+                            filters.push(format!(
+                                "{vlabel}format=yuva420p,fade=t=out:st={:.3}:d={d:.3}:alpha=1{flabel}",
+                                doc.timebase.secs(c.duration) - d
+                            ));
+                            let out_label = format!("[vtr{i}]");
+                            filters.push(format!(
+                                "{vcur}{flabel}overlay=0:0:format=auto:enable='between(t,0,{end:.3})'{out_label}"
+                            ));
+                            vcur = out_label;
+                            ov_n += 1;
+                            continue;
+                        }
+                    }
+                    // 普通片段(或前借不足的转场右段):直接 overlay
+                    let out_label = format!("[vtr{i}]");
                     filters.push(format!(
-                        "{prev_label}[v{i}]xfade=transition={kind_str}:duration={dur:.3}:offset={offset:.3}{out}"
+                        "{vcur}{vlabel}overlay=0:0:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
                     ));
-                    last_label = out.clone();
-                    prev_label = out;
-                    acc = offset + doc.timebase.secs(c.duration);
+                    vcur = out_label;
+                    ov_n += 1;
                 }
-                // 终点标签统一替换为 [vcat]
+                let _ = ov_n;
+                // 收尾统一改标签为 [vcat]
                 if let Some(e) = filters.last_mut() {
-                    *e = e.replace(&last_label, "[vcat]");
+                    *e = e.replace(&vcur, "[vcat]");
                 }
             }
         }
@@ -871,11 +998,21 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 c.volume
             };
             let segs = speed_segments(c, &doc.timebase);
-            let has_trans = doc
-                .transitions
-                .iter()
-                .any(|t| t.left_clip_id == c.id || t.right_clip_id == c.id);
-            if segs.len() > 1 && !has_trans {
+            // 转场音频对齐参数:右片段前借 pre 秒(adelay 提前 + afade in),
+            // 左片段尾部 afade out d 秒(与视频交叠窗口一致)
+            let trans_in = doc.transitions.iter().find(|t| t.right_clip_id == c.id);
+            let trans_out = doc.transitions.iter().find(|t| t.left_clip_id == c.id);
+            let tl_start = doc.timebase.secs(c.start);
+            let mut a_pre = 0.0f64;
+            let mut a_out_fade = 0.0f64;
+            if let Some(t) = trans_in {
+                let want = t.duration_secs.min(0.9 * doc.timebase.secs(c.duration));
+                a_pre = want.min(c.asset.source_in);
+            }
+            if let Some(t) = trans_out {
+                a_out_fade = t.duration_secs.min(0.9 * doc.timebase.secs(c.duration));
+            }
+            if segs.len() > 1 {
                 // 变速曲线:分段恒速 atrim+atempo,段间 concat;
                 // 音频滤镜与音量(含关键帧表达式)作用于拼接后的整段
                 let mut seg_labels: Vec<String> = Vec::new();
@@ -905,6 +1042,16 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         chain.push_str(&f);
                     }
                 }
+                // 转场音频:右段淡入 / 左段尾部淡出 + adelay 定位(时间轴不变语义)
+                if a_pre > 1e-3 {
+                    chain.push_str(&format!(",afade=t=in:st=0:d={a_pre:.3}"));
+                }
+                if a_out_fade > 1e-3 {
+                    chain.push_str(&format!(
+                        ",afade=t=out:st={:.3}:d={a_out_fade:.3}",
+                        doc.timebase.secs(c.duration) - a_out_fade
+                    ));
+                }
                 let vk = &c.fx.volume.keyframes;
                 if !c.muted && !track_muted && !vk.is_empty() {
                     let e = anim_expr(&c.fx.volume, &doc.timebase, 0.0)
@@ -919,13 +1066,28 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             }
             let mut chain = format!(
                 "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS",
-                c.asset.source_in,
+                c.asset.source_in - a_pre,
                 c.source_span_secs(&doc.timebase)
             );
             // 音频变速(atempo 支持 0.5-2.0,范围外链式;M2 直接夹取)
             if (c.speed - 1.0).abs() > 1e-3 {
                 let tempo = c.speed.clamp(0.5, 2.0);
                 chain.push_str(&format!(",atempo={tempo:.3}"));
+            }
+            // 转场音频:右段淡入 / 左段尾部淡出 + adelay 定位到 (start-pre)
+            if a_pre > 1e-3 {
+                chain.push_str(&format!(",afade=t=in:st=0:d={a_pre:.3}"));
+            }
+            if a_out_fade > 1e-3 {
+                chain.push_str(&format!(
+                    ",afade=t=out:st={:.3}:d={a_out_fade:.3}",
+                    doc.timebase.secs(c.duration) - a_out_fade
+                ));
+            }
+            let need_delay = tl_start - a_pre;
+            if need_delay > 1e-6 {
+                let ms = (need_delay * 1000.0).round() as i64;
+                chain.push_str(&format!(",adelay={ms}:all=1"));
             }
             // 音频滤镜(淡入淡出/降噪/变声/EQ)
             if !c.fx.audio_fx.is_noop() {
@@ -1329,7 +1491,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_transition_uses_xfade() {
+    fn compile_transition_uses_overlay_composition() {
         let mut d = doc();
         // 两个相邻视频片段
         d.clips.push(Clip {
@@ -1362,8 +1524,16 @@ mod tests {
             .find(|(a, _)| a == &"-filter_complex")
             .map(|(_, b)| b.clone())
             .unwrap();
+        // 新结构:overlay 合成(总长不变),无 xfade
+        assert!(!fc.contains("xfade="), "fc = {fc}");
+        assert!(fc.contains("[vblack]"), "fc = {fc}");
+        // 右片段前借源窗口 + 提前 0.5s 淡入
+        assert!(fc.contains("trim=start=0.500:duration=1.000"), "fc = {fc}");
+        assert!(fc.contains("setpts=PTS+0.500/TB"), "fc = {fc}");
+        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+        // 左片段尾部淡出(出点前 0.5s)
         assert!(
-            fc.contains("xfade=transition=dissolve:duration=0.500"),
+            fc.contains("fade=t=out:st=0.500:d=0.500:alpha=1"),
             "fc = {fc}"
         );
         assert!(fc.contains("[vcat]"), "fc = {fc}");
@@ -1667,10 +1837,9 @@ mod tests {
             .find(|(a, _)| a == &"-filter_complex")
             .map(|(_, b)| b.clone())
             .unwrap();
-        assert!(
-            fc.contains("xfade=transition=zoomin:duration=0.500"),
-            "fc = {fc}"
-        );
+        // 新结构不再用 xfade;转场类型统一淡入淡出近似(方向效果留批次 4)
+        assert!(!fc.contains("xfade="), "fc = {fc}");
+        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
     }
 
     #[test]
@@ -2038,6 +2207,73 @@ mod tests {
             .parse()
             .unwrap_or(0.0);
         assert!((dur - 1.0).abs() < 0.35, "动画 PiP 时长应 ~1s, got {dur}");
+    }
+
+    /// 转场 e2e(总长不变):两相邻片段 1s+1s,0.5s 转场 -- 成片应仍为 2s
+    /// (旧 xfade 语义会缩短到 1.5s 且音画错位)。
+    #[test]
+    fn e2e_transition_keeps_total_length() {
+        let fixture = "/tmp/veditor-media-tests/fixture.mp4";
+        if !std::path::Path::new(fixture).exists() {
+            eprintln!("fixture 不存在,跳过");
+            return;
+        }
+        let mut d = doc();
+        d.assets[0].path = fixture.into();
+        d.assets[0].duration_secs = 2.0;
+        d.assets[0].has_audio = true;
+        // c1: 0-1s;c2(t2 音频轨改视频轨用第三个 clip) -- 简化:c2 在 t2,
+        // 追加 c3 在 t1 轨 1-2s,与 c1 相邻,转场 c1->c3
+        d.clips.push(Clip {
+            id: "c3".into(),
+            start: 30,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 0.0,
+                source_out: 2.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            lane: None,
+            track_id: "t1".into(),
+            fx: Default::default(),
+        });
+        d.transitions.push(veditor_core::Transition {
+            id: "tr1".into(),
+            left_clip_id: "c1".into(),
+            right_clip_id: "c3".into(),
+            kind: veditor_core::TransitionKind::Dissolve,
+            duration_secs: 0.5,
+        });
+        let out = std::env::temp_dir().join("veditor-media-tests/e2e_trans.mp4");
+        let _ = std::fs::remove_file(&out);
+        let params = ExportParams {
+            out_path: out.clone(),
+            width: 320,
+            height: 240,
+            ..Default::default()
+        };
+        run_export(&compile_ffmpeg_cmd(&d, &params)).unwrap();
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap();
+        let dur: f64 = String::from_utf8_lossy(&probe.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0);
+        // 总长不变:2s(允许容器尾差 0.2s)
+        assert!((dur - 2.0).abs() < 0.25, "转场成片总长应保持 2s, got {dur}");
     }
 
     /// 变速曲线 e2e:主轨片段速度关键帧 0.5(0s)-> 2.0(2s),源 2s。
