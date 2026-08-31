@@ -1229,6 +1229,22 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         args.push("__USE_VSUB__".into());
     }
 
+    // vaapi 硬编:最终合成流 format=nv12,hwupload 上传到 VAAPI 表面,
+    // 编码器 h264_vaapi 消费(软解+软滤镜合成,仅编码端加速);
+    // 必须在 filter_complex 拼接前注入
+    let use_vsub_pre = args.iter().any(|a| a == "__USE_VSUB__");
+    let vaapi_pre = params.vcodec.ends_with("vaapi");
+    if vaapi_pre {
+        let src_label = if use_vsub_pre {
+            "[vsub]".to_string()
+        } else {
+            vout.clone()
+        };
+        filters.push(format!("{src_label}format=nv12,hwupload[hwout]"));
+        args.push("-vaapi_device".into());
+        args.push("/dev/dri/renderD128".into());
+    }
+
     if !filters.is_empty() {
         args.push("-filter_complex".into());
         args.push(filters.join(";"));
@@ -1237,14 +1253,17 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let use_vsub = args.iter().any(|a| a == "__USE_VSUB__");
     args.retain(|a| a != "__USE_VSUB__");
 
+    let video_map_label = if vaapi_pre {
+        "[hwout]".to_string()
+    } else if use_vsub {
+        "[vsub]".to_string()
+    } else {
+        vout.clone()
+    };
     if let Some(vt) = video_track.as_ref() {
         if !doc.clips_on_lane(vt, veditor_core::Lane::Video).is_empty() {
             args.push("-map".into());
-            args.push(if use_vsub {
-                "[vsub]".into()
-            } else {
-                vout.clone()
-            });
+            args.push(video_map_label);
         }
     }
     if !audio_labels.is_empty() {
@@ -1259,7 +1278,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         // qsv:无 -qp 私有选项(会被 ffmpeg 静默忽略),用 global_quality(ICQ)
         args.extend(["-global_quality".into(), params.crf.to_string()]);
     } else {
-        // nvenc:qp 模式(有 -qp 私有选项;vaapi 需滤镜图 hwupload 配合,暂不暴露)
+        // nvenc/vaapi:qp 模式(两者均有 -qp 私有选项;
+        // vaapi 另需滤镜图 hwupload,已在 map 前注入)
         args.extend(["-qp".into(), params.crf.to_string()]);
     }
     args.extend([
@@ -1453,6 +1473,29 @@ mod tests {
 
     /// 性能回归门禁(宽松阈值,防滤镜图编译 O(n²) 级回退):
     /// 100 片段工程编译应在 2s 内(正常 <100ms;CI 抖动余量 20 倍)。
+    #[test]
+    fn compile_vaapi_adds_hwupload_and_device() {
+        let d = doc();
+        let params = ExportParams {
+            vcodec: "h264_vaapi".into(),
+            ..Default::default()
+        };
+        let args = compile_ffmpeg_cmd(&d, &params);
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(fc.contains("format=nv12,hwupload[hwout]"), "fc = {fc}");
+        assert!(args.contains(&"-vaapi_device".to_string()), "应有设备参数");
+        assert!(args.contains(&"/dev/dri/renderD128".to_string()));
+        // map 指向 hwupload 后的标签
+        let map_idx = args.iter().position(|a| a == "-map").unwrap();
+        assert_eq!(args[map_idx + 1], "[hwout]");
+        assert!(args.contains(&"-qp".to_string()), "vaapi 用 -qp");
+    }
+
     #[test]
     fn perf_compile_100_clips_under_2s() {
         let mut d = doc();
