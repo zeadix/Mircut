@@ -3,8 +3,16 @@ export type Theme = "dark" | "light";
 
 const KEY = "veditor-theme";
 
+/// canvas 主题色缓存失效钩子(由 Timeline 注册;canvas 不接 CSS var,
+/// 切主题后需重读绘制色)。
+let invalidateCanvasColors: () => void = () => {};
+export function registerThemeInvalidate(fn: () => void) {
+  invalidateCanvasColors = fn;
+}
+
 export function applyTheme(t: Theme) {
   document.documentElement.dataset.theme = t;
+  invalidateCanvasColors();
   try {
     localStorage.setItem(KEY, t);
   } catch {

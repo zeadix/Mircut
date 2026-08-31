@@ -228,7 +228,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
       <div
         style={{
           background: "var(--card)",
-          border: "1px solid #3a3d46",
+          border: "1px solid var(--border-strong)",
           borderRadius: 10,
           padding: 18,
           width: 480,
@@ -318,7 +318,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 display: "block",
                 marginTop: 6,
                 background: "var(--panel)",
-                border: "1px solid #2a2c33",
+                border: "1px solid var(--border)",
                 borderRadius: 6,
                 padding: 8,
                 color: "var(--code)",
@@ -369,7 +369,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                   alignItems: "center",
                   gap: 6,
                   background: "var(--panel)",
-                  border: "1px solid #2a2c33",
+                  border: "1px solid var(--border)",
                   borderRadius: 6,
                   padding: "4px 8px",
                 }}

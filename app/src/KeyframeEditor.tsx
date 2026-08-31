@@ -141,7 +141,7 @@ export default function KeyframeEditor({
         {label} ({draft.length} 帧)
       </div>
       {draft.length > 0 && (
-        <svg width="100%" height="56" style={{ background: "var(--panel)", borderRadius: 4, border: "1px solid #2a2c33" }}>
+        <svg width="100%" height="56" style={{ background: "var(--panel)", borderRadius: 4, border: "1px solid var(--border)" }}>
           <polyline
             points={curvePoints}
             fill="none"

@@ -917,7 +917,7 @@ export default function Preview({
 
           {/* 变换框 + 手柄 */}
           {showTransform && activeRect && (
-            <div style={{ ...stageRectStyle(activeRect), border: "1px solid #ffd75e", pointerEvents: "none" }}>
+            <div style={{ ...stageRectStyle(activeRect), border: "1px solid var(--accent)", pointerEvents: "none" }}>
               {HANDLES.map((h) => (
                 <div
                   key={h.id}
@@ -928,7 +928,7 @@ export default function Preview({
                     width: 10,
                     height: 10,
                     background: "var(--text)",
-                    border: "1px solid #ffd75e",
+                    border: "1px solid var(--accent)",
                     borderRadius: 2,
                     cursor: h.cursor,
                     pointerEvents: "auto",

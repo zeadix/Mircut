@@ -95,7 +95,7 @@ export default function MediaLibrary({
   }
 
   return (
-    <aside style={{ width: 220, background: "var(--panel)", borderRight: "1px solid #2a2c33", padding: 8, overflowY: "auto" }}>
+    <aside style={{ width: 220, background: "var(--panel)", borderRight: "1px solid var(--border)", padding: 8, overflowY: "auto" }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
         <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
         <span style={{ flex: 1 }} />

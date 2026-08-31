@@ -36,8 +36,8 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
 
   // 6. 导出对话框:打开->加入队列->(mock 立即完成)->显示队列条目
   await page.getByRole("button", { name: "导出", exact: true }).click();
-  await expect(page.locator("text=导出视频")).toBeVisible();
-  await page.locator("button", { hasText: "加入队列" }).click();
+  await expect(page.getByText("导出队列")).toBeVisible();
+  await page.getByRole("button", { name: "加入队列", exact: true }).click();
   // mock 导出立即完成,队列应出现"完成"状态条目
   await expect(page.locator("text=导出队列")).toBeVisible();
   await expect(page.locator("text=完成").first()).toBeVisible({ timeout: 5000 });

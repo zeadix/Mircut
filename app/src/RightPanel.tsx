@@ -47,8 +47,8 @@ export default function RightPanel({
   const selOne = selectedClipIds.length === 1 ? selectedClipIds[0] : null;
 
   return (
-    <aside style={{ width: 240, background: "var(--panel)", borderLeft: "1px solid #2a2c33", overflowY: "auto" }}>
-      <div style={{ display: "flex", borderBottom: "1px solid #2a2c33" }}>
+    <aside style={{ width: 240, background: "var(--panel)", borderLeft: "1px solid var(--border)", overflowY: "auto" }}>
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
         {TAB_KEYS.map(([k, key]) => (
           <button
             key={k}
@@ -57,7 +57,7 @@ export default function RightPanel({
               flex: 1,
               borderRadius: 0,
               borderColor: "transparent",
-              background: tab === k ? "#30333c" : "transparent",
+              background: tab === k ? "var(--btn-hover)" : "transparent",
             }}
             onClick={() => setTab(k)}
           >

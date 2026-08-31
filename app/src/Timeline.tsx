@@ -3,6 +3,7 @@ import type { Document } from "./types";
 import { snapToEdges, computeMagneticStart } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
+import { registerThemeInvalidate } from "./theme";
 import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash, X } from "@phosphor-icons/react";
 
 interface Props {
@@ -47,6 +48,27 @@ interface Props {
   onRemoveTrack?: (trackId: string) => void;
   onDuplicateClip?: (clipId: string, trackId: string, start: number) => void;
 }
+
+/// Canvas 主题色:CSS 变量经一次性读取缓存(canvas 不接 var(),
+/// 主题切换时由 useEffect 失效重读)。
+const themeColors = { cache: null as Record<string, string> | null };
+function canvasColor(name: string, fallback: string): string {
+  if (!themeColors.cache) {
+    const cs = getComputedStyle(document.documentElement);
+    themeColors.cache = {
+      panel: cs.getPropertyValue("--panel").trim() || fallback,
+      border: cs.getPropertyValue("--border").trim() || fallback,
+      surface: cs.getPropertyValue("--surface").trim() || fallback,
+    };
+  }
+  return themeColors.cache[name] ?? fallback;
+}
+
+/// 主题切换后失效缓存(下一次绘制重读;注册到 theme 模块)。
+function invalidateThemeColors() {
+  themeColors.cache = null;
+}
+registerThemeInvalidate(invalidateThemeColors);
 
 const MIN_TRACK_H = 36;
 const EDGE_HIT_PX = 10;
@@ -146,7 +168,7 @@ function TimelineInner({
   const [reorderInsert, setReorderInsert] = useState<number | null>(null);
   const [reorderHint, setReorderHint] = useState<number | null>(null);
   /// 轨道头列宽(垂直分界线拖拽调整)。
-  const [headW, setHeadW] = useState(150);
+  const [headW, setHeadW] = useState(210);
   const headWDrag = useRef<{ startX: number; startW: number } | null>(null);
   const moveTargetRef = useRef<{ trackId: string; row: number; lane: "Video" | "Audio" | null } | null>(null);
   /// 拖放落点缓存:dragover 坐标可靠(提示正常),drop 事件 clientY 在 WebKitGTK
@@ -250,11 +272,11 @@ function TimelineInner({
       const rh = geo.rowH[i];
       if (track.kind === "File") {
         const half = rh / 2;
-        ctx.fillStyle = "rgba(90, 140, 90, 0.10)";
+        ctx.fillStyle = "rgba(90, 160, 90, 0.10)";
         ctx.fillRect(0, y, w, half);
-        ctx.fillStyle = "rgba(70, 110, 170, 0.10)";
+        ctx.fillStyle = "rgba(80, 120, 180, 0.10)";
         ctx.fillRect(0, y + half, w, half);
-        ctx.strokeStyle = "#2e3038";
+        ctx.strokeStyle = canvasColor("border", "#2e3038");
         ctx.beginPath();
         ctx.moveTo(0, y + half);
         ctx.lineTo(w, y + half);
@@ -262,9 +284,9 @@ function TimelineInner({
         ctx.lineTo(w, y + rh);
         ctx.stroke();
       } else {
-        ctx.fillStyle = i % 2 === 0 ? "#1e1f24" : "#23242a";
+        ctx.fillStyle = i % 2 === 0 ? canvasColor("panel", "#1e1f24") : canvasColor("surface", "#23242a");
         ctx.fillRect(0, y, w, rh);
-        ctx.strokeStyle = "#2e3038";
+        ctx.strokeStyle = canvasColor("border", "#2e3038");
         ctx.beginPath();
         ctx.moveTo(0, y + rh);
         ctx.lineTo(w, y + rh);
@@ -316,7 +338,7 @@ function TimelineInner({
         ctx.stroke();
       }
       if (clip.speed === 0) {
-        ctx.fillStyle = "#ffd75e";
+        ctx.fillStyle = "var(--accent)";
         ctx.fillRect(x, laneTop, Math.max(cw, 2), 3);
       }
       // 速度关键帧标记(>=2 帧):片段顶边橙色菱形(变速曲线可视化)
@@ -349,7 +371,7 @@ function TimelineInner({
           else ctx.lineTo(px, py);
         }
         ctx.stroke();
-        ctx.fillStyle = "#ffd75e";
+        ctx.fillStyle = "var(--accent)";
         for (const k of kfs) {
           const kx = (clip.start + k.t) * pxPerTick;
           if (kx < vx0 - 4 || kx > vx1 + 4) continue;
@@ -404,11 +426,11 @@ function TimelineInner({
       ctx.fillRect(x, laneTop, 2, h);
       ctx.fillRect(x + Math.max(cw, 2) - 2, laneTop, 2, h);
       if (selectedSet.has(clip.id)) {
-        ctx.strokeStyle = "#ffd75e";
+        ctx.strokeStyle = "var(--accent)";
         ctx.lineWidth = 1;
         ctx.strokeRect(x, laneTop, Math.max(cw, 2), h);
         // 选中时把手 10px(修剪触发区),hover 侧高亮
-        ctx.fillStyle = hoverEdge ? "#ffd75e" : "rgba(255,215,94,0.45)";
+        ctx.fillStyle = hoverEdge ? "var(--accent)" : "rgba(255,215,94,0.45)";
         ctx.fillRect(x, laneTop, 10, h);
         ctx.fillRect(x + Math.max(cw, 2) - 10, laneTop, 10, h);
         ctx.lineWidth = 1;
@@ -475,7 +497,7 @@ function TimelineInner({
     if (canvasH > geo.totalH) {
       ctx.fillStyle = "#1d1e25";
       ctx.fillRect(0, geo.totalH, w, TEXT_LANE_H);
-      ctx.strokeStyle = "#2e3038";
+      ctx.strokeStyle = canvasColor("border", "#2e3038");
       ctx.beginPath();
       ctx.moveTo(0, geo.totalH);
       ctx.lineTo(w, geo.totalH);
@@ -514,7 +536,7 @@ function TimelineInner({
     // 修剪预览
     if (trimHint) {
       const hx = trimHint.x;
-      ctx.strokeStyle = "#ffd75e";
+      ctx.strokeStyle = "var(--accent)";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(hx, trimHint.y);
@@ -530,9 +552,9 @@ function TimelineInner({
       const bx = Math.min(Math.max(sx + 4, hx - tw / 2), sx + viewW - tw - 4);
       ctx.fillStyle = "rgba(20,21,26,0.92)";
       ctx.fillRect(bx, trimHint.y - 20, tw, 16);
-      ctx.strokeStyle = "#ffd75e";
+      ctx.strokeStyle = "var(--accent)";
       ctx.strokeRect(bx, trimHint.y - 20, tw, 16);
-      ctx.fillStyle = "#ffd75e";
+      ctx.fillStyle = "var(--accent)";
       ctx.fillText(txt, bx + 5, trimHint.y - 8);
     }
 
@@ -1296,7 +1318,7 @@ function TimelineInner({
       </div>
       {/* 顶部刻度尺(固定在轨道列表上边缘) */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -1338,14 +1360,14 @@ function TimelineInner({
           {doc.tracks.map((track, ti) => (
             <div
               key={track.id}
+              className={track.kind === "Audio" ? "track-head-audio" : "track-head-video"}
               style={{
                 height: trackH,
                 display: "flex",
                 alignItems: "stretch",
                 gap: 4,
                 padding: "0 6px",
-                borderBottom: "1px solid #2e3038",
-                background: track.kind === "Audio" ? "#1a211d" : "#1b1d26",
+                borderBottom: "1px solid var(--border)",
                 position: "relative",
                 opacity: reorderHint === ti ? 0.45 : 1,
               }}
@@ -1540,13 +1562,13 @@ function TimelineInner({
             const d = headWDrag.current;
             if (!d) return;
             const next = d.startW + (e.clientX - d.startX);
-            setHeadW(Math.max(88, Math.min(360, next)));
+            setHeadW(Math.max(120, Math.min(420, next)));
           }}
           onPointerUp={(e) => {
             (e.target as HTMLElement).releasePointerCapture(e.pointerId);
             headWDrag.current = null;
           }}
-          onDoubleClick={() => setHeadW(150)}
+          onDoubleClick={() => setHeadW(210)}
         >
           <div
             style={{
@@ -1640,7 +1662,7 @@ function TimelineInner({
 
       {/* 底部刻度尺(固定在轨道列表下边缘)+ 横向滚动条 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderTop: "1px solid #2a2c33" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderTop: "1px solid var(--border)" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -1669,7 +1691,7 @@ function TimelineInner({
               left: 8,
               top: 26,
               background: "var(--card)",
-              border: "1px solid #3a3d46",
+              border: "1px solid var(--border-strong)",
               borderRadius: 8,
               padding: 8,
               minWidth: 220,
@@ -1777,7 +1799,7 @@ function TimelineInner({
                   left: ctxMenu.x,
                   top: ctxMenu.y,
                   background: "var(--card)",
-                  border: "1px solid #3a3d46",
+                  border: "1px solid var(--border-strong)",
                   borderRadius: 8,
                   padding: 6,
                   minWidth: 180,
@@ -1830,7 +1852,7 @@ function TimelineInner({
               left: dropMenu.x,
               top: dropMenu.y,
               background: "var(--card)",
-              border: "1px solid #3a3d46",
+              border: "1px solid var(--border-strong)",
               borderRadius: 8,
               padding: 6,
               minWidth: 150,
@@ -1876,7 +1898,7 @@ function TimelineInner({
           <div
             style={{
               background: "var(--card)",
-              border: "1px solid #3a3d46",
+              border: "1px solid var(--border-strong)",
               borderRadius: 8,
               padding: 16,
               width: 300,

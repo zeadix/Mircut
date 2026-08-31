@@ -930,7 +930,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   return (
     <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* 顶栏 */}
-      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "var(--header)", borderBottom: "1px solid #2a2c33" }}>
+      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
         <FilmSlate size={22} />
         <strong>VEditor</strong>
         <span style={{ flex: 1 }} />
@@ -954,7 +954,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                   left: 0,
                   marginTop: 4,
                   background: "var(--card)",
-                  border: "1px solid #3a3d46",
+                  border: "1px solid var(--border-strong)",
                   borderRadius: 8,
                   padding: 6,
                   minWidth: 210,
@@ -987,7 +987,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 ))}
                 {recentProjects.length > 0 && (
                   <>
-                    <div style={{ borderTop: "1px solid #2a2c33", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "var(--text-dim)" }}>
+                    <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "var(--text-dim)" }}>
                       {t("menu.recent")}
                     </div>
                     {recentProjects.map((p) => (

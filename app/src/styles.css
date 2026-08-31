@@ -19,7 +19,12 @@
   --link: #4ec9ff;
   --progress: #3d5a99;
   --code: #9aa8b8;
+  --track-audio: #1a211d;
+  --track-video: #1b1d26;
 }
+.track-head-audio { background: var(--track-audio); }
+.track-head-video { background: var(--track-video); }
+
 [data-theme="light"] {
   --bg: #f2f3f5;
   --panel: #ffffff;
@@ -40,6 +45,8 @@
   --link: #1c7ed6;
   --progress: #3d5a99;
   --code: #5c6770;
+  --track-audio: #edf2ee;
+  --track-video: #e9edf4;
 }
 
 * { box-sizing: border-box; }
@@ -109,9 +116,9 @@ body { background: var(--bg); }
   font-size: 12px;
   cursor: pointer;
 }
-.btn:hover:not(:disabled) { background: #30333c; }
+.btn:hover:not(:disabled) { background: var(--btn-hover); }
 .btn:disabled { opacity: 0.4; cursor: default; }
-.btn.primary { background: #3d5a99; border-color: #4d6cb3; }
+.btn.primary { background: var(--progress); border-color: #4d6cb3; color: #fff; }
 .btn.primary:hover { background: #4668ad; }
 .asset-card {
   background: var(--card);
@@ -120,7 +127,7 @@ body { background: var(--bg); }
   padding: 6px;
   margin-bottom: 8px;
 }
-.asset-card:hover { border-color: #3d5a99; }
+.asset-card:hover { border-color: var(--progress); }
 .ti {
   background: var(--card);
   border: 1px solid var(--btn-border);
@@ -129,7 +136,15 @@ body { background: var(--bg); }
   padding: 5px 8px;
   font-size: 12px;
 }
-.ti::placeholder { color: #556; }
+.ti::placeholder { color: var(--text-dim); }
+/* 下拉框原生弹出层:option 跟随主题(WebkitGTK/Chromium 下
+   option 会继承 select 背景,需显式声明否则暗色下文字浅底浅字 */
+.ti option {
+  background: var(--card);
+  color: var(--text);
+}
+select.ti { color: var(--text); }
+select.ti option:checked { background: var(--btn-hover); color: var(--text); }
 
 /* 时间轴画布容器:隐藏原生滚动条(纵向滚动用滚轮,横向用自绘条) */
 .no-scrollbar::-webkit-scrollbar { display: none; }
