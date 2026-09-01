@@ -202,37 +202,145 @@ function TimelineInner({
   /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
   const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
+  /// 找 clip 的同轨同素材兄弟块(File 轨双块:视频↔音频)。
+  function siblingClip(clip: { track_id: string; lane?: string | null; asset: { asset_id: string } }): typeof doc.clips[0] | null {
+    const track = doc.tracks.find((tr) => tr.id === clip.track_id);
+    if (track?.kind !== "File") return null;
+    const siblingLane = clip.lane === "Audio" ? "Video" : "Audio";
+    return doc.clips.find(
+      (c) => c.track_id === clip.track_id && c.lane === siblingLane && c.asset.asset_id === clip.asset.asset_id
+    ) ?? null;
+  }
+
+  /// File 轨父级操作:以兄弟块为镜像,同步调整另一 lane 的位置/时长。
+  function syncSibling(
+    primary: { clipId: string; start: number; duration: number },
+    sibling: { clipId: string; start: number; duration: number }
+  ) {
+    if (primary.start === sibling.start && primary.duration === sibling.duration) return;
+    if (onClipTrim) {
+      // 起点变化 → trim left
+      if (primary.start !== sibling.start) {
+        const deltaStart = primary.start - sibling.start;
+        const newSiblingDuration = sibling.duration - deltaStart;
+        if (newSiblingDuration > 0) {
+          onClipTrim(sibling.clipId, "left", sibling.start, newSiblingDuration, ripple);
+        }
+      }
+      // 时长变化 → trim right
+      if (primary.duration !== sibling.duration) {
+        const newSiblingDuration = sibling.duration - (primary.duration - sibling.duration);
+        if (newSiblingDuration > 0) {
+          onClipTrim(sibling.clipId, "right", sibling.start, newSiblingDuration, ripple);
+        }
+      }
+    }
+  }
+
+  /// File 轨父级移动:primary + sibling 同步移动到同一起点。
+  function syncSiblingMove(primaryId: string, siblingId: string, newStart: number) {
+    if (!onClipMove) return;
+    // 找 current positions
+    const primary = doc.clips.find((c) => c.id === primaryId);
+    const sibling = doc.clips.find((c) => c.id === siblingId);
+    if (!primary || !sibling) return;
+    const delta = newStart - primary.start;
+    if (delta === 0) return;
+    const newSiblingStart = Math.max(0, sibling.start + delta);
+    // 分开提交(move 各自,同步在 dragend 处理)
+    onClipMove(siblingId, newSiblingStart, sibling.track_id);
+  }
+
   const tps = doc.timebase.num / doc.timebase.den;
   /// 选中集合(绘制/命中判断用)。
   const selectedSet = useMemo(() => new Set(selectedClipIds), [selectedClipIds]);
 
-  /// 行几何(绘制与命中共用)。
-  const geo = useMemo(() => {
-    const rowH: number[] = doc.tracks.map(() => trackH);
-    const tops: number[] = [];
-    let acc = 0;
-    for (const h of rowH) {
-      tops.push(acc);
-      acc += h;
-    }
-    return { rowH, tops, totalH: acc };
-  }, [doc.tracks, trackH]);
+  /// File 轨道折叠状态:轨道 id -> { video: bool, audio: bool }。
+  /// 关闭时对应行折叠(0 高度),不影响合成(合成由 track.video_on/audio_on 控制)。
+  const [collapsed, setCollapsed] = useState<Record<string, { video: boolean; audio: boolean }>>({});
+  const collapsedRef = useRef<Record<string, { video: boolean; audio: boolean }>>({});
+  // 同步 ref <-> state
+  const setCollapsedVal = (v: Record<string, { video: boolean; audio: boolean }>) => {
+    collapsedRef.current = v;
+    setCollapsed(v);
+  };
 
-  /// 画布高度:轨道区 + 文字块 lane(有文字叠层时)。
+  /// canvas 行几何:File 轨占 2 行(视频+音频各 trackH),折叠行高 0。
+  /// geo.rowH/geo.tops 长度 = canvas 行数(不是轨道数),一一对应。
+  const geo = useMemo(() => {
+    const rowH: number[] = [];
+    let acc = 0;
+    for (const track of doc.tracks) {
+      if (track.kind === "File") {
+        const vH = collapsed[track.id]?.video ? 0 : trackH;
+        const aH = collapsed[track.id]?.audio ? 0 : trackH;
+        // 视频行
+        rowH.push(vH);
+        acc += vH;
+        // 音频行(紧随视频行)
+        rowH.push(aH);
+        acc += aH;
+      } else {
+        rowH.push(trackH);
+        acc += trackH;
+      }
+    }
+    // tops:每行起点的累加高度
+    const tops: number[] = [];
+    let t = 0;
+    for (let i = 0; i < rowH.length; i++) {
+      tops.push(t);
+      t += rowH[i];
+    }
+    return { rowH, tops, totalH: t };
+  }, [doc.tracks, trackH, collapsed]);
+
+  /// canvas 高度:轨道区 + 文字块 lane(有文字叠层时)。
   const canvasH = geo.totalH + ((doc.text_overlays?.length ?? 0) > 0 ? TEXT_LANE_H : 0);
 
+  /// clip -> 所在行(视频行/音频行)几何。
+  /// File 轨:Video clip 在视频行,Audio clip 在音频行。
   function clipRow(clip: { track_id: string; lane?: string | null }): { top: number; laneTop: number; h: number } | null {
-    const ti = doc.tracks.findIndex((t) => t.id === clip.track_id);
-    if (ti < 0) return null;
-    const track = doc.tracks[ti];
-    const top = geo.tops[ti];
-    if (track.kind === "File") {
-      const half = trackH / 2;
-      const isAudio = clip.lane === "Audio";
-      return { top, laneTop: top + (isAudio ? half : 0) + 2, h: half - 4 };
+    // 找 clip 所在轨道在 doc.tracks 中的索引,累计 canvas 行数
+    let canvasRow = 0;
+    for (let ti = 0; ti < doc.tracks.length; ti++) {
+      const track = doc.tracks[ti];
+      if (track.id === clip.track_id) {
+        const isAudio = clip.lane === "Audio";
+        if (track.kind === "File") {
+          // File 轨:视频行在前,音频行在后(各占一行)
+          // vH/aH > 0 表示该行存在(未折叠)
+          const vH = collapsed[track.id]?.video ? 0 : trackH;
+          const aH = collapsed[track.id]?.audio ? 0 : trackH;
+          if (isAudio) {
+            // 音频行 = canvasRow + (视频行存在 ? 1 : 0)
+            const aRow = canvasRow + (vH > 0 ? 1 : 0);
+            const aTop = geo.tops[aRow] ?? aRow * trackH;
+            return { top: aTop, laneTop: aTop + 2, h: aH > 0 ? aH - 4 : 0 };
+          } else {
+            const vTop = geo.tops[canvasRow] ?? canvasRow * trackH;
+            return { top: vTop, laneTop: vTop + 2, h: vH > 0 ? vH - 4 : 0 };
+          }
+        } else {
+          // 普通轨:单行
+          const top = geo.tops[canvasRow] ?? canvasRow * trackH;
+          return { top, laneTop: top + 5, h: trackH - 10 };
+        }
+      }
+      // 未命中目标:累计当前轨道占用的 canvas 行数
+      if (track.kind === "File") {
+        const vH = collapsed[track.id]?.video ? 0 : 1;
+        const aH = collapsed[track.id]?.audio ? 0 : 1;
+        canvasRow += vH + aH;
+      } else {
+        canvasRow += 1;
+      }
     }
-    return { top, laneTop: top + 5, h: trackH - 10 };
+    return null;
   }
+
+  /// 轨道头高度(与 geo 结构对齐,用于 headInner div)。
+  const headInnerH = geo.totalH;
 
   /// 内容总宽(不含播放头;超界由动态层扩宽触发)。
   const contentEndTick = useMemo(
@@ -275,25 +383,45 @@ function TimelineInner({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // 轨道背景
-    doc.tracks.forEach((track, i) => {
-      const y = geo.tops[i];
-      const rh = geo.rowH[i];
+    // 轨道背景(按 canvas 行迭代,File 轨占 2 行:视频+音频)
+    for (let canvasRow = 0; canvasRow < geo.rowH.length; canvasRow++) {
+      const y = geo.tops[canvasRow];
+      const rh = geo.rowH[canvasRow];
+      if (rh === 0) continue; // 折叠行跳过
+      // 找该 canvas 行对应的轨道(累计跳过折叠行)
+      let trackIdx = -1;
+      let rowInFile = 0; // File 轨内偏移:0=视频行,1=音频行
+      let acc = 0;
+      for (let ti = 0; ti < doc.tracks.length; ti++) {
+        const tr = doc.tracks[ti];
+        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
+        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
+        const rows = (vH > 0 ? 1 : 0) + (aH > 0 ? 1 : 0);
+        if (acc + rows > canvasRow) {
+          trackIdx = ti;
+          rowInFile = canvasRow - acc;
+          break;
+        }
+        acc += rows;
+      }
+      if (trackIdx < 0) continue;
+      const track = doc.tracks[trackIdx];
       if (track.kind === "File") {
-        const half = rh / 2;
-        ctx.fillStyle = "rgba(90, 160, 90, 0.10)";
-        ctx.fillRect(0, y, w, half);
-        ctx.fillStyle = "rgba(80, 120, 180, 0.10)";
-        ctx.fillRect(0, y + half, w, half);
+        const isAudio = rowInFile === 1;
+        if (isAudio) {
+          ctx.fillStyle = "rgba(80, 120, 180, 0.10)";
+        } else {
+          ctx.fillStyle = "rgba(90, 160, 90, 0.10)";
+        }
+        ctx.fillRect(0, y, w, rh);
+        // 行分隔线
         ctx.strokeStyle = canvasColor("border", "#2e3038");
         ctx.beginPath();
-        ctx.moveTo(0, y + half);
-        ctx.lineTo(w, y + half);
         ctx.moveTo(0, y + rh);
         ctx.lineTo(w, y + rh);
         ctx.stroke();
       } else {
-        ctx.fillStyle = i % 2 === 0 ? canvasColor("panel", "#1e1f24") : canvasColor("surface", "#23242a");
+        ctx.fillStyle = trackIdx % 2 === 0 ? canvasColor("panel", "#1e1f24") : canvasColor("surface", "#23242a");
         ctx.fillRect(0, y, w, rh);
         ctx.strokeStyle = canvasColor("border", "#2e3038");
         ctx.beginPath();
@@ -301,7 +429,7 @@ function TimelineInner({
         ctx.lineTo(w, y + rh);
         ctx.stroke();
       }
-    });
+    }
 
 
     // 片段(视口裁剪)
@@ -699,23 +827,50 @@ function TimelineInner({
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const px = clientX - rect.left;
-    // 必先按 Y 锁定行:再在该行内找段,避免误命中其他行
-    let row = -1;
+    // 必先按 Y 锁定 canvas 行:再在该行内找段,避免误命中其他行
+    let canvasRow = -1;
     let laneFilter: string | null | undefined;
+    let targetTrackId: string | null = null;
     if (clientY !== undefined) {
       const yIn = clientY - rect.top;
-      row = Math.floor(yIn / trackH);
-      const track = doc.tracks[row];
-      if (!track) return null;
+      // 找 yIn 落在哪个 canvas 行
+      let acc = 0;
+      for (let cr = 0; cr < geo.rowH.length; cr++) {
+        const rh = geo.rowH[cr];
+        if (yIn >= acc && yIn < acc + rh) {
+          canvasRow = cr;
+          break;
+        }
+        acc += rh;
+      }
+      if (canvasRow < 0) return null;
+      // 找该 canvas 行对应的轨道及 lane
+      let trackIdx = -1;
+      let rowInFile = 0;
+      let rowAcc = 0;
+      for (let ti = 0; ti < doc.tracks.length; ti++) {
+        const tr = doc.tracks[ti];
+        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
+        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
+        const rows = vH + aH;
+        if (rowAcc + rows > canvasRow) {
+          trackIdx = ti;
+          rowInFile = canvasRow - rowAcc;
+          break;
+        }
+        rowAcc += rows;
+      }
+      if (trackIdx < 0) return null;
+      const track = doc.tracks[trackIdx];
       if (track.kind === "File") {
-        laneFilter = yIn - row * trackH < trackH / 2 ? "Video" : "Audio";
+        laneFilter = rowInFile === 1 ? "Audio" : "Video";
       } else {
         laneFilter = track.kind === "Audio" ? "Audio" : "Video";
       }
+      targetTrackId = track.id;
     }
-    if (row < 0) laneFilter = undefined;
     // 在该行内搜索(没有 Y 时退化为全文档)
-    const candidates = row >= 0 ? doc.clips.filter((c) => c.track_id === doc.tracks[row]?.id) : doc.clips;
+    const candidates = targetTrackId ? doc.clips.filter((c) => c.track_id === targetTrackId) : doc.clips;
     for (const c of candidates) {
       // 合成开关关闭的 lane 不可命中(与视觉隐藏一致)
       const cTrack = doc.tracks.find((x) => x.id === c.track_id);
@@ -833,14 +988,26 @@ function TimelineInner({
         dragRef.current = { kind: "slip", clipId: clip.id, origSourceIn: clip.asset.source_in, downT: t };
       } else {
         const grabTicks = Math.round(t - clip.start);
-        const fromRow = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
+        // 计算 clip 所在 canvas 行索引(用于虚影/落点计算)
+        let canvasRow = 0;
+        for (let ti = 0; ti < doc.tracks.length; ti++) {
+          if (doc.tracks[ti].id === clip.track_id) break;
+          const tr = doc.tracks[ti];
+          if (tr.kind === "File") {
+            const vH = collapsed[tr.id]?.video ? 0 : 1;
+            const aH = collapsed[tr.id]?.audio ? 0 : 1;
+            canvasRow += vH + aH;
+          } else {
+            canvasRow += 1;
+          }
+        }
         dragRef.current = {
           kind: "move",
           clipId: hit.clipId,
           startX: e.clientX,
           origStart: clip.start,
           grabTicks,
-          fromRow,
+          fromRow: canvasRow,
           rightBtn: e.button === 2,
         };
         // 多选组拖拽:拖拽块在选中集合内时,整组统一位移
@@ -853,7 +1020,7 @@ function TimelineInner({
                 ),
               }
             : null;
-        moveTargetRef.current = { trackId: clip.track_id, row: fromRow, lane: clip.lane ?? null };
+        moveTargetRef.current = { trackId: clip.track_id, row: canvasRow, lane: clip.lane ?? null };
       }
     } else {
       // 空白处:左键拖拽 = 框选;单击空白 = 清空选择
@@ -950,35 +1117,59 @@ function TimelineInner({
     if (d.kind === "move") {
       const rectC = canvasRef.current?.getBoundingClientRect();
       const yIn = rectC ? e.clientY - rectC.top : 0;
-      const targetRow = Math.max(0, Math.min(doc.tracks.length - 1, Math.floor(yIn / trackH)));
-      const rowTrack = doc.tracks[targetRow];
+      // 找 yIn 落在哪个 canvas 行
+      let targetCanvasRow = 0;
+      let acc = 0;
+      for (let cr = 0; cr < geo.rowH.length; cr++) {
+        const rh = geo.rowH[cr];
+        if (yIn >= acc && yIn < acc + rh) {
+          targetCanvasRow = cr;
+          break;
+        }
+        acc += rh;
+      }
+      // 找目标 canvas 行对应的轨道索引及 lane
+      let targetTrackIdx = -1;
+      let targetLaneInFile: "Video" | "Audio" | null = null;
+      let rowAcc = 0;
+      for (let ti = 0; ti < doc.tracks.length; ti++) {
+        const tr = doc.tracks[ti];
+        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
+        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
+        const rows = vH + aH;
+        if (rowAcc + rows > targetCanvasRow) {
+          targetTrackIdx = ti;
+          targetLaneInFile = rows > 1 && targetCanvasRow - rowAcc === 1 ? "Audio" : "Video";
+          break;
+        }
+        rowAcc += rows;
+      }
+      const rowTrack = targetTrackIdx >= 0 ? doc.tracks[targetTrackIdx] : null;
       const isAudioBlock = clip.lane === "Audio" || doc.tracks[ti]?.kind === "Audio";
-      const half = trackH / 2;
       const ok =
         !!rowTrack &&
         !rowTrack.locked &&
         (rowTrack.kind === "File" ||
           (isAudioBlock ? rowTrack.kind === "Audio" : rowTrack.kind === "Video"));
-      const useRow = ok ? targetRow : ti;
+      // useRow = 目标 canvas 行索引(与虚影/geo.tops 对齐)
+      const useRow = targetCanvasRow;
       let targetLane: "Video" | "Audio" | null = clip.lane ?? null;
       if (ok) {
-        targetLane = rowTrack.kind === "File"
-          ? (yIn - targetRow * trackH < half ? "Video" : "Audio")
-          : rowTrack.kind === "Audio" ? "Audio" : "Video";
+        targetLane = targetLaneInFile ?? "Video";
         moveTargetRef.current = { trackId: rowTrack.id, row: useRow, lane: targetLane };
       } else {
         // 不合法落点:回退原片段,松手不误移
-        moveTargetRef.current = { trackId: clip.track_id, row: ti, lane: clip.lane ?? null };
+        moveTargetRef.current = { trackId: clip.track_id, row: d.fromRow, lane: clip.lane ?? null };
       }
-      // 虚影几何必须基于实际绘制行 useRow 的轨道,而非鼠标下的 rowTrack
-      // (否则不合法落点时整行高虚影会盖住原轨上方块)
-      const ghostTrack = doc.tracks[useRow];
+      // 虚影几何
+      const ghostTrack = rowTrack && ok ? rowTrack : doc.tracks.find((tr) => tr.id === clip.track_id);
       const ghostLane = ok ? targetLane : (clip.lane ?? null);
-      const laneOff = ghostTrack?.kind === "File" ? (ghostLane === "Audio" ? half : 0) : 0;
-      const gh = ghostTrack?.kind === "File" ? half - 4 : trackH - 10;
+      const isFile = ghostTrack?.kind === "File";
+      const laneOff = isFile ? (ghostLane === "Audio" ? trackH : 0) : 0;
+      const gh = isFile ? trackH - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       const rawStart = Math.max(0, t - grab);
-      // 磁吸插入:与目标块重叠时按中心点判放左/放右,虚影实时反映
+      // 磁吸插入
       const mt = moveTargetRef.current;
       const magStart = computeMagneticStart(
         rawStart,
@@ -1128,10 +1319,13 @@ function TimelineInner({
         );
         const group = moveGroupRef.current;
         moveGroupRef.current = null;
+        // File 轨双块:主块移动时同步兄弟块
+        const primaryClip = doc.clips.find((c) => c.id === d.clipId);
+        const sib = primaryClip ? siblingClip(primaryClip) : null;
+        const entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[] = [];
         if (group && group.ids.length > 0 && onMoveClips) {
-          // 组移动:主块换轨/磁吸落点,组员统一平移同位移
           const delta = magStart - clip.start;
-          const entries = [
+          entries.push(
             { clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null },
             ...group.ids
               .filter((id) => id !== d.clipId)
@@ -1140,16 +1334,47 @@ function TimelineInner({
                 newStart: Math.max(0, (group.origStarts[id] ?? 0) + delta),
                 newTrackId: doc.clips.find((c) => c.id === id)?.track_id ?? target.trackId,
                 lane: null,
-              })),
-          ];
+              }))
+          );
+        } else {
+          entries.push({ clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null });
+        }
+        // 兄弟块同位移
+        if (sib) {
+          const delta = magStart - clip.start;
+          entries.push({
+            clipId: sib.id,
+            newStart: Math.max(0, sib.start + delta),
+            newTrackId: sib.track_id,
+            lane: sib.lane ?? null,
+          });
+        }
+        if (onMoveClips && entries.length > 0) {
           onMoveClips(entries);
         } else if (onClipMove) {
           onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
+          if (sib) {
+            const delta = magStart - clip.start;
+            onClipMove(sib.id, Math.max(0, sib.start + delta), sib.track_id);
+          }
         }
       }
     } else if (d.kind === "trimL" || d.kind === "trimR") {
       if (hint && hint.clipId === d.clipId && hint.newDuration !== d.origDuration) {
-        onClipTrim?.(d.clipId, d.kind === "trimL" ? "left" : "right", hint.newStart, hint.newDuration, ripple);
+        const trimKind = d.kind === "trimL" ? "left" : "right";
+        onClipTrim?.(d.clipId, trimKind, hint.newStart, hint.newDuration, ripple);
+        // File 轨双块:trim 时同步兄弟块
+        const primaryClip = doc.clips.find((c) => c.id === d.clipId);
+        const sib = primaryClip ? siblingClip(primaryClip) : null;
+        if (sib && onClipTrim) {
+          if (trimKind === "left") {
+            // 左边缘:兄弟块起点跟随,时长不变
+            onClipTrim(sib.id, "left", hint.newStart, sib.duration, ripple);
+          } else {
+            // 右边缘:兄弟块时长跟随,起点不变
+            onClipTrim(sib.id, "right", sib.start, hint.newDuration, ripple);
+          }
+        }
       }
     }
   }
@@ -1162,21 +1387,39 @@ function TimelineInner({
     const rect = canvas.getBoundingClientRect();
     const yIn = e.clientY - rect.top;
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
-    const row = Math.floor(yIn / trackH);
-    const inGap = yIn - row * trackH > trackH - 6;
-    if (row < 0) return null;
-    if (row >= doc.tracks.length || inGap) {
+    // 找 yIn 落在哪个 canvas 行
+    let targetCanvasRow = 0;
+    let acc = 0;
+    for (let cr = 0; cr < geo.rowH.length; cr++) {
+      const rh = geo.rowH[cr];
+      if (yIn >= acc && yIn < acc + rh) {
+        targetCanvasRow = cr;
+        break;
+      }
+      acc += rh;
+    }
+    // 找目标 canvas 行对应的轨道索引及 lane
+    let targetTrackIdx = -1;
+    let targetLane: "Video" | "Audio" | null = null;
+    let rowAcc = 0;
+    for (let ti = 0; ti < doc.tracks.length; ti++) {
+      const tr = doc.tracks[ti];
+      const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
+      const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
+      const rows = vH + aH;
+      if (rowAcc + rows > targetCanvasRow) {
+        targetTrackIdx = ti;
+        targetLane = rows > 1 && targetCanvasRow - rowAcc === 1 ? "Audio" : "Video";
+        break;
+      }
+      rowAcc += rows;
+    }
+    if (targetTrackIdx < 0) {
       return { trackId: "__newlayer__", start: t, lane: null };
     }
-    const track = doc.tracks[row];
+    const track = doc.tracks[targetTrackIdx];
     if (track.locked) return null;
-    let lane: "Video" | "Audio";
-    if (track.kind === "File") {
-      lane = yIn - row * trackH < trackH / 2 ? "Video" : "Audio";
-    } else {
-      lane = track.kind === "Audio" ? "Audio" : "Video";
-    }
-    return { trackId: track.id, start: t, lane };
+    return { trackId: track.id, start: t, lane: targetLane };
   }
 
   function onDragOver(e: React.DragEvent) {
@@ -1194,16 +1437,34 @@ function TimelineInner({
     }
     // 缓存可靠落点(drop 事件坐标在 WebKitGTK 不可靠)
     dropTargetRef.current = target;
-    const yIn = e.clientY - rect.top;
-    const row = Math.floor(yIn / trackH);
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
-    let hy = row * trackH;
+    // 计算 dropHint 可视化框(基于 canvas 行几何)
+    let hy = 0;
     let hh = trackH;
-    if (doc.tracks[row]?.kind === "File") {
-      const half = trackH / 2;
-      const upper = yIn - row * trackH < half;
-      hy = row * trackH + (upper ? 0 : half);
-      hh = half;
+    if (target.trackId && target.trackId !== "__newlayer__") {
+      // 找目标轨道的 canvas 行范围
+      let acc = 0;
+      for (let ti = 0; ti < doc.tracks.length; ti++) {
+        const tr = doc.tracks[ti];
+        if (tr.id === target.trackId) {
+          const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : trackH) : trackH;
+          const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : trackH) : 0;
+          hy = geo.tops[acc] ?? acc;
+          hh = vH + aH;
+          break;
+        }
+        if (tr.kind === "File") {
+          const vH = collapsed[tr.id]?.video ? 0 : trackH;
+          const aH = collapsed[tr.id]?.audio ? 0 : trackH;
+          acc += (vH > 0 ? 1 : 0) + (aH > 0 ? 1 : 0);
+        } else {
+          acc += 1;
+        }
+      }
+    } else if (target.trackId === "__newlayer__") {
+      // 新建轨道:在末尾追加
+      hy = geo.totalH;
+      hh = trackH;
     }
     setDropHint({
       x: t * pxPerTick,
@@ -1386,225 +1647,121 @@ function TimelineInner({
             }
           }}
         >
-          <div ref={headInnerRef} style={{ flex: 1, minWidth: 0 }}>
-          {doc.tracks.map((track, ti) => (
-            <div
-              key={track.id}
-              className={track.kind === "Audio" ? "track-head-audio" : "track-head-video"}
-              style={{
-                height: trackH,
-                display: "flex",
-                alignItems: "stretch",
-                gap: 4,
-                padding: "0 6px",
-                borderBottom: "1px solid var(--border)",
-                position: "relative",
-                opacity: reorderHint === ti ? 0.45 : 1,
-              }}
-              onDrop={(e) => {
-                const from = reorderFrom.current;
-                if (from === null) return;
-                e.preventDefault();
-                const insert = reorderInsertRef.current;
-                if (insert !== null) {
-                  const toIdx = insertToMoveIdx(from, insert);
-                  if (toIdx !== null) onReorderTrack?.(from, toIdx);
-                }
-                reorderDropped.current = true;
-                reorderFrom.current = null;
-                reorderInsertRef.current = null;
-                setReorderInsert(null);
-                setReorderHint(null);
-              }}
-            >
-              {reorderInsert === ti && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: -2,
-                    left: 4,
-                    right: 4,
-                    height: 3,
-                    background: "var(--accent)",
-                    borderRadius: 2,
-                    boxShadow: "0 0 6px #ffd75e88",
-                    zIndex: 2,
-                  }}
-                />
-              )}
-              {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && (
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: -2,
-                    left: 4,
-                    right: 4,
-                    height: 3,
-                    background: "var(--accent)",
-                    borderRadius: 2,
-                    boxShadow: "0 0 6px #ffd75e88",
-                    zIndex: 2,
-                  }}
-                />
-              )}
-              <span
-                title="拖动排序轨道"
-                draggable
-                onDragStart={(ev) => {
-                  ev.dataTransfer.setData("application/x-veditor-track", String(ti));
-                  ev.dataTransfer.effectAllowed = "move";
-                  reorderFrom.current = ti;
-                  reorderDropped.current = false;
-                  setReorderHint(ti);
-                }}
-                onDragEnd={() => {
-                  // drop 未触发(WebKitGTK 常见)时用 dragover 缓存的插入位兜底执行
-                  const from = reorderFrom.current;
-                  if (from !== null && !reorderDropped.current) {
-                    const insert = reorderInsertRef.current;
-                    if (insert !== null) {
-                      const toIdx = insertToMoveIdx(from, insert);
-                      if (toIdx !== null) onReorderTrack?.(from, toIdx);
-                    }
-                  }
-                  reorderFrom.current = null;
-                  reorderDropped.current = false;
-                  reorderInsertRef.current = null;
-                  setReorderInsert(null);
-                  setReorderHint(null);
-                }}
-                style={{
-                  cursor: "grab",
-                  alignSelf: "center",
-                  color: reorderHint === ti ? "var(--accent)" : "#565b66",
-                  fontSize: 13,
-                  lineHeight: "6px",
-                  letterSpacing: "1px",
-                  userSelect: "none",
-                  paddingLeft: 2,
-                }}
-              >
-                {'\u2630'}
-              </span>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
-                {renamingTrack === track.id ? (
-                  <input
-                    className="ti"
-                    style={{ width: "100%", fontSize: 11, padding: "2px 4px" }}
-                    autoFocus
-                    value={renameDraft}
-                    onChange={(e) => setRenameDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        onRenameTrack?.(track.id, renameDraft.trim() || track.name);
-                        setRenamingTrack(null);
+          <div
+            ref={headInnerRef}
+            style={{ flex: 1, minWidth: 0, height: headInnerH, position: "relative" }}
+          >
+          {/* canvas 行 -> 轨道头行 */}
+          {(() => {
+            const rows: JSX.Element[] = [];
+            for (let ti = 0; ti < doc.tracks.length; ti++) {
+              const track = doc.tracks[ti];
+              const vH = track.kind === "File" ? (collapsed[track.id]?.video ? 0 : trackH) : trackH;
+              const aH = track.kind === "File" ? (collapsed[track.id]?.audio ? 0 : trackH) : 0;
+
+              // ===== 视频行(或普通轨单行) =====
+              if (vH > 0) {
+                rows.push(
+                  <div
+                    key={`${track.id}-v`}
+                    className={track.kind === "Audio" ? "track-head-audio" : "track-head-video"}
+                    style={{
+                      height: vH,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "0 6px",
+                      borderBottom: aH > 0 ? "none" : "1px solid var(--border)",
+                      position: "relative",
+                      opacity: reorderHint === ti ? 0.45 : 1,
+                    }}
+                    onDrop={(e) => {
+                      const from = reorderFrom.current;
+                      if (from === null) return;
+                      e.preventDefault();
+                      const insert = reorderInsertRef.current;
+                      if (insert !== null) {
+                        const toIdx = insertToMoveIdx(from, insert);
+                        if (toIdx !== null) onReorderTrack?.(from, toIdx);
                       }
-                      if (e.key === "Escape") setRenamingTrack(null);
+                      reorderDropped.current = true;
+                      reorderFrom.current = null;
+                      reorderInsertRef.current = null;
+                      setReorderInsert(null);
+                      setReorderHint(null);
                     }}
-                    onBlur={() => {
-                      onRenameTrack?.(track.id, renameDraft.trim() || track.name);
-                      setRenamingTrack(null);
-                    }}
-                  />
-                ) : (
-                  <span
-                    style={{
-                      color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2",
-                      fontSize: trackH < 44 ? 10 : 12,
-                      lineHeight: "16px",
-                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                    }}
-                    title="双击重命名"
-                    onDoubleClick={() => { setRenamingTrack(track.id); setRenameDraft(track.name); }}
                   >
-                    {track.name}
-                  </span>
-                )}
-                {track.kind === "File" && trackH >= 52 && (
-                  <span style={{ fontSize: 9, color: "#565b66", lineHeight: "12px" }}>
-                    <span style={{ color: "#5f9e73" }}>▮ 视频</span>
-                    <span style={{ color: "#5f83b8" }}> ▮ 音频</span>
-                  </span>
-                )}
-              </div>
-              {(["locked", "hidden", "muted"] as const).map((f) => {
-                const on = track[f];
-                return (
-                  <button
-                    key={f}
-                    className="btn"
-                    style={{
-                      alignSelf: "center",
-                      padding: "2px 4px",
-                      display: "flex",
-                      alignItems: "center",
-                      opacity: on ? 1 : 0.4,
-                      borderColor: on ? "var(--accent)" : undefined,
-                      color: on ? "var(--accent)" : "var(--text-dim)",
-                    }}
-                    onClick={() => onToggleTrack?.(track.id, f)}
-                    title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}
-                  >
-                    {f === "locked"
-                      ? (on ? <Lock size={12} weight="fill" /> : <LockOpen size={12} />)
-                      : f === "hidden"
-                        ? (on ? <EyeSlash size={12} /> : <Eye size={12} />)
-                        : (on ? <SpeakerSlash size={12} /> : <SpeakerHigh size={12} />)}
-                  </button>
+                    {reorderInsert === ti && (
+                      <div style={{ position: "absolute", top: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: 2, boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
+                    )}
+                    {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && vH === trackH && (
+                      <div style={{ position: "absolute", bottom: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: 2, boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
+                    )}
+                    <span title="拖动排序轨道" draggable onDragStart={(ev) => { ev.dataTransfer.setData("application/x-veditor-track", String(ti)); ev.dataTransfer.effectAllowed = "move"; reorderFrom.current = ti; reorderDropped.current = false; setReorderHint(ti); }} onDragEnd={() => { const from = reorderFrom.current; if (from !== null && !reorderDropped.current) { const insert = reorderInsertRef.current; if (insert !== null) { const toIdx = insertToMoveIdx(from, insert); if (toIdx !== null) onReorderTrack?.(from, toIdx); } } reorderFrom.current = null; reorderDropped.current = false; reorderInsertRef.current = null; setReorderInsert(null); setReorderHint(null); }} style={{ cursor: "grab", alignSelf: "center", color: reorderHint === ti ? "var(--accent)" : "#565b66", fontSize: 13, lineHeight: "6px", letterSpacing: "1px", userSelect: "none", paddingLeft: 2 }}>
+                      {'\u2630'}
+                    </span>
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
+                      {renamingTrack === track.id ? (
+                        <input className="ti" style={{ width: "100%", fontSize: 11, padding: "2px 4px" }} autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); } if (e.key === "Escape") setRenamingTrack(null); }} onBlur={() => { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); }} />
+                      ) : (
+                        <span style={{ color: track.kind === "File" ? "#c8cdd8" : track.kind === "Video" ? "#8ea2d8" : "#7fb8a2", fontSize: trackH < 44 ? 10 : 12, lineHeight: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title="双击重命名" onDoubleClick={() => { setRenamingTrack(track.id); setRenameDraft(track.name); }}>
+                          {track.name}
+                        </span>
+                      )}
+                    </div>
+                    {(["locked", "hidden", "muted"] as const).map((f) => {
+                      const on = track[f];
+                      return (
+                        <button key={f} className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: on ? 1 : 0.4, borderColor: on ? "var(--accent)" : undefined, color: on ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, f)} title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}>
+                          {f === "locked" ? (on ? <Lock size={12} weight="fill" /> : <LockOpen size={12} />) : f === "hidden" ? (on ? <EyeSlash size={12} /> : <Eye size={12} />) : (on ? <SpeakerSlash size={12} /> : <SpeakerHigh size={12} />)}
+                        </button>
+                      );
+                    })}
+                    {track.kind === "File" && (
+                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.35, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "#5f9e73" : "#8b93a1" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
+                        视频
+                      </button>
+                    )}
+                    <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
+                      <X size={12} />
+                    </button>
+                  </div>
                 );
-              })}
-              {track.kind === "File" && (
-                <>
-                  <button
-                    className="btn"
+              }
+
+              // ===== 音频行(File 轨) =====
+              if (aH > 0) {
+                rows.push(
+                  <div
+                    key={`${track.id}-a`}
+                    className="track-head-audio"
                     style={{
-                      alignSelf: "center",
-                      padding: "2px 4px",
+                      height: aH,
                       display: "flex",
                       alignItems: "center",
-                      opacity: track.video_on !== false ? 1 : 0.35,
-                      borderColor: track.video_on !== false ? "var(--accent)" : undefined,
-                      color: track.video_on !== false ? "#5f9e73" : "#8b93a1",
+                      gap: 4,
+                      padding: "0 6px",
+                      borderBottom: "1px solid var(--border)",
                     }}
-                    title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"}
-                    onClick={() => onToggleTrackMedia?.(track.id, "video")}
                   >
-                    视频
-                  </button>
-                  <button
-                    className="btn"
-                    style={{
-                      alignSelf: "center",
-                      padding: "2px 4px",
-                      display: "flex",
-                      alignItems: "center",
-                      opacity: track.audio_on !== false ? 1 : 0.35,
-                      borderColor: track.audio_on !== false ? "var(--accent)" : undefined,
-                      color: track.audio_on !== false ? "#5f83b8" : "#8b93a1",
-                    }}
-                    title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"}
-                    onClick={() => onToggleTrackMedia?.(track.id, "audio")}
-                  >
-                    音频
-                  </button>
-                </>
-              )}
-              <button
-                className="btn"
-                style={{
-                  alignSelf: "center",
-                  padding: "2px 4px",
-                  display: "flex",
-                  alignItems: "center",
-                  color: "#a05a5a",
-                }}
-                onClick={() => onRemoveTrack?.(track.id)}
-                title={`删除轨道 ${track.name}(可撤销)`}
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
+                    {/* 音频行缩进指示 */}
+                    <div style={{ width: 20, flexShrink: 0 }} />
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+                      <span style={{ fontSize: 9, color: "#5f83b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        音频
+                      </span>
+                    </div>
+                    {track.kind === "File" && (
+                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.35, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "#5f83b8" : "#8b93a1" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
+                        音频
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+            }
+            return rows;
+          })()}
           </div>
         </div>
         {/* 轨道头列宽拖拽分隔条(pointer capture) */}

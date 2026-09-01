@@ -673,7 +673,7 @@ export default function Preview({
   return (
     <div
       style={{
-        background: "#000",
+        background: "var(--bg)",
         color: "var(--text-dim)",
         height: panelH,
         flexShrink: 0,
@@ -709,7 +709,7 @@ export default function Preview({
             width: "100%",
             height: "100%",
             overflow: "hidden",
-            background: "#000",
+            background: "var(--bg)",
           }}
           onPointerDown={onStagePointerDown}
           onPointerMove={(e) => {
@@ -773,12 +773,12 @@ export default function Preview({
                     style={{
                       width: "100%",
                       height: "100%",
-                      background: "var(--surface)",
+                      background: "var(--bg)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                       fontSize: 10,
-                      color: "#444",
+                      color: "var(--text-dim)",
                     }}
                   >
                     载入中
