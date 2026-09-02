@@ -1168,6 +1168,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               onToggleTrackMedia={onToggleTrackMedia}
               onToggleLaneView={onToggleLaneView}
               waveforms={waveforms}
+              thumbs={thumbs}
               alignEdges={alignEdges}
               onDropAsset={onDropAsset}
               dragKind={dragKind}
