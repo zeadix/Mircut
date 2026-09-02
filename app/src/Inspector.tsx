@@ -87,8 +87,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
 
   useEffect(() => {
     if (clip) {
-      setInSecs(clip.asset.source_in.toFixed(2));
-      setOutSecs(clip.asset.source_out.toFixed(2));
+      setInSecs((clip.asset.source_in ?? 0).toFixed(2));
+      setOutSecs((clip.asset.source_out ?? 0).toFixed(2));
     }
   }, [clip?.id, clip?.asset.source_in, clip?.asset.source_out]);
 
@@ -176,8 +176,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       }
       await onRefresh();
     } catch {
-      setInSecs(clip.asset.source_in.toFixed(2));
-      setOutSecs(clip.asset.source_out.toFixed(2));
+      setInSecs((clip.asset.source_in ?? 0).toFixed(2));
+      setOutSecs((clip.asset.source_out ?? 0).toFixed(2));
     }
   }
 
@@ -399,7 +399,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           </label>
         </div>
         <div style={{ color: "var(--text-dim)", marginTop: 4 }}>
-          时长 {((clip.asset.source_out - clip.asset.source_in) / clip.speed).toFixed(2)}s · 快捷键 I/O 用播放头设置
+          时长 {(((clip.asset.source_out ?? 0) - (clip.asset.source_in ?? 0)) / (clip.speed || 1)).toFixed(2)}s · 快捷键 I/O 用播放头设置
         </div>
       </fieldset>
 

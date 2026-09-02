@@ -315,6 +315,32 @@ fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
     }
 }
 
+/// 插入推挤(剪映式):插入点 `s` 右侧的块若空间不足(最近块起点 < s+duration),
+/// 右侧所有片段(含音视频配对)整体右移 `duration`,保持顺序与配对;
+/// 空隙足够则直接落位不推挤。返回需位移的 (clip_id, new_start) 列表。
+fn insert_push_right(
+    doc: &veditor_core::Document,
+    track_id: &str,
+    s: i64,
+    duration: i64,
+) -> Vec<(String, i64)> {
+    let right_starts: Vec<i64> = doc
+        .clips
+        .iter()
+        .filter(|c| c.track_id == track_id && c.start >= s)
+        .map(|c| c.start)
+        .collect();
+    let need = right_starts.iter().min().is_some_and(|&f| f < s + duration);
+    if !need {
+        return Vec::new();
+    }
+    doc.clips
+        .iter()
+        .filter(|c| c.track_id == track_id && c.start >= s)
+        .map(|c| (c.id.clone(), c.start + duration))
+        .collect()
+}
+
 #[tauri::command]
 pub(crate) fn drop_asset(
     asset_id: String,
@@ -445,29 +471,16 @@ pub(crate) fn drop_asset(
         clips_to_add.push(mk(*l, id));
     }
 
-    // 插入语义:同 lane 内落点重叠的已有片段右移让位(保持顺序)
-    let total = clips_to_add[0].duration;
-    for lane_clip in &clips_to_add {
-        let lane_val = lane_clip.lane.unwrap();
-        let overlapped: Vec<(String, i64)> = inner
-            .doc
-            .clips
-            .iter()
-            .filter(|c| {
-                c.track_id == target_track
-                    && c.lane == Some(lane_val)
-                    && c.start < lane_clip.start + lane_clip.duration
-                    && lane_clip.start < c.start + c.duration
-            })
-            .map(|c| (c.id.clone(), c.start))
-            .collect();
-        for (cid, s) in &overlapped {
-            inner.exec(Box::new(veditor_core::MoveClip::new(
-                cid.clone(),
-                s + lane_clip.duration,
-                target_track.clone(),
-            )));
-        }
+    // 插入语义(剪映式):插入点右侧空间不足时整体右移让位(见 insert_push_right)。
+    // 前端插入点已按中心点判定对齐块缘;历史调用方传入块内位置时,
+    // 由随后的 schedule_track 贪心消重叠兜底。
+    let s = start.max(0);
+    for (cid, new_start) in insert_push_right(&inner.doc, &target_track, s, duration) {
+        inner.exec(Box::new(veditor_core::MoveClip::new(
+            cid,
+            new_start,
+            target_track.clone(),
+        )));
     }
     let first_id = clips_to_add[0].id.clone();
     // 双块 id/lane 快照(循环 move 后用于对齐检查)
@@ -484,7 +497,6 @@ pub(crate) fn drop_asset(
     for c in clips_to_add {
         inner.exec(Box::new(AddClip { clip: c }));
     }
-    let _ = total;
     // 调度消重叠:双块场景不传锚(视频块作锚会把同区间的音频块
     // 当重叠者推到身后 -> 双块错位);单块保持锚位语义
     let anchor = if dual.is_some() {
@@ -933,4 +945,111 @@ pub(crate) fn freeze_frame(
     let ticks = (freeze_secs * tps as f64).round() as i64;
     inner.exec(Box::new(FreezeFrame::new(clip_id, pos, ticks)));
     true
+}
+
+#[cfg(test)]
+mod insert_push_tests {
+    use super::*;
+
+    fn file_doc() -> Document {
+        let mut doc = Document::default();
+        doc.tracks.push(Track {
+            id: "f1".into(),
+            kind: TrackKind::File,
+            name: "文件轨 1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+            video_on: true,
+            audio_on: true,
+        });
+        doc
+    }
+
+    /// 添加双块(v+a)于 start,duration=90
+    fn add_dual(doc: &mut Document, id: &str, asset: &str, start: i64) {
+        for (lid, lane) in [("v", veditor_core::Lane::Video), ("a", veditor_core::Lane::Audio)] {
+            doc.clips.push(Clip {
+                id: format!("{id}{lid}"),
+                track_id: "f1".into(),
+                start,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: asset.into(),
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+            });
+        }
+    }
+
+    #[test]
+    fn push_right_when_insufficient_space() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        // 插入点 0:右侧块 A(起点 0)空间不足 → 整体右移 90
+        let shifts = insert_push_right(&doc, "f1", 0, 90);
+        assert_eq!(
+            shifts,
+            vec![("Av".to_string(), 90), ("Aa".to_string(), 90)]
+        );
+    }
+
+    #[test]
+    fn no_push_when_gap_fits() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        add_dual(&mut doc, "B", "a2", 300);
+        // 插入点 90(空隙 [90,300) 宽 210 ≥ 90)→ 不推挤
+        let shifts = insert_push_right(&doc, "f1", 90, 90);
+        assert!(shifts.is_empty());
+    }
+
+    #[test]
+    fn push_preserves_order_and_pairs() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        add_dual(&mut doc, "B", "a2", 90);
+        add_dual(&mut doc, "C", "a3", 180);
+        // 插入点 90(A 与 B 之间):B、C 依次右移 90,配对同步
+        let mut shifts = insert_push_right(&doc, "f1", 90, 90);
+        shifts.sort();
+        assert_eq!(
+            shifts,
+            vec![
+                ("Ba".to_string(), 180),
+                ("Bv".to_string(), 180),
+                ("Ca".to_string(), 270),
+                ("Cv".to_string(), 270),
+            ]
+        );
+        // 应用后同 lane 无重叠
+        for (cid, ns) in &shifts {
+            doc.clips.iter_mut().find(|c| c.id == *cid).unwrap().start = *ns;
+        }
+        let mut vs: Vec<(i64, i64)> = doc
+            .clips
+            .iter()
+            .filter(|c| c.lane == Some(veditor_core::Lane::Video))
+            .map(|c| (c.start, c.start + c.duration))
+            .collect();
+        vs.sort();
+        for w in vs.windows(2) {
+            assert!(w[0].1 <= w[1].0, "视频 lane 重叠: {vs:?}");
+        }
+    }
+
+    #[test]
+    fn no_push_beyond_track_end() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        // 插入点在末尾之后 → 无右侧块,不推挤
+        let shifts = insert_push_right(&doc, "f1", 500, 90);
+        assert!(shifts.is_empty());
+    }
 }

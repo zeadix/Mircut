@@ -52,7 +52,7 @@ async function lightPixels(page: import("@playwright/test").Page, x0: number, x1
 test("同素材放置两次:两个文件块都可见", async ({ page }) => {
   const mk = (id: string, asset: string, start: number, lane: string): Clip => ({
     id, track_id: "f1", start, duration: 90,
-    asset: { asset_id: asset }, lane,
+    asset: { asset_id: asset, source_in: 0, source_out: 3 }, lane,
     fx: { volume: { keyframes: [{ t: 10, value: 0.5, interp: "Linear" }] } },
   });
   // 真实后端重复放置结果:新块@0,旧块被推挤到@90(同素材 a1)
@@ -75,7 +75,7 @@ test("同素材放置两次:两个文件块都可见", async ({ page }) => {
 test("不同素材放置:两个文件块都可见", async ({ page }) => {
   const mk = (id: string, asset: string, start: number, lane: string): Clip => ({
     id, track_id: "f1", start, duration: 90,
-    asset: { asset_id: asset }, lane, fx: undefined,
+    asset: { asset_id: asset, source_in: 0, source_out: 3 }, lane, fx: undefined,
   });
   await setupDocs(page, [
     mk("c1", "a1", 0, "Video"), mk("c2", "a1", 0, "Audio"),

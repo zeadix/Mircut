@@ -26,6 +26,7 @@ import { t } from "./i18n";
 import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
 import RightPanel from "./RightPanel";
+import ErrorBoundary from "./ErrorBoundary";
 
 /// 时间码显示:mm:ss.ff。
 function fmtTimecode(secs: number): string {
@@ -1057,21 +1058,23 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         {/* 媒体库 */}
-        <MediaLibrary
-          doc={doc}
-          thumbs={thumbs}
-          waveforms={waveforms}
-          onPickFolder={onPickFolder}
-          onImportFiles={onImportFiles}
-          onScanMusicDir={onScanMusicDir}
-          onDragKind={setDragKind}
-          onDragAsset={setDragAssetId}
-          onAssetPreview={setAssetPreview}
-          onAddToTimeline={addToTimeline}
-          onImportPack={onImportPack}
-          onApplyPackItem={onApplyPackItem}
-          onRefresh={refresh}
-        />
+        <ErrorBoundary label="媒体库">
+          <MediaLibrary
+            doc={doc}
+            thumbs={thumbs}
+            waveforms={waveforms}
+            onPickFolder={onPickFolder}
+            onImportFiles={onImportFiles}
+            onScanMusicDir={onScanMusicDir}
+            onDragKind={setDragKind}
+            onDragAsset={setDragAssetId}
+            onAssetPreview={setAssetPreview}
+            onAddToTimeline={addToTimeline}
+            onImportPack={onImportPack}
+            onApplyPackItem={onApplyPackItem}
+            onRefresh={refresh}
+          />
+        </ErrorBoundary>
 
         {/* 主区 */}
         <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
@@ -1149,8 +1152,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             {status}
           </div>
           <div style={{ flex: 1, minHeight: 220, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <Timeline
-              doc={doc}
+            <ErrorBoundary label="时间轴">
+              <Timeline
+                doc={doc}
               playheadTicks={playhead}
               onSeek={(t) => {
                 setPlayhead(t);
@@ -1182,20 +1186,23 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               onRemoveTrack={onRemoveTrack}
               onDuplicateClip={onDuplicateClip}
             />
+            </ErrorBoundary>
           </div>
         </main>
 
         {/* 属性检查器 / 字幕 / 文字 / 贴纸 */}
-        <RightPanel
-          doc={doc}
-          selectedClipIds={selected}
-          playhead={playhead}
-          fps={fps}
-          onRefresh={refresh}
-          onStatus={setStatus}
-          onBatchRemove={onBatchRemove}
-          onBatchAudio={onBatchAudio}
-        />
+        <ErrorBoundary label="属性面板">
+          <RightPanel
+            doc={doc}
+            selectedClipIds={selected}
+            playhead={playhead}
+            fps={fps}
+            onRefresh={refresh}
+            onStatus={setStatus}
+            onBatchRemove={onBatchRemove}
+            onBatchAudio={onBatchAudio}
+          />
+        </ErrorBoundary>
       </div>
 
       {/* 导出操作窗口(所有导出配置集中于此) */}

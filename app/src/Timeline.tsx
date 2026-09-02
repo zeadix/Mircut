@@ -1213,6 +1213,26 @@ function TimelineInner({
     return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 6, alignEdges ?? []);
   }
 
+  /// File 轨插入点判定(剪映式):
+  /// - 光标压在某块上:按块中心点判向 —— 左半 → 贴该块左缘(插队到它前面),
+  ///   右半 → 贴右缘(插到它后面);
+  /// - 光标在空隙/空白:磁吸吸附(片段边缘/整秒刻度)。
+  /// excludeIds:移动自身块时排除,避免旧位置拦截判定。
+  function insertionStartFor(trackId: string, t: number, excludeIds: Set<string>): number {
+    const track = doc.tracks.find((tr) => tr.id === trackId);
+    if (track?.kind !== "File") return snapTicks(t);
+    const hit = doc.clips.find(
+      (c) =>
+        c.track_id === trackId &&
+        !excludeIds.has(c.id) &&
+        t >= c.start &&
+        t < c.start + c.duration
+    );
+    if (!hit) return snapTicks(t);
+    const center = hit.start + hit.duration / 2;
+    return t < center ? hit.start : hit.start + hit.duration;
+  }
+
   function hitTest(t: number, clientX: number, clientY?: number): { clipId: string; edge: "left" | "right" | "body" } | null {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
@@ -1589,16 +1609,27 @@ function TimelineInner({
       const gh = isFile ? TIME_ROW_H + VIDEO_ROW_H + AUDIO_ROW_H - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       const rawStart = Math.max(0, t - grab);
-      // 磁吸插入
+      // 插入点判定:File 轨单块移动用中心点语义(光标压块判左/右),
+      // 空隙处磁吸;多选组移动与普通轨保留原磁吸逻辑
       const mt = moveTargetRef.current;
-      const magStart = computeMagneticStart(
-        rawStart,
-        clip,
-        doc.clips,
-        laneOf,
-        mt?.trackId ?? clip.track_id,
-        mt?.lane ?? null
-      );
+      const groupMoving = !!moveGroupRef.current && moveGroupRef.current.ids.length > 0;
+      const fileTarget = doc.tracks.find((tr) => tr.id === (mt?.trackId ?? ""))?.kind === "File";
+      let magStart: number;
+      if (fileTarget && !groupMoving) {
+        const exclude = new Set([clip.id]);
+        const sib0 = siblingClip(clip);
+        if (sib0) exclude.add(sib0.id);
+        magStart = insertionStartFor(mt?.trackId ?? clip.track_id, t, exclude);
+      } else {
+        magStart = computeMagneticStart(
+          rawStart,
+          clip,
+          doc.clips,
+          laneOf,
+          mt?.trackId ?? clip.track_id,
+          mt?.lane ?? null
+        );
+      }
       setGhost({
         clipId: d.clipId,
         start: magStart,
@@ -1732,21 +1763,32 @@ function TimelineInner({
       if (clip && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const rawT = ticksFromClientX(e.clientX) - grab;
-        const magStart = computeMagneticStart(
-          rawT,
-          clip,
-          doc.clips,
-          laneOf,
-          target.trackId,
-          target.lane ?? null
-        );
+        const cursorT = ticksFromClientX(e.clientX);
         const group = moveGroupRef.current;
         moveGroupRef.current = null;
         // File 轨双块:主块移动时同步兄弟块
         const primaryClip = doc.clips.find((c) => c.id === d.clipId);
         const sib = primaryClip ? siblingClip(primaryClip) : null;
+        const fileTarget = doc.tracks.find((tr) => tr.id === target.trackId)?.kind === "File";
+        const groupMoving = !!group && group.ids.length > 0;
+        // 插入点判定:File 轨单块移动用中心点语义;其余磁吸
+        const magStart =
+          fileTarget && !groupMoving
+            ? insertionStartFor(
+                target.trackId,
+                cursorT,
+                new Set(sib ? [d.clipId, sib.id] : [d.clipId])
+              )
+            : computeMagneticStart(
+                rawT,
+                clip,
+                doc.clips,
+                laneOf,
+                target.trackId,
+                target.lane ?? null
+              );
         const entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[] = [];
-        if (group && group.ids.length > 0 && onMoveClips) {
+        if (groupMoving && onMoveClips) {
           const delta = magStart - clip.start;
           entries.push(
             { clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null },
@@ -1762,23 +1804,40 @@ function TimelineInner({
         } else {
           entries.push({ clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null });
         }
-        // 兄弟块同位移
+        // 兄弟块随移动对齐到同一插入点(双块保持同起同宽)
         if (sib) {
-          const delta = magStart - clip.start;
           entries.push({
             clipId: sib.id,
-            newStart: Math.max(0, sib.start + delta),
+            newStart: Math.max(0, magStart),
             newTrackId: sib.track_id,
             lane: sib.lane ?? null,
           });
+        }
+        // File 轨插入推挤:插入点右侧块若空间不足,整体右移新块时长(含音视频配对)
+        if (fileTarget && !groupMoving) {
+          const D = clip.duration;
+          const excludeIds = new Set(sib ? [d.clipId, sib.id] : [d.clipId]);
+          const rightClips = doc.clips
+            .filter((c) => c.track_id === target.trackId && c.start >= magStart && !excludeIds.has(c.id))
+            .sort((a, b) => a.start - b.start);
+          const firstStart = rightClips[0]?.start;
+          if (firstStart !== undefined && firstStart < magStart + D) {
+            for (const c of rightClips) {
+              entries.push({
+                clipId: c.id,
+                newStart: c.start + D,
+                newTrackId: target.trackId,
+                lane: c.lane ?? null,
+              });
+            }
+          }
         }
         if (onMoveClips && entries.length > 0) {
           onMoveClips(entries);
         } else if (onClipMove) {
           onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
           if (sib) {
-            const delta = magStart - clip.start;
-            onClipMove(sib.id, Math.max(0, sib.start + delta), sib.track_id);
+            onClipMove(sib.id, Math.max(0, magStart), sib.track_id);
           }
         }
       }
@@ -1810,7 +1869,7 @@ function TimelineInner({
     const rect = canvas.getBoundingClientRect();
     const yIn = e.clientY - rect.top;
     // 落点吸附(与轮廓显示一致:所见即所放)
-    const t = Math.max(0, snapTicks(Math.round((e.clientX - rect.left) / pxPerTick)));
+    const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
     // 轨道内容区下方空白 → 新建 File 轨
     if (yIn >= geo.totalH) {
       return { trackId: "__newlayer__", start: t, lane: null };
@@ -1850,11 +1909,13 @@ function TimelineInner({
       rowAcc += rows;
     }
     if (targetTrackIdx < 0) {
-      return { trackId: "__newlayer__", start: t, lane: null };
+      return { trackId: "__newlayer__", start: snapTicks(t), lane: null };
     }
     const track = doc.tracks[targetTrackIdx];
     if (track.locked) return null;
-    return { trackId: track.id, start: t, lane: targetLane };
+    // File 轨:中心点插入判定(压块左/右半 → 贴块左/右缘);其余磁吸吸附
+    const start = insertionStartFor(track.id, t, new Set());
+    return { trackId: track.id, start, lane: targetLane };
   }
 
   function onDragOver(e: React.DragEvent) {
