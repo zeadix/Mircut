@@ -586,7 +586,10 @@ function TimelineInner({
           }
 
           // ===== 音量包络曲线 =====
+          // 几何与命中检测(clipLaneGeo)严格一致:所见即所抓
           if (audioH >= 18 && cw > 8) {
+            const envLaneTop = audioTop + 2;
+            const envLaneH = audioH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
             ctx.strokeStyle = "rgba(255,255,255,0.55)";
@@ -594,7 +597,7 @@ function TimelineInner({
             const ex0 = Math.max(x, vx0);
             const ex1 = Math.min(x + cw, vx1);
             for (let px = ex0; px <= ex1; px += 4) {
-              const py = envY(vAt(px / pxPerTick - audioClip.start), audioTop, audioH);
+              const py = envY(vAt(px / pxPerTick - audioClip.start), envLaneTop, envLaneH);
               if (px === ex0) ctx.moveTo(px, py);
               else ctx.lineTo(px, py);
             }
@@ -606,7 +609,7 @@ function TimelineInner({
               const kx = (audioClip.start + k.t) * pxPerTick;
               if (kx < vx0 - 4 || kx > vx1 + 4) continue;
               ctx.beginPath();
-              ctx.arc(kx, envY(k.value, audioTop, audioH), 2.5, 0, Math.PI * 2);
+              ctx.arc(kx, envY(k.value, envLaneTop, envLaneH), 2.5, 0, Math.PI * 2);
               ctx.fill();
             }
 
@@ -615,7 +618,7 @@ function TimelineInner({
               const lx = (audioClip.start + envLive.tLocal) * pxPerTick;
               ctx.fillStyle = "#ff9f43";
               ctx.beginPath();
-              ctx.arc(lx, envY(envLive.v, audioTop, audioH), 3.5, 0, Math.PI * 2);
+              ctx.arc(lx, envY(envLive.v, envLaneTop, envLaneH), 3.5, 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -1329,7 +1332,8 @@ function TimelineInner({
       }
       if (isAudioBlock && laneGeo && hit.edge === "body") {
         const vAt = valueAt(clip.fx?.volume?.keyframes ?? [], t - clip.start) ?? clip.volume;
-        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 6) {
+        // 容差 9px:包络线附近即抓取,其余区域整体移动文件块
+        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 9) {
           onClipClick(clip.id, false);
           dragRef.current = { kind: "envelope", clipId: clip.id };
           setEnvLive({ clipId: clip.id, tLocal: Math.max(0, t - clip.start), v: vAt });
