@@ -1,5 +1,5 @@
 //! 时间轴:片段/轨道/标记/撤销重做/拖放/修剪命令(自动拆分自 main.rs)。
-use crate::state::{AppState, Inner};
+use crate::state::{AppState, Inner, file_track_fixup_commands};
 use tauri::State;
 use veditor_core::{
     AddClip, AddMarker, AddTrack, AssetRef, Clip, Command, Compound, DetachAudio, Document,
@@ -156,7 +156,37 @@ pub(crate) fn remove_marker(t: Ticks, state: State<'_, AppState>) -> bool {
 #[tauri::command]
 pub(crate) fn split_clip(clip_id: String, pos: Ticks, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    inner.exec(Box::new(SplitClip::new(clip_id, pos)));
+    let mut cmds: Vec<Box<dyn Command>> = vec![Box::new(SplitClip::new(clip_id.clone(), pos))];
+    // File 轨双块联动:同轨同素材同起点的另一半(视频/音频)同步分割,
+    // 保持视频/音频配对完整(否则另一半时长不匹配,块分组/渲染/命中错乱)
+    let sib_ids: Vec<String> = {
+        let Some(c) = inner.doc.clip(&clip_id) else {
+            return false;
+        };
+        let is_file = inner.doc.track(&c.track_id).map(|t| t.kind) == Some(TrackKind::File);
+        if !is_file {
+            vec![]
+        } else {
+            inner
+                .doc
+                .clips
+                .iter()
+                .filter(|x| {
+                    x.id != clip_id
+                        && x.track_id == c.track_id
+                        && x.asset.asset_id == c.asset.asset_id
+                        && x.start == c.start
+                        && x.duration == c.duration
+                        && x.lane != c.lane
+                })
+                .map(|x| x.id.clone())
+                .collect()
+        }
+    };
+    for sid in sib_ids {
+        cmds.push(Box::new(SplitClip::new(sid, pos)));
+    }
+    inner.exec(Box::new(veditor_core::Compound::new("分割片段", cmds)));
     true
 }
 
@@ -251,27 +281,59 @@ pub(crate) fn move_clip(
         "Audio" => veditor_core::Lane::Audio,
         _ => veditor_core::Lane::Video,
     });
-    let mut cmd = veditor_core::MoveClip::new(clip_id.clone(), new_start, new_track_id.clone());
     let is_file_target = inner
         .doc
         .track(&new_track_id)
         .is_some_and(|t| t.kind == TrackKind::File);
+    // 模拟应用,计算 File 轨块级修正(与移动合并为一个原子 Compound)
+    let mut sim = inner.doc.clone();
+    if let Some(c) = sim.clips.iter_mut().find(|c| c.id == clip_id) {
+        c.start = new_start;
+        c.track_id = new_track_id.clone();
+        if let Some(lv) = lane_val {
+            c.lane = Some(lv);
+        }
+    }
+    let mut cmds: Vec<Box<dyn Command>> = Vec::new();
+    let mut cmd = veditor_core::MoveClip::new(clip_id.clone(), new_start, new_track_id.clone());
     if let (Some(lv), true) = (lane_val, is_file_target) {
         cmd = cmd.with_lane(Some(lv));
     }
-    inner.exec(Box::new(cmd));
-    // 磁吸推挤:消除落点重叠(moved 保位,按块所在 lane 分别调度)
-    inner.schedule_track(&new_track_id, Some(&clip_id));
+    cmds.push(Box::new(cmd));
+    if is_file_target {
+        cmds.extend(file_track_fixup_commands(&sim, &new_track_id, &[clip_id.clone()]));
+    }
+    inner.exec(Box::new(veditor_core::Compound::new("移动片段", cmds)));
+    if !is_file_target {
+        // 磁吸推挤:消除落点重叠(moved 保位,按块所在 lane 分别调度)
+        inner.schedule_track(&new_track_id, Some(&clip_id));
+    }
     true
 }
 
-/// 批量移动(组合命令):多选组拖拽,一次撤销整体回退。
-/// 每项可带目标轨道(主拖拽块换轨)与 lane(文件轨半区);随后逐轨调度消重叠。
+/// 批量移动(组合命令):多选组拖拽/文件块移动,一次撤销整体回退。
+/// File 轨:entries 应用后做块级修正(音视频配对对齐 + 块重叠级联),
+/// 全部合并进同一个 Compound,不再用 lane 级贪心调度覆盖前端布局。
 #[tauri::command]
 pub(crate) fn move_clips(entries: Vec<MoveEntry>, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
+    // 模拟应用 entries,据此计算块级修正
+    let mut sim = inner.doc.clone();
+    for e in &entries {
+        if let Some(c) = sim.clips.iter_mut().find(|c| c.id == e.clip_id) {
+            c.start = e.new_start;
+            c.track_id = e.new_track_id.clone();
+            if let Some(l) = &e.lane {
+                c.lane = Some(match l.as_str() {
+                    "Audio" => veditor_core::Lane::Audio,
+                    _ => veditor_core::Lane::Video,
+                });
+            }
+        }
+    }
     let mut cmds: Vec<Box<dyn Command>> = Vec::new();
     let mut tracks: Vec<String> = Vec::new();
+    let mut moved_ids: Vec<String> = Vec::new();
     for e in &entries {
         let mut cmd =
             veditor_core::MoveClip::new(e.clip_id.clone(), e.new_start, e.new_track_id.clone());
@@ -285,11 +347,18 @@ pub(crate) fn move_clips(entries: Vec<MoveEntry>, state: State<'_, AppState>) ->
         if !tracks.contains(&e.new_track_id) {
             tracks.push(e.new_track_id.clone());
         }
+        moved_ids.push(e.clip_id.clone());
         cmds.push(Box::new(cmd));
     }
-    inner.exec(Box::new(veditor_core::Compound::new("批量移动片段", cmds)));
     for t in &tracks {
-        inner.schedule_track(t, None);
+        cmds.extend(file_track_fixup_commands(&sim, t, &moved_ids));
+    }
+    inner.exec(Box::new(veditor_core::Compound::new("批量移动片段", cmds)));
+    // 非 File 轨保留原 lane 级调度;File 轨已块级修正
+    for t in &tracks {
+        if inner.doc.track(t).map(|t| t.kind) != Some(TrackKind::File) {
+            inner.schedule_track(t, None);
+        }
     }
     true
 }
@@ -315,47 +384,43 @@ fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
     }
 }
 
-/// 插入级联推挤(剪映式):插入块占据 [s, s+duration) 后,插入点右侧
-/// (末端超过 s)的块按 lane 独立级联做**最小位移** —— 与前一块的新位置
-/// 重叠才移动并贴齐(收尾相接);间隙足够则不动(不再调整后续块)。
-/// 双块配对两 lane 布局镜像,级联结果天然同步。
-/// 返回发生位移的 (clip_id, new_start) 列表。
-fn insert_push_right(
+/// 块级插入推挤:插入块占据 [s, s+d) 后,末端越过 s 的现有文件块
+/// (视频+音频配对)按起点顺序级联最小位移右移(整块一起动,收尾相接)。
+/// 返回 (clip_id, new_start) 列表。
+fn block_insert_push(
     doc: &veditor_core::Document,
     track_id: &str,
     s: i64,
     duration: i64,
 ) -> Vec<(String, i64)> {
+    let mut vids: Vec<(String, i64, i64, String)> = doc
+        .clips
+        .iter()
+        .filter(|c| {
+            c.track_id == track_id
+                && c.start + c.duration > s
+                && (c.lane == Some(veditor_core::Lane::Video) || c.lane.is_none())
+        })
+        .map(|c| (c.id.clone(), c.start, c.duration, c.asset.asset_id.clone()))
+        .collect();
+    vids.sort_by_key(|(_, st, _, _)| *st);
     let mut changes: Vec<(String, i64)> = Vec::new();
-    // Video 组(None lane 的历史数据归入 Video);Audio 组独立级联
-    for lane in [Some(veditor_core::Lane::Video), Some(veditor_core::Lane::Audio)] {
-        let mut lane_clips: Vec<(String, i64, i64)> = doc
-            .clips
-            .iter()
-            .filter(|c| {
+    let mut placed_end = s + duration;
+    for (vid, st, dur, asset) in vids {
+        let ns = st.max(placed_end);
+        if ns != st {
+            changes.push((vid.clone(), ns));
+            // 音频兄弟(同轨同素材同起点)一起移动
+            if let Some(a) = doc.clips.iter().find(|c| {
                 c.track_id == track_id
-                    && c.start + c.duration > s
-                    && match lane {
-                        Some(veditor_core::Lane::Video) => {
-                            c.lane == Some(veditor_core::Lane::Video) || c.lane.is_none()
-                        }
-                        Some(veditor_core::Lane::Audio) => {
-                            c.lane == Some(veditor_core::Lane::Audio)
-                        }
-                        None => false,
-                    }
-            })
-            .map(|c| (c.id.clone(), c.start, c.duration))
-            .collect();
-        lane_clips.sort_by_key(|(_, st, _)| *st);
-        let mut placed_end = s + duration; // 插入块末端
-        for (cid, st, dur) in lane_clips {
-            let ns = st.max(placed_end);
-            if ns != st {
-                changes.push((cid, ns));
+                    && c.lane == Some(veditor_core::Lane::Audio)
+                    && c.asset.asset_id == asset
+                    && c.start == st
+            }) {
+                changes.push((a.id.clone(), ns));
             }
-            placed_end = ns + dur;
         }
+        placed_end = ns + dur;
     }
     changes
 }
@@ -490,11 +555,11 @@ pub(crate) fn drop_asset(
         clips_to_add.push(mk(*l, id));
     }
 
-    // 插入语义(剪映式):插入点右侧空间不足时整体右移让位(见 insert_push_right)。
+    // 块级插入推挤:现有文件块(视频+音频配对)整体级联右移让位。
     // 前端插入点已按中心点判定对齐块缘;历史调用方传入块内位置时,
-    // 由随后的 schedule_track 贪心消重叠兜底。
+    // 由末尾的块级修正兜底。
     let s = start.max(0);
-    for (cid, new_start) in insert_push_right(&inner.doc, &target_track, s, duration) {
+    for (cid, new_start) in block_insert_push(&inner.doc, &target_track, s, duration) {
         inner.exec(Box::new(veditor_core::MoveClip::new(
             cid,
             new_start,
@@ -502,52 +567,13 @@ pub(crate) fn drop_asset(
         )));
     }
     let first_id = clips_to_add[0].id.clone();
-    // 双块 id/lane 快照(循环 move 后用于对齐检查)
-    let dual = if clips_to_add.len() == 2 {
-        let is_v_first = clips_to_add[0].lane == Some(veditor_core::Lane::Video);
-        Some((
-            clips_to_add[0].id.clone(),
-            clips_to_add[1].id.clone(),
-            is_v_first,
-        ))
-    } else {
-        None
-    };
+    let new_ids: Vec<String> = clips_to_add.iter().map(|c| c.id.clone()).collect();
     for c in clips_to_add {
         inner.exec(Box::new(AddClip { clip: c }));
     }
-    // 调度消重叠:双块场景不传锚(视频块作锚会把同区间的音频块
-    // 当重叠者推到身后 -> 双块错位);单块保持锚位语义
-    let anchor = if dual.is_some() {
-        None
-    } else {
-        Some(first_id.as_str())
-    };
-    inner.schedule_track(&target_track, anchor);
-    // 双块对齐保障:磁吸推挤可能把视频/音频块推到不同起点,
-    // 以视频块位置为准强制音频块对齐(同 start/同 duration)
-    if let Some((id0, id1, is_v_first)) = dual {
-        let (vid, aid) = if is_v_first { (id0, id1) } else { (id1, id0) };
-        let (v_start, v_dur) = match inner.doc.clip(&vid) {
-            Some(v) => (v.start, v.duration),
-            None => return Ok(first_id),
-        };
-        let needs = inner
-            .doc
-            .clip(&aid)
-            .map(|a| a.start != v_start || a.duration != v_dur)
-            .unwrap_or(false);
-        if needs {
-            inner.exec(Box::new(veditor_core::MoveClip::new(
-                aid.clone(),
-                v_start,
-                target_track.clone(),
-            )));
-            // duration 对齐(TrimClip:同 start,无源位移)
-            inner.exec(Box::new(veditor_core::TrimClip::new(
-                aid, v_start, v_dur, 0.0,
-            )));
-        }
+    // 块级修正:音视频配对对齐 + 块重叠兜底(新插入块为锚,保位)
+    for cmd in file_track_fixup_commands(&inner.doc, &target_track, &new_ids) {
+        inner.exec(cmd);
     }
     Ok(first_id)
 }
@@ -669,7 +695,14 @@ pub(crate) fn set_clip_range(
         new_duration.max(1),
         delta,
     )));
-    inner.schedule_track(&track, Some(&clip_id));
+    if inner.doc.track(&track).map(|t| t.kind) == Some(TrackKind::File) {
+        // File 轨块级修正(配对对齐 + 重叠兜底;改动块保位)
+        for cmd in file_track_fixup_commands(&inner.doc, &track, &[clip_id.clone()]) {
+            inner.exec(cmd);
+        }
+    } else {
+        inner.schedule_track(&track, Some(&clip_id));
+    }
     Ok(())
 }
 
@@ -777,8 +810,14 @@ pub(crate) fn trim_clip(
             }
         }
     } else {
-        // 消重叠(头/尾变化可能引发新的相邻重叠)
-        inner.schedule_track(&track_id, Some(&clip_id));
+        // 消重叠兜底:File 轨用块级修正(配对对齐+块级联);普通轨 lane 级
+        if inner.doc.track(&track_id).map(|t| t.kind) == Some(TrackKind::File) {
+            for cmd in file_track_fixup_commands(&inner.doc, &track_id, &[]) {
+                inner.exec(cmd);
+            }
+        } else {
+            inner.schedule_track(&track_id, Some(&clip_id));
+        }
     }
     Ok(())
 }
@@ -967,8 +1006,9 @@ pub(crate) fn freeze_frame(
 }
 
 #[cfg(test)]
-mod insert_push_tests {
+mod block_arrange_tests {
     use super::*;
+    use crate::state::{FileFixup, file_track_fixup};
 
     fn file_doc() -> Document {
         let mut doc = Document::default();
@@ -987,9 +1027,9 @@ mod insert_push_tests {
 
     /// 添加双块(v+a)于 start,duration=90
     fn add_dual(doc: &mut Document, id: &str, asset: &str, start: i64) {
-        for (lid, lane) in [("v", veditor_core::Lane::Video), ("a", veditor_core::Lane::Audio)] {
+        for (suffix, lane) in [("v", veditor_core::Lane::Video), ("a", veditor_core::Lane::Audio)] {
             doc.clips.push(Clip {
-                id: format!("{id}{lid}"),
+                id: format!("{id}{suffix}"),
                 track_id: "f1".into(),
                 start,
                 duration: 90,
@@ -1007,56 +1047,81 @@ mod insert_push_tests {
         }
     }
 
+    fn sorted(mut v: Vec<(String, i64)>) -> Vec<(String, i64)> {
+        v.sort();
+        v
+    }
+
+    // ===== block_insert_push =====
+
     #[test]
-    fn push_right_when_insufficient_space() {
+    fn block_push_moves_pair_together() {
         let mut doc = file_doc();
         add_dual(&mut doc, "A", "a1", 0);
-        // 插入点 0:右侧块 A(起点 0)空间不足 → 整体右移 90
-        let shifts = insert_push_right(&doc, "f1", 0, 90);
-        assert_eq!(
-            shifts,
-            vec![("Av".to_string(), 90), ("Aa".to_string(), 90)]
-        );
+        // 插入点 0:块 A(视频+音频)整体右移 90
+        let shifts = block_insert_push(&doc, "f1", 0, 90);
+        assert_eq!(sorted(shifts), sorted(vec![("Av".into(), 90), ("Aa".into(), 90)]));
     }
 
     #[test]
-    fn no_push_when_gap_fits() {
+    fn block_push_skips_far_blocks() {
         let mut doc = file_doc();
         add_dual(&mut doc, "A", "a1", 0);
         add_dual(&mut doc, "B", "a2", 300);
-        // 插入点 90(空隙 [90,300) 宽 210 ≥ 90)→ 不推挤
-        let shifts = insert_push_right(&doc, "f1", 90, 90);
-        assert!(shifts.is_empty());
+        // 插入点 90(空隙足够)→ B 不动
+        assert!(block_insert_push(&doc, "f1", 90, 90).is_empty());
     }
 
     #[test]
-    fn push_preserves_order_and_pairs() {
+    fn block_push_chain_flush() {
         let mut doc = file_doc();
         add_dual(&mut doc, "A", "a1", 0);
         add_dual(&mut doc, "B", "a2", 90);
         add_dual(&mut doc, "C", "a3", 180);
-        // 插入点 90(A 与 B 之间):B、C 依次右移 90,配对同步
-        let mut shifts = insert_push_right(&doc, "f1", 90, 90);
-        shifts.sort();
+        // 三个块首尾相接,插入点 0:全部依次右移 90,仍首尾相接
+        let shifts = block_insert_push(&doc, "f1", 0, 90);
         assert_eq!(
-            shifts,
-            vec![
-                ("Ba".to_string(), 180),
-                ("Bv".to_string(), 180),
-                ("Ca".to_string(), 270),
-                ("Cv".to_string(), 270),
-            ]
+            sorted(shifts),
+            sorted(vec![
+                ("Av".into(), 90), ("Aa".into(), 90),
+                ("Bv".into(), 180), ("Ba".into(), 180),
+                ("Cv".into(), 270), ("Ca".into(), 270),
+            ])
         );
-        // 应用后同 lane 无重叠
-        for (cid, ns) in &shifts {
-            doc.clips.iter_mut().find(|c| c.id == *cid).unwrap().start = *ns;
-        }
-        let mut vs: Vec<(i64, i64)> = doc
-            .clips
-            .iter()
+    }
+
+    // ===== file_track_fixup =====
+
+    #[test]
+    fn fixup_aligns_desynced_pair() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        // 人为错位:音频起点/时长漂移
+        doc.clips.iter_mut().find(|c| c.id == "Aa").unwrap().start = 5;
+        doc.clips.iter_mut().find(|c| c.id == "Aa").unwrap().duration = 80;
+        let fixups = file_track_fixup(&mut doc, "f1", &[]);
+        // 音频对齐视频:start=0, duration=90
+        assert!(fixups.iter().any(|f| matches!(f, FileFixup::Move { id, start: 0 } if id == "Aa")));
+        assert!(fixups.iter().any(|f| matches!(f, FileFixup::Trim { id, duration: 90, .. } if id == "Aa")));
+        let a = doc.clip("Aa").unwrap();
+        assert_eq!(a.start, 0);
+        assert_eq!(a.duration, 90);
+    }
+
+    #[test]
+    fn fixup_cascades_overlapping_blocks_with_pairs() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        add_dual(&mut doc, "B", "a2", 50); // 与 A 重叠
+        let _ = file_track_fixup(&mut doc, "f1", &[]);
+        // B 被级联到 A 末端(90),视频+音频一起
+        assert_eq!(doc.clip("Bv").unwrap().start, 90);
+        assert_eq!(doc.clip("Ba").unwrap().start, 90);
+        assert_eq!(doc.clip("Ba").unwrap().duration, 90);
+        // 应用后无重叠
+        let mut vs: Vec<(i64, i64)> = doc.clips.iter()
             .filter(|c| c.lane == Some(veditor_core::Lane::Video))
-            .map(|c| (c.start, c.start + c.duration))
-            .collect();
+            .map(|c| (c.start, c.start + c.duration)).collect();
         vs.sort();
         for w in vs.windows(2) {
             assert!(w[0].1 <= w[1].0, "视频 lane 重叠: {vs:?}");
@@ -1064,49 +1129,23 @@ mod insert_push_tests {
     }
 
     #[test]
-    fn no_push_beyond_track_end() {
+    fn fixup_anchor_block_stays_put() {
         let mut doc = file_doc();
         add_dual(&mut doc, "A", "a1", 0);
-        // 插入点在末尾之后 → 无右侧块,不推挤
-        let shifts = insert_push_right(&doc, "f1", 500, 90);
-        assert!(shifts.is_empty());
+        add_dual(&mut doc, "B", "a2", 50);
+        // B 为锚(新插入/被移动块):A 被推到 B 之后
+        let _ = file_track_fixup(&mut doc, "f1", &["Bv".into(), "Ba".into()]);
+        assert_eq!(doc.clip("Bv").unwrap().start, 50, "锚块保位");
+        assert_eq!(doc.clip("Av").unwrap().start, 140, "A 贴齐 B 末端(140)");
+        assert_eq!(doc.clip("Aa").unwrap().start, 140);
     }
 
     #[test]
-    fn cascade_squeezes_flush_and_stops_at_gap() {
-        let mut doc = file_doc();
-        add_dual(&mut doc, "A", "a1", 0); // [0,90)
-        add_dual(&mut doc, "B", "a2", 100); // [100,190) 与 A 间有 10 空隙
-        add_dual(&mut doc, "C", "a3", 500); // [500,590) 远后方大空隙
-        // 插入点 90 d=90(占 [90,180)):B 与插入块重叠 → 贴齐 180(收尾相接);
-        // C 与 B 新位置(270)不重叠 → 不动
-        let mut shifts = insert_push_right(&doc, "f1", 90, 90);
-        shifts.sort();
-        assert_eq!(
-            shifts,
-            vec![("Ba".to_string(), 180), ("Bv".to_string(), 180)]
-        );
-    }
-
-    #[test]
-    fn cascade_still_flush_when_chain() {
+    fn fixup_keeps_gaps() {
         let mut doc = file_doc();
         add_dual(&mut doc, "A", "a1", 0);
-        add_dual(&mut doc, "B", "a2", 90);
-        add_dual(&mut doc, "C", "a3", 180);
-        // 三个块首尾相接,插入点 0:全部依次右移 90,仍首尾相接
-        let mut shifts = insert_push_right(&doc, "f1", 0, 90);
-        shifts.sort();
-        assert_eq!(
-            shifts,
-            vec![
-                ("Aa".to_string(), 90),
-                ("Av".to_string(), 90),
-                ("Ba".to_string(), 180),
-                ("Bv".to_string(), 180),
-                ("Ca".to_string(), 270),
-                ("Cv".to_string(), 270),
-            ]
-        );
+        add_dual(&mut doc, "B", "a2", 300);
+        let _ = file_track_fixup(&mut doc, "f1", &[]);
+        assert_eq!(doc.clip("Bv").unwrap().start, 300, "大间隙不压缩");
     }
 }

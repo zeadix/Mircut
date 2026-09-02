@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Clip, Document, Track } from "./types";
-import { snapToEdges, computeMagneticStart, cascadePush } from "./snap";
+import { snapToEdges, computeMagneticStart, cascadePushBlocks, buildFileBlocks } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
@@ -589,8 +589,8 @@ function TimelineInner({
           }
 
           // ===== 音量包络曲线 =====
-          // 几何与命中检测(clipLaneGeo)严格一致:所见即所抓
-          if (audioH >= 18 && cw > 8) {
+          // 始终绘制(所见即可编辑);窄块简化为只画线+关键帧点,不画文字
+          if (audioH > 0 && cw > 2) {
             const envLaneTop = audioTop + 2;
             const envLaneH = audioH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
@@ -626,10 +626,12 @@ function TimelineInner({
             }
           }
 
-          // 音量指示
-          ctx.fillStyle = "#34c759";
-          ctx.font = "9px sans-serif";
-          ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, audioTop + 12);
+          // 音量指示(块足够宽才显示)
+          if (cw > 60) {
+            ctx.fillStyle = "#34c759";
+            ctx.font = "9px sans-serif";
+            ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, audioTop + 12);
+          }
         }
       }
     }
@@ -744,41 +746,44 @@ function TimelineInner({
     const vx0 = sx;
     const vx1 = sx + viewW;
 
-    // ===== File 轨道:按文件块分组渲染(整体跨三行) =====
-    // 收集已渲染的文件块(避免重复渲染)
-    const renderedFileBlocks = new Set<string>();
+    // ===== File 轨道:按文件块渲染(视频/音频配对为一个整体,跨三行) =====
+    for (const track of doc.tracks) {
+      if (track.kind !== "File") continue;
+      for (const b of buildFileBlocks(doc.clips, track.id)) {
+        const repId = b.videoId ?? b.audioId;
+        const rep = repId ? doc.clips.find((c) => c.id === repId) : undefined;
+        if (!rep) continue;
+        const row = clipRow(rep);
+        if (!row) continue;
 
+        const blockClips: { clip: Clip; lane: "Video" | "Audio" }[] = [];
+        if (b.videoId) {
+          const c = doc.clips.find((c) => c.id === b.videoId);
+          if (c) blockClips.push({ clip: c, lane: "Video" });
+        }
+        if (b.audioId) {
+          const c = doc.clips.find((c) => c.id === b.audioId);
+          if (c) blockClips.push({ clip: c, lane: "Audio" });
+        }
+
+        const x = rep.start * pxPerTick;
+        const cw = rep.duration * pxPerTick;
+        if (x + cw < vx0 || x > vx1) continue; // 视口裁剪
+
+        const selected = blockClips.some((bc) => selectedSet.has(bc.clip.id));
+        const hovered = hoveredClipId === `${track.id}-${b.assetId}-${b.start}`;
+
+        renderFileBlock(ctx, blockClips, row, rep, track, x, cw, selected, hovered, vx0, vx1);
+      }
+    }
+
+    // ===== Video/Audio 轨道:逐 clip 渲染 =====
     for (const clip of doc.clips) {
       const row = clipRow(clip);
       if (!row) continue;
       const track = doc.tracks.find((t) => t.id === clip.track_id);
-      if (!track) continue;
+      if (!track || track.kind === "File") continue;
 
-      // 只有 File 轨道使用文件块渲染
-      if (track.kind === "File") {
-        // 块标识:轨道+素材+起点(同素材可重复放置,不同起点=不同块)
-        const blockKey = `${clip.track_id}-${clip.asset.asset_id}-${clip.start}`;
-        if (renderedFileBlocks.has(blockKey)) continue;
-        renderedFileBlocks.add(blockKey);
-
-        // 获取该文件块的所有 clip(同轨同素材同起点:视频+音频配对)
-        const blockClips = doc.clips
-          .filter((c) => c.track_id === clip.track_id && c.asset.asset_id === clip.asset.asset_id && c.start === clip.start)
-          .map((c) => ({ clip: c, lane: c.lane === "Audio" ? "Audio" as const : "Video" as const }));
-
-        const x = clip.start * pxPerTick;
-        const cw = clip.duration * pxPerTick;
-        if (x + cw < vx0 || x > vx1) continue; // 视口裁剪
-
-        const selected = blockClips.some((bc) => selectedSet.has(bc.clip.id));
-        const hovered = hoveredClipId === blockKey;
-
-        // 使用文件块渲染函数
-        renderFileBlock(ctx, blockClips, row, clip, track, x, cw, selected, hovered, vx0, vx1);
-        continue;
-      }
-
-      // ===== Video/Audio 轨道:保持原有渲染逻辑 =====
       // 轨道头合成开关:关闭的 lane 完全不绘制(视觉"不显示该轨")
       if (track.kind === "Video" && clip.lane === "Audio") continue;
       if (track.kind === "Audio" && clip.lane === "Video") continue;
@@ -1799,12 +1804,12 @@ function TimelineInner({
             lane: sib.lane ?? null,
           });
         }
-        // File 轨插入级联推挤:插入点右侧块做最小位移让位 ——
-        // 与前一块新位置重叠才移动并贴齐(收尾相接);间隙足够不动。
+        // File 轨块级插入级联推挤:视频/音频作为整体移动 ——
+        // 与前一块的新位置重叠才移动并贴齐(收尾相接);间隙足够不动。
         if (fileTarget && !groupMoving) {
           const D = clip.duration;
           const excludeIds = new Set(sib ? [d.clipId, sib.id] : [d.clipId]);
-          for (const p of cascadePush(doc.clips, target.trackId, magStart, D, laneOf, excludeIds)) {
+          for (const p of cascadePushBlocks(doc.clips, target.trackId, magStart, D, excludeIds)) {
             const c = doc.clips.find((x) => x.id === p.clipId);
             entries.push({
               clipId: p.clipId,

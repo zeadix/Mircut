@@ -63,14 +63,11 @@ pub(crate) fn open_project(path: String, state: State<'_, AppState>) -> Result<D
     inner.doc = doc.clone();
     inner.project_path = Some(PathBuf::from(&path));
     inner.stack = CommandStack::new();
-    if let Some(r) = inner.renderer.as_mut() {
-        r.invalidate(&doc);
-    }
-    if let Some(rt) = inner.realtime.as_mut() {
-        rt.invalidate(&doc);
-    }
+    // 块级整理:修复历史脏数据(音视频配对错位/块重叠),不进撤销栈
+    inner.schedule_all_tracks_silent();
+    inner.sync_renderers();
     push_recent(&path);
-    Ok(doc)
+    Ok(inner.doc.clone())
 }
 
 #[tauri::command(async)]

@@ -52,7 +52,7 @@ describe("snapToEdges 跨轨边缘", () => {
   });
 });
 
-import { cascadePush } from "./snap";
+import { cascadePushBlocks } from "./snap";
 
 const laneOf2 = (c: { lane?: string | null }) => (c.lane === "Audio" ? "Audio" : "Video");
 const mk = (id: string, start: number, lane: "Video" | "Audio" = "Video") => ({
@@ -63,56 +63,80 @@ const mk = (id: string, start: number, lane: "Video" | "Audio" = "Video") => ({
   lane,
 });
 
-describe("cascadePush", () => {
-  it("空间不足:重叠块贴齐插入块(收尾相接)", () => {
-    const clips = [mk("A", 0), mk("B", 100)]; // A[0,90) B[100,190)
-    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
-    // B 与插入块末端(180)重叠 → 贴齐 180
-    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
-  });
+describe("cascadePushBlocks", () => {
+  const mkDual = (id: string, start: number) => [
+    { id: `${id}v`, start, duration: 90, track_id: "f1", lane: "Video", asset: { asset_id: id } },
+    { id: `${id}a`, start, duration: 90, track_id: "f1", lane: "Audio", asset: { asset_id: id } },
+  ];
 
-  it("级联:前块移动后与后块重叠才继续调整", () => {
-    const clips = [mk("A", 0), mk("B", 100), mk("C", 190)];
-    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
-    // B→180;C 与 B 新末端(270)重叠 → 270
+  it("空间不足:重叠块整块贴齐插入块(收尾相接)", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 100)];
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    // B 块(视频+音频)与插入块末端(180)重叠 → 一起贴齐 180
     expect(out).toEqual([
-      { clipId: "B", newStart: 180 },
-      { clipId: "C", newStart: 270 },
-    ]);
-  });
-
-  it("间隙足够:后续块不动", () => {
-    const clips = [mk("A", 0), mk("B", 100), mk("C", 500)];
-    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
-    // B→180;C(500) 与 270 不重叠 → 不动
-    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
-  });
-
-  it("双块配对:两 lane 镜像同步", () => {
-    const clips = [
-      mk("Av", 0), mk("Aa", 0, "Audio"),
-      mk("Bv", 90), mk("Ba", 90, "Audio"),
-    ];
-    const out = cascadePush(clips, "f1", 0, 90, laneOf2);
-    // 先 Video lane 级联,再 Audio lane 级联;结果镜像同步
-    expect(out).toEqual([
-      { clipId: "Av", newStart: 90 },
       { clipId: "Bv", newStart: 180 },
-      { clipId: "Aa", newStart: 90 },
       { clipId: "Ba", newStart: 180 },
     ]);
   });
 
-  it("排除被移动块自身", () => {
-    const clips = [mk("A", 0), mk("B", 90)];
-    const out = cascadePush(clips, "f1", 90, 90, laneOf, new Set(["A"]));
-    // A 被排除(正在移动);B→180
-    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
+  it("级联:前块移动后与后块重叠才继续调整", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 100), ...mkDual("C", 190)];
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    expect(out).toEqual([
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Ba", newStart: 180 },
+      { clipId: "Cv", newStart: 270 },
+      { clipId: "Ca", newStart: 270 },
+    ]);
   });
 
-  it("骑跨插入点的块也被推到插入块之后", () => {
-    const clips = [mk("A", 45)]; // [45,135) 骑跨 s=90
-    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
-    expect(out).toEqual([{ clipId: "A", newStart: 180 }]);
+  it("间隙足够:后续块不动", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 100), ...mkDual("C", 500)];
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    expect(out).toEqual([
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Ba", newStart: 180 },
+    ]);
+  });
+
+  it("音频起点漂移时整块按视频位置推挤(配对保持)", () => {
+    const clips = [
+      { id: "Av", start: 0, duration: 90, track_id: "f1", lane: "Video", asset: { asset_id: "A" } },
+      { id: "Aa", start: 5, duration: 80, track_id: "f1", lane: "Audio", asset: { asset_id: "A" } },
+      ...mkDual("B", 100),
+    ];
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    // A 块以视频为准 [0,90),末端 90 ≤ 90 不参与;B 贴齐 180
+    expect(out).toEqual([
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Ba", newStart: 180 },
+    ]);
+  });
+
+  it("排除被移动块", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 90)];
+    const out = cascadePushBlocks(clips, "f1", 90, 90, new Set(["Av", "Aa"]));
+    expect(out).toEqual([
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Ba", newStart: 180 },
+    ]);
+  });
+
+  it("完全在插入点之前的块不动,重叠块贴齐", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 150)];
+    // 插入点 90 d=90 占 [90,180):A[0,90) 末端正好贴住 → 不动;
+    // B[150,240) 与插入块重叠 → 贴齐 180
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    expect(out).toEqual([
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Ba", newStart: 180 },
+    ]);
+  });
+
+  it("插入点后有大间隙的块不动", () => {
+    const clips = [...mkDual("A", 0), ...mkDual("B", 300)];
+    // 插入点 90 d=90 占 [90,180):B@300 与其不重叠 → 不动
+    const out = cascadePushBlocks(clips, "f1", 90, 90);
+    expect(out).toEqual([]);
   });
 });

@@ -947,6 +947,130 @@ mod tests {
         );
     }
 
+    /// 回归:双块移动落入其他块区间 → 块级修正后无重合、配对对齐、落位贴齐。
+    /// (复刻 move_clips 命令内部序列:应用 entries → file_track_fixup_commands)
+    #[test]
+    fn move_clips_block_cascade_no_overlap() {
+        use crate::state::file_track_fixup_commands;
+        use veditor_core::Lane;
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 30.0,
+                has_video: true,
+                has_audio: true,
+                width: None,
+                height: None,
+                name: None,
+                fps: None,
+                tags: vec![],
+            });
+            let mk = |id: &str, asset: &str, lane: Lane, start: i64| Clip {
+                id: id.into(),
+                track_id: "f1".into(),
+                start,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: asset.into(),
+                    source_in: 0.0,
+                    source_out: 30.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+            };
+            for (id, asset, lane, start) in [
+                ("Av", "a1", Lane::Video, 0i64),
+                ("Aa", "a1", Lane::Audio, 0),
+                ("Bv", "a2", Lane::Video, 90),
+                ("Ba", "a2", Lane::Audio, 90),
+                ("Cv", "a3", Lane::Video, 180),
+                ("Ca", "a3", Lane::Audio, 180),
+            ] {
+                inner.doc.clips.push(mk(id, asset, lane, start));
+            }
+            // entries:A 双块移动到 100(与 B[90,180) C[180,270) 重叠)
+            let entries = vec![
+                ("Av", 100i64, Lane::Video),
+                ("Aa", 100, Lane::Audio),
+            ];
+            // —— move_clips 内部序列 ——
+            let mut sim = inner.doc.clone();
+            for (id, start, lane) in &entries {
+                if let Some(c) = sim.clips.iter_mut().find(|c| c.id == *id) {
+                    c.start = *start;
+                    c.lane = Some(*lane);
+                }
+            }
+            let moved_ids: Vec<String> = entries.iter().map(|(id, _, _)| id.to_string()).collect();
+            inner.exec(Box::new(veditor_core::Compound::new(
+                "批量移动片段",
+                vec![
+                    Box::new(veditor_core::MoveClip::new("Av", 100, "f1")),
+                    Box::new(veditor_core::MoveClip::new("Aa", 100, "f1")),
+                ],
+            )));
+            for cmd in file_track_fixup_commands(&inner.doc, "f1", &moved_ids) {
+                inner.exec(cmd);
+            }
+            // —— 断言 ——
+            let vstarts: Vec<(i64, String)> = {
+                let mut v: Vec<(i64, String)> = inner
+                    .doc
+                    .clips
+                    .iter()
+                    .filter(|c| c.lane == Some(Lane::Video))
+                    .map(|c| (c.start, c.id.clone()))
+                    .collect();
+                v.sort();
+                v
+            };
+            // A 保位 100(锚);B 贴齐 A 末端 190;C 贴齐 B 末端 280
+            assert_eq!(
+                vstarts,
+                vec![(100, "Av".into()), (190, "Bv".into()), (280, "Cv".into())],
+                "视频 lane 无重合且贴齐: {vstarts:?}"
+            );
+            // 配对对齐:音频与视频同起点同轨
+            for (vid, aid) in [("Av", "Aa"), ("Bv", "Ba"), ("Cv", "Ca")] {
+                let v = inner.doc.clip(vid).unwrap();
+                let a = inner.doc.clip(aid).unwrap();
+                assert_eq!(v.start, a.start, "{vid}/{aid} 起点未对齐");
+                assert_eq!(v.duration, a.duration, "{vid}/{aid} 时长未对齐");
+                assert_eq!(v.track_id, a.track_id);
+            }
+            // 音频 lane 无重叠
+            let mut as_: Vec<(i64, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Audio))
+                .map(|c| (c.start, c.start + c.duration))
+                .collect();
+            as_.sort();
+            for w in as_.windows(2) {
+                assert!(w[0].1 <= w[1].0, "音频 lane 重叠: {as_:?}");
+            }
+        }
+    }
+
     /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
     #[test]
     fn move_drops_at_exact_position() {

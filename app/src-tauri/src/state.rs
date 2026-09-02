@@ -59,11 +59,176 @@ pub(crate) fn push_recent(path: &str) {
     }
 }
 
+/// File 轨块级修正项。
+#[derive(Debug, Clone)]
+pub(crate) enum FileFixup {
+    Move { id: String, start: i64 },
+    Trim { id: String, start: i64, duration: i64 },
+}
+
+/// File 轨块级修正(就地应用到 doc):
+/// 1) 音频块与视频块按同素材最近起点配对,音频对齐视频的 start/duration;
+/// 2) 块按起点排序扫描,与前一块重叠的块级联右移(视频+音频一起移动,保持配对)。
+/// anchor_ids 中的块位置固定不动(被移动/新插入的块保位)。
+/// 返回变更列表(供调用方生成可撤销命令或直接静默应用)。
+pub(crate) fn file_track_fixup(
+    doc: &mut Document,
+    track_id: &str,
+    anchor_ids: &[String],
+) -> Vec<FileFixup> {
+    let mut fixups: Vec<FileFixup> = Vec::new();
+    if doc.track(track_id).map(|t| t.kind) != Some(TrackKind::File) {
+        return fixups;
+    }
+    // 1) 音频对齐视频(同素材最近起点配对,视频为基准)
+    let vid_ids: Vec<String> = doc
+        .clips
+        .iter()
+        .filter(|c| {
+            c.track_id == track_id
+                && (c.lane == Some(veditor_core::Lane::Video) || c.lane.is_none())
+        })
+        .map(|c| c.id.clone())
+        .collect();
+    let mut used_audio: Vec<String> = Vec::new();
+    for vid in &vid_ids {
+        let (v_asset, v_start, v_dur) = {
+            let v = doc.clip(vid).unwrap();
+            (v.asset.asset_id.clone(), v.start, v.duration)
+        };
+        let best = doc
+            .clips
+            .iter()
+            .filter(|a| {
+                a.track_id == track_id
+                    && a.lane == Some(veditor_core::Lane::Audio)
+                    && a.asset.asset_id == v_asset
+                    && !used_audio.contains(&a.id)
+            })
+            .min_by_key(|a| (a.start - v_start).abs())
+            .map(|a| a.id.clone());
+        let Some(aid) = best else {
+            continue;
+        };
+        used_audio.push(aid.clone());
+        let (a_start, a_dur) = {
+            let a = doc.clip(&aid).unwrap();
+            (a.start, a.duration)
+        };
+        if a_start != v_start {
+            if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
+                a.start = v_start;
+            }
+            fixups.push(FileFixup::Move { id: aid.clone(), start: v_start });
+        }
+        if a_dur != v_dur {
+            if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
+                a.duration = v_dur;
+            }
+            fixups.push(FileFixup::Trim {
+                id: aid.clone(),
+                start: v_start,
+                duration: v_dur,
+            });
+        }
+    }
+    // 2) 块级重叠级联(视频块为块代表)。
+    // 锚块(被移动/新插入)保位;末端越过锚起点的其他块从锚末端开始
+    // 级联贴齐(收尾相接);完全在锚之前的块原样保留;
+    // 无锚时全部块做前向消重叠(通用整理)。
+    let mut blocks: Vec<(String, Option<String>, i64, i64)> = Vec::new();
+    for vid in &vid_ids {
+        let (v_start, v_dur, v_asset) = {
+            let v = doc.clip(vid).unwrap();
+            (v.start, v.duration, v.asset.asset_id.clone())
+        };
+        let aid = doc
+            .clips
+            .iter()
+            .find(|a| {
+                a.track_id == track_id
+                    && a.lane == Some(veditor_core::Lane::Audio)
+                    && a.asset.asset_id == v_asset
+                    && a.start == v_start
+                    && used_audio.contains(&a.id)
+            })
+            .map(|a| a.id.clone());
+        blocks.push((vid.clone(), aid, v_start, v_dur));
+    }
+    blocks.sort_by_key(|(_, _, st, _)| *st);
+    let is_anchor =
+        |vid: &str, aid: &Option<String>| anchor_ids.iter().any(|a| a == vid || aid.as_deref() == Some(a));
+    let (anchor_start, anchor_end) = {
+        let anchored: Vec<(i64, i64)> = blocks
+            .iter()
+            .filter(|(vid, aid, _, _)| is_anchor(vid, aid))
+            .map(|(_, _, st, dur)| (*st, st + dur))
+            .collect();
+        if anchored.is_empty() {
+            (0i64, 0i64)
+        } else {
+            (
+                anchored.iter().map(|(s, _)| *s).min().unwrap(),
+                anchored.iter().map(|(_, e)| *e).max().unwrap(),
+            )
+        }
+    };
+    let mut placed_end: i64 = anchor_end;
+    for (vid, aid, st, dur) in &blocks {
+        if is_anchor(vid, aid) {
+            continue; // 锚块保位(其末端已计入 placed_end)
+        }
+        if *st + *dur <= anchor_start && anchor_end > 0 {
+            continue; // 完全在锚之前:原样保留
+        }
+        let ns = (*st).max(placed_end);
+        if ns != *st {
+            if let Some(v) = doc.clips.iter_mut().find(|c| c.id == *vid) {
+                v.start = ns;
+            }
+            fixups.push(FileFixup::Move { id: vid.clone(), start: ns });
+            if let Some(aid) = aid {
+                if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
+                    a.start = ns;
+                }
+                fixups.push(FileFixup::Move { id: aid.clone(), start: ns });
+            }
+        }
+        placed_end = ns + dur;
+    }
+    fixups
+}
+
+/// 基于副本模拟计算 File 轨块级修正命令(不改动传入 doc)。
+/// 返回命令列表(空 = 无需修正)。
+pub(crate) fn file_track_fixup_commands(
+    doc: &Document,
+    track_id: &str,
+    anchor_ids: &[String],
+) -> Vec<Box<dyn Command>> {
+    let mut sim = doc.clone();
+    let fixups = file_track_fixup(&mut sim, track_id, anchor_ids);
+    fixups
+        .into_iter()
+        .map(|f| match f {
+            FileFixup::Move { id, start } => {
+                Box::new(veditor_core::MoveClip::new(id, start, track_id.to_string()))
+                    as Box<dyn Command>
+            }
+            FileFixup::Trim { id, start, duration } => Box::new(veditor_core::TrimClip::new(
+                id,
+                start,
+                duration,
+                0.0,
+            )) as Box<dyn Command>,
+        })
+        .collect()
+}
+
 impl Inner {
     /// 磁吸推挤:对指定轨道消重叠(moved 保位),生成追加 MoveClip 命令。
     /// 返回是否有变更。
-    pub(crate) fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {
-        // File 轨按 lane 分别调度(视频块/音频块各自时序独立)
+    pub(crate) fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {        // File 轨按 lane 分别调度(视频块/音频块各自时序独立)
         let moved_lane = moved_id
             .and_then(|id| self.doc.clip(id))
             .and_then(|c| c.lane);
@@ -134,10 +299,16 @@ impl Inner {
         true
     }
 
-    /// 全轨道整理(启动恢复脏数据用,不进撤销栈)。
+    /// 全轨道整理(启动/打开工程恢复脏数据用,不进撤销栈)。
+    /// File 轨:块级整理(音视频配对对齐 + 块重叠级联);
+    /// 普通轨:lane 级贪心消重叠。
     pub(crate) fn schedule_all_tracks_silent(&mut self) {
         let track_ids: Vec<String> = self.doc.tracks.iter().map(|t| t.id.clone()).collect();
         for tid in track_ids {
+            if self.doc.track(&tid).map(|t| t.kind) == Some(TrackKind::File) {
+                let _ = file_track_fixup(&mut self.doc, &tid, &[]);
+                continue;
+            }
             let on_track: Vec<(String, i64, i64)> = self
                 .doc
                 .clips
