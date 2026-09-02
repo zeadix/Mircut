@@ -603,8 +603,8 @@ function TimelineInner({
             }
             ctx.stroke();
 
-            // 关键帧点
-            ctx.fillStyle = "var(--accent)";
+            // 关键帧点(canvas 不解析 CSS 变量,用字面色值)
+            ctx.fillStyle = "#4da3ff";
             for (const k of kfs) {
               const kx = (audioClip.start + k.t) * pxPerTick;
               if (kx < vx0 - 4 || kx > vx1 + 4) continue;
@@ -696,10 +696,10 @@ function TimelineInner({
       let acc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        const tH = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) : 0;
-        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 0;
-        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
-        const rows = (tH > 0 ? 1 : 0) + (vH > 0 ? 1 : 0) + (aH > 0 ? 1 : 0);
+        // File 轨 3 行(时间+视频+音频),普通轨 1 行
+        const rows = tr.kind === "File"
+          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
+          : 1;
         if (acc + rows > canvasRow) {
           trackIdx = ti;
           rowInFile = canvasRow - acc;
@@ -1225,10 +1225,10 @@ function TimelineInner({
       let rowAcc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        const tH = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) : 0;
-        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 0;
-        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
-        const rows = tH + vH + aH;
+        // File 轨 3 行(时间+视频+音频),普通轨 1 行
+        const rows = tr.kind === "File"
+          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
+          : 1;
         if (rowAcc + rows > canvasRow) {
           trackIdx = ti;
           rowInFile = canvasRow - rowAcc;
@@ -1332,8 +1332,8 @@ function TimelineInner({
       }
       if (isAudioBlock && laneGeo && hit.edge === "body") {
         const vAt = valueAt(clip.fx?.volume?.keyframes ?? [], t - clip.start) ?? clip.volume;
-        // 容差 9px:包络线附近即抓取,其余区域整体移动文件块
-        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 9) {
+        // 容差 5px:紧贴音量线才进入包络编辑,其余音频区域整体移动文件块
+        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 5) {
           onClipClick(clip.id, false);
           dragRef.current = { kind: "envelope", clipId: clip.id };
           setEnvLive({ clipId: clip.id, tLocal: Math.max(0, t - clip.start), v: vAt });
@@ -1380,9 +1380,8 @@ function TimelineInner({
           if (doc.tracks[ti].id === clip.track_id) break;
           const tr = doc.tracks[ti];
           if (tr.kind === "File") {
-            const vH = collapsed[tr.id]?.video ? 0 : 1;
-            const aH = collapsed[tr.id]?.audio ? 0 : 1;
-            canvasRow += vH + aH;
+            // File 轨 3 行:时间+视频+音频
+            canvasRow += (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1);
           } else {
             canvasRow += 1;
           }
@@ -1527,10 +1526,10 @@ function TimelineInner({
       let rowAcc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        const tH = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) : 0;
-        const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 0;
-        const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
-        const rows = tH + vH + aH;
+        // File 轨 3 行(时间+视频+音频),普通轨 1 行
+        const rows = tr.kind === "File"
+          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
+          : 1;
         const offsetInTrack = targetCanvasRow - rowAcc;
         if (rowAcc + rows > targetCanvasRow) {
           targetTrackIdx = ti;
