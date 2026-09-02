@@ -315,30 +315,49 @@ fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
     }
 }
 
-/// 插入推挤(剪映式):插入点 `s` 右侧的块若空间不足(最近块起点 < s+duration),
-/// 右侧所有片段(含音视频配对)整体右移 `duration`,保持顺序与配对;
-/// 空隙足够则直接落位不推挤。返回需位移的 (clip_id, new_start) 列表。
+/// 插入级联推挤(剪映式):插入块占据 [s, s+duration) 后,插入点右侧
+/// (末端超过 s)的块按 lane 独立级联做**最小位移** —— 与前一块的新位置
+/// 重叠才移动并贴齐(收尾相接);间隙足够则不动(不再调整后续块)。
+/// 双块配对两 lane 布局镜像,级联结果天然同步。
+/// 返回发生位移的 (clip_id, new_start) 列表。
 fn insert_push_right(
     doc: &veditor_core::Document,
     track_id: &str,
     s: i64,
     duration: i64,
 ) -> Vec<(String, i64)> {
-    let right_starts: Vec<i64> = doc
-        .clips
-        .iter()
-        .filter(|c| c.track_id == track_id && c.start >= s)
-        .map(|c| c.start)
-        .collect();
-    let need = right_starts.iter().min().is_some_and(|&f| f < s + duration);
-    if !need {
-        return Vec::new();
+    let mut changes: Vec<(String, i64)> = Vec::new();
+    // Video 组(None lane 的历史数据归入 Video);Audio 组独立级联
+    for lane in [Some(veditor_core::Lane::Video), Some(veditor_core::Lane::Audio)] {
+        let mut lane_clips: Vec<(String, i64, i64)> = doc
+            .clips
+            .iter()
+            .filter(|c| {
+                c.track_id == track_id
+                    && c.start + c.duration > s
+                    && match lane {
+                        Some(veditor_core::Lane::Video) => {
+                            c.lane == Some(veditor_core::Lane::Video) || c.lane.is_none()
+                        }
+                        Some(veditor_core::Lane::Audio) => {
+                            c.lane == Some(veditor_core::Lane::Audio)
+                        }
+                        None => false,
+                    }
+            })
+            .map(|c| (c.id.clone(), c.start, c.duration))
+            .collect();
+        lane_clips.sort_by_key(|(_, st, _)| *st);
+        let mut placed_end = s + duration; // 插入块末端
+        for (cid, st, dur) in lane_clips {
+            let ns = st.max(placed_end);
+            if ns != st {
+                changes.push((cid, ns));
+            }
+            placed_end = ns + dur;
+        }
     }
-    doc.clips
-        .iter()
-        .filter(|c| c.track_id == track_id && c.start >= s)
-        .map(|c| (c.id.clone(), c.start + duration))
-        .collect()
+    changes
 }
 
 #[tauri::command]
@@ -1051,5 +1070,43 @@ mod insert_push_tests {
         // 插入点在末尾之后 → 无右侧块,不推挤
         let shifts = insert_push_right(&doc, "f1", 500, 90);
         assert!(shifts.is_empty());
+    }
+
+    #[test]
+    fn cascade_squeezes_flush_and_stops_at_gap() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0); // [0,90)
+        add_dual(&mut doc, "B", "a2", 100); // [100,190) 与 A 间有 10 空隙
+        add_dual(&mut doc, "C", "a3", 500); // [500,590) 远后方大空隙
+        // 插入点 90 d=90(占 [90,180)):B 与插入块重叠 → 贴齐 180(收尾相接);
+        // C 与 B 新位置(270)不重叠 → 不动
+        let mut shifts = insert_push_right(&doc, "f1", 90, 90);
+        shifts.sort();
+        assert_eq!(
+            shifts,
+            vec![("Ba".to_string(), 180), ("Bv".to_string(), 180)]
+        );
+    }
+
+    #[test]
+    fn cascade_still_flush_when_chain() {
+        let mut doc = file_doc();
+        add_dual(&mut doc, "A", "a1", 0);
+        add_dual(&mut doc, "B", "a2", 90);
+        add_dual(&mut doc, "C", "a3", 180);
+        // 三个块首尾相接,插入点 0:全部依次右移 90,仍首尾相接
+        let mut shifts = insert_push_right(&doc, "f1", 0, 90);
+        shifts.sort();
+        assert_eq!(
+            shifts,
+            vec![
+                ("Aa".to_string(), 90),
+                ("Av".to_string(), 90),
+                ("Ba".to_string(), 180),
+                ("Bv".to_string(), 180),
+                ("Ca".to_string(), 270),
+                ("Cv".to_string(), 270),
+            ]
+        );
     }
 }

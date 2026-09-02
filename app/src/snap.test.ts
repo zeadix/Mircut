@@ -51,3 +51,68 @@ describe("snapToEdges 跨轨边缘", () => {
     expect(r).toBe(90);
   });
 });
+
+import { cascadePush } from "./snap";
+
+const laneOf2 = (c: { lane?: string | null }) => (c.lane === "Audio" ? "Audio" : "Video");
+const mk = (id: string, start: number, lane: "Video" | "Audio" = "Video") => ({
+  id,
+  start,
+  duration: 90,
+  track_id: "f1",
+  lane,
+});
+
+describe("cascadePush", () => {
+  it("空间不足:重叠块贴齐插入块(收尾相接)", () => {
+    const clips = [mk("A", 0), mk("B", 100)]; // A[0,90) B[100,190)
+    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
+    // B 与插入块末端(180)重叠 → 贴齐 180
+    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
+  });
+
+  it("级联:前块移动后与后块重叠才继续调整", () => {
+    const clips = [mk("A", 0), mk("B", 100), mk("C", 190)];
+    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
+    // B→180;C 与 B 新末端(270)重叠 → 270
+    expect(out).toEqual([
+      { clipId: "B", newStart: 180 },
+      { clipId: "C", newStart: 270 },
+    ]);
+  });
+
+  it("间隙足够:后续块不动", () => {
+    const clips = [mk("A", 0), mk("B", 100), mk("C", 500)];
+    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
+    // B→180;C(500) 与 270 不重叠 → 不动
+    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
+  });
+
+  it("双块配对:两 lane 镜像同步", () => {
+    const clips = [
+      mk("Av", 0), mk("Aa", 0, "Audio"),
+      mk("Bv", 90), mk("Ba", 90, "Audio"),
+    ];
+    const out = cascadePush(clips, "f1", 0, 90, laneOf2);
+    // 先 Video lane 级联,再 Audio lane 级联;结果镜像同步
+    expect(out).toEqual([
+      { clipId: "Av", newStart: 90 },
+      { clipId: "Bv", newStart: 180 },
+      { clipId: "Aa", newStart: 90 },
+      { clipId: "Ba", newStart: 180 },
+    ]);
+  });
+
+  it("排除被移动块自身", () => {
+    const clips = [mk("A", 0), mk("B", 90)];
+    const out = cascadePush(clips, "f1", 90, 90, laneOf, new Set(["A"]));
+    // A 被排除(正在移动);B→180
+    expect(out).toEqual([{ clipId: "B", newStart: 180 }]);
+  });
+
+  it("骑跨插入点的块也被推到插入块之后", () => {
+    const clips = [mk("A", 45)]; // [45,135) 骑跨 s=90
+    const out = cascadePush(clips, "f1", 90, 90, laneOf2);
+    expect(out).toEqual([{ clipId: "A", newStart: 180 }]);
+  });
+});

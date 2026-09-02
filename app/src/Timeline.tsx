@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Clip, Document, Track } from "./types";
-import { snapToEdges, computeMagneticStart } from "./snap";
+import { snapToEdges, computeMagneticStart, cascadePush } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
@@ -1210,7 +1210,8 @@ function TimelineInner({
   }
 
   function snapTicks(t: number, excludeClipId?: string): number {
-    return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 6, alignEdges ?? []);
+    // 容差按像素(10px)换算 ticks:低缩放下 6 ticks 不足 3px,几乎无吸附手感
+    return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 10 / pxPerTick, alignEdges ?? []);
   }
 
   /// File 轨插入点判定(剪映式):
@@ -1813,23 +1814,19 @@ function TimelineInner({
             lane: sib.lane ?? null,
           });
         }
-        // File 轨插入推挤:插入点右侧块若空间不足,整体右移新块时长(含音视频配对)
+        // File 轨插入级联推挤:插入点右侧块做最小位移让位 ——
+        // 与前一块新位置重叠才移动并贴齐(收尾相接);间隙足够不动。
         if (fileTarget && !groupMoving) {
           const D = clip.duration;
           const excludeIds = new Set(sib ? [d.clipId, sib.id] : [d.clipId]);
-          const rightClips = doc.clips
-            .filter((c) => c.track_id === target.trackId && c.start >= magStart && !excludeIds.has(c.id))
-            .sort((a, b) => a.start - b.start);
-          const firstStart = rightClips[0]?.start;
-          if (firstStart !== undefined && firstStart < magStart + D) {
-            for (const c of rightClips) {
-              entries.push({
-                clipId: c.id,
-                newStart: c.start + D,
-                newTrackId: target.trackId,
-                lane: c.lane ?? null,
-              });
-            }
+          for (const p of cascadePush(doc.clips, target.trackId, magStart, D, laneOf, excludeIds)) {
+            const c = doc.clips.find((x) => x.id === p.clipId);
+            entries.push({
+              clipId: p.clipId,
+              newStart: p.newStart,
+              newTrackId: target.trackId,
+              lane: c?.lane ?? null,
+            });
           }
         }
         if (onMoveClips && entries.length > 0) {

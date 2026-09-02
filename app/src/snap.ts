@@ -63,3 +63,37 @@ export function computeMagneticStart(
   }
   return t;
 }
+
+/// 插入级联推挤(剪映式):插入块占据 [s, s+duration) 后,插入点右侧
+/// (末端超过 s)的块按起点顺序做**最小位移**让位 ——
+/// 与前一块的新位置重叠才移动并贴齐(收尾相接);间隙足够则不动。
+/// 每条 lane 独立级联(双块配对天然镜像同步)。
+/// 返回发生位移的 (clipId, newStart) 列表。
+export function cascadePush(
+  clips: { id: string; start: number; duration: number; track_id: string; lane?: string | null }[],
+  trackId: string,
+  s: number,
+  duration: number,
+  laneOf: (c: { track_id: string; lane?: string | null }) => "Video" | "Audio",
+  excludeIds: Set<string> = new Set()
+): { clipId: string; newStart: number }[] {
+  const out: { clipId: string; newStart: number }[] = [];
+  for (const lane of ["Video", "Audio"] as const) {
+    const laneClips = clips
+      .filter(
+        (c) =>
+          c.track_id === trackId &&
+          !excludeIds.has(c.id) &&
+          laneOf(c) === lane &&
+          c.start + c.duration > s // 末端越过插入点(含骑跨者)才参与
+      )
+      .sort((a, b) => a.start - b.start);
+    let placedEnd = s + duration; // 插入块的末端
+    for (const c of laneClips) {
+      const ns = Math.max(c.start, placedEnd);
+      if (ns !== c.start) out.push({ clipId: c.id, newStart: ns });
+      placedEnd = ns + c.duration;
+    }
+  }
+  return out;
+}
