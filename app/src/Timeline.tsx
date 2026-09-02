@@ -1599,9 +1599,14 @@ function TimelineInner({
       const useRow = targetCanvasRow;
       let targetLane: "Video" | "Audio" | null = clip.lane ?? null;
       if (ok) {
-        // 时间行落点视为整体,映射到 Video(文件块代表 lane)
-        const laneInFile = targetLaneInFile === "Time" ? "Video" : targetLaneInFile;
-        targetLane = laneInFile ?? "Video";
+        // File 轨:块整体移动,保持被抓 clip 自身 lane ——
+        // 绝不按光标所在行改 lane(否则抓音频区拖到视频行会把音频块改成视频块,
+        // 同素材两 clip 变同 lane 同起点 → 块叠加、另一个无法选取);
+        // 普通轨保留跨半区语义(拖到音频区=音频块)
+        if (rowTrack.kind !== "File") {
+          const laneInFile = targetLaneInFile === "Time" ? "Video" : targetLaneInFile;
+          targetLane = laneInFile ?? "Video";
+        }
         moveTargetRef.current = { trackId: rowTrack.id, row: useRow, lane: targetLane };
       } else {
         // 不合法落点:回退原片段,松手不误移
@@ -1793,14 +1798,20 @@ function TimelineInner({
               }))
           );
         } else {
-          entries.push({ clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null });
+          // File 轨:保持被抓 clip 自身 lane(不按光标行改 lane)
+          entries.push({
+            clipId: d.clipId,
+            newStart: magStart,
+            newTrackId: target.trackId,
+            lane: fileTarget ? (clip.lane ?? "Video") : (target.lane ?? null),
+          });
         }
-        // 兄弟块随移动对齐到同一插入点(双块保持同起同宽)
+        // 兄弟块跟随:同起点对齐 + 跨轨时一起换到目标轨(配对永不拆散)
         if (sib) {
           entries.push({
             clipId: sib.id,
             newStart: Math.max(0, magStart),
-            newTrackId: sib.track_id,
+            newTrackId: fileTarget ? target.trackId : sib.track_id,
             lane: sib.lane ?? null,
           });
         }
@@ -2002,7 +2013,45 @@ function TimelineInner({
 
   function onDropMenuMove() {
     if (!dropMenu) return;
-    onClipMove?.(dropMenu.clipId, dropMenu.start, dropMenu.trackId);
+    const clip = doc.clips.find((c) => c.id === dropMenu.clipId);
+    if (clip && onMoveClips) {
+      // 块级移动:视频+音频一起走 + 级联推挤(与左键拖拽同一语义)
+      const sib = siblingClip(clip);
+      const excludeIds = new Set(sib ? [clip.id, sib.id] : [clip.id]);
+      const entries = [
+        {
+          clipId: clip.id,
+          newStart: dropMenu.start,
+          newTrackId: dropMenu.trackId,
+          lane: clip.lane ?? null,
+        },
+        ...(sib
+          ? [
+              {
+                clipId: sib.id,
+                newStart: dropMenu.start,
+                newTrackId: sib.track_id,
+                lane: sib.lane ?? null,
+              },
+            ]
+          : []),
+        ...cascadePushBlocks(
+          doc.clips,
+          dropMenu.trackId,
+          dropMenu.start,
+          clip.duration,
+          excludeIds
+        ).map((p) => ({
+          clipId: p.clipId,
+          newStart: p.newStart,
+          newTrackId: dropMenu.trackId,
+          lane: doc.clips.find((c) => c.id === p.clipId)?.lane ?? null,
+        })),
+      ];
+      onMoveClips(entries);
+    } else {
+      onClipMove?.(dropMenu.clipId, dropMenu.start, dropMenu.trackId);
+    }
     setDropMenu(null);
   }
 

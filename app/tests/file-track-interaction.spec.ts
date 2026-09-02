@@ -91,3 +91,66 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     expect(movedIds).toContain("c1");
   }
 });
+
+test("回归:抓音频区拖到视频行,lane 保持 Audio 且配对同行", async ({ page }) => {
+  await page.addInitScript(() => {
+    const timer = setInterval(() => {
+      const w = window as unknown as {
+        __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        __mockDoc?: { clips: Record<string, unknown>[] };
+        __calls?: { cmd: string; args: Record<string, unknown> }[];
+      };
+      if (w.__TAURI_INTERNALS__ && w.__mockDoc) {
+        clearInterval(timer);
+        const orig = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+        w.__calls = [];
+        w.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+          w.__calls!.push({ cmd, args: args ?? {} });
+          return orig(cmd, args);
+        };
+        const mk = (id: string, asset: string, start: number, lane: string) => ({
+          id, track_id: "f1", start, duration: 90,
+          asset: { asset_id: asset, source_in: 0, source_out: 3 },
+          lane, speed: 1, volume: 1, muted: false, fx: undefined,
+        });
+        w.__mockDoc.clips = [
+          mk("c1", "a1", 0, "Video"), mk("cAudio", "a1", 0, "Audio"),
+          mk("Bv", "a2", 180, "Video"), mk("Ba", "a2", 180, "Audio"),
+        ];
+      }
+    }, 5);
+  });
+
+  await page.goto("/");
+  await page.locator(".asset-card").first().waitFor({ timeout: 10000 });
+  await page.keyboard.press("m");
+  await page.waitForTimeout(600);
+
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+
+  // 从音频行(y=110)抓起,拖到视频行(y=50)释放 —— lane 不得被改成 Video
+  await page.mouse.move(box!.x + 22, box!.y + 110);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 100, box!.y + 50, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+
+  const entries = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: { entries?: { clip_id: string; new_start: number; lane?: string }[] } }[] }).__calls ?? [];
+    const mc = calls.filter((c) => c.cmd === "move_clips").pop();
+    return mc?.args.entries ?? null;
+  });
+  expect(entries).toBeTruthy();
+  const byId = new Map((entries ?? []).map((e) => [e.clip_id, e]));
+  const audioEntry = byId.get("cAudio");
+  const videoEntry = byId.get("c1");
+  expect(audioEntry, "音频块在移动条目中").toBeTruthy();
+  expect(videoEntry, "视频块在移动条目中").toBeTruthy();
+  // 关键回归:lane 保持 Audio(旧实现按光标行改成 Video → 同素材两 clip 同 lane 叠加)
+  expect(audioEntry!.lane).toBe("Audio");
+  expect(videoEntry!.lane).toBe("Video");
+  // 配对同起点
+  expect(audioEntry!.new_start).toBe(videoEntry!.new_start);
+});

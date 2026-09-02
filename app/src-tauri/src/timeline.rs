@@ -589,9 +589,28 @@ pub(crate) fn duplicate_clip(
     let Some(src) = inner.doc.clip(&clip_id).cloned() else {
         return Err("片段不存在".into());
     };
+    let is_file = inner.doc.track(&track_id).map(|t| t.kind) == Some(TrackKind::File);
+    // File 轨:配对兄弟一起复制(否则视频/音频拆散,块分组/渲染/命中错乱)
+    let sib = if is_file {
+        inner
+            .doc
+            .clips
+            .iter()
+            .find(|c| {
+                c.id != clip_id
+                    && c.track_id == src.track_id
+                    && c.asset.asset_id == src.asset.asset_id
+                    && c.start == src.start
+                    && c.duration == src.duration
+                    && c.lane != src.lane
+            })
+            .cloned()
+    } else {
+        None
+    };
     let mut seq = inner.doc.clips.len();
     let new_id = next_clip_id(&inner.doc, &mut seq);
-    let dup = Clip {
+    let mut dup = Clip {
         id: new_id.clone(),
         track_id: track_id.clone(),
         start: start.max(0),
@@ -603,8 +622,32 @@ pub(crate) fn duplicate_clip(
         lane: src.lane,
         fx: src.fx.clone(),
     };
-    inner.exec(Box::new(AddClip { clip: dup }));
-    inner.schedule_track(&track_id, Some(&new_id));
+    dup.asset.source_in = src.asset.source_in;
+    dup.asset.source_out = src.asset.source_out;
+    let mut cmds: Vec<Box<dyn Command>> = vec![Box::new(AddClip { clip: dup })];
+    if let Some(s) = sib {
+        let sib_id = next_clip_id(&inner.doc, &mut seq);
+        let mut sib_dup = Clip {
+            id: sib_id.clone(),
+            track_id: track_id.clone(),
+            start: start.max(0),
+            duration: s.duration,
+            asset: s.asset.clone(),
+            speed: s.speed,
+            volume: s.volume,
+            muted: s.muted,
+            lane: s.lane,
+            fx: s.fx.clone(),
+        };
+        sib_dup.asset.source_in = s.asset.source_in;
+        sib_dup.asset.source_out = s.asset.source_out;
+        cmds.push(Box::new(AddClip { clip: sib_dup }));
+    }
+    inner.exec(Box::new(veditor_core::Compound::new("复制片段", cmds)));
+    // 块级修正(新块为锚,保位;防与其他块重合)
+    for cmd in file_track_fixup_commands(&inner.doc, &track_id, &[new_id.clone()]) {
+        inner.exec(cmd);
+    }
     Ok(new_id)
 }
 
