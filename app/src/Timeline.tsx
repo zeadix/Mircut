@@ -225,13 +225,13 @@ function TimelineInner({
   /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
   const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
-  /// 找 clip 的同轨同素材兄弟块(File 轨双块:视频↔音频)。
-  function siblingClip(clip: { track_id: string; lane?: string | null; asset: { asset_id: string } }): typeof doc.clips[0] | null {
+  /// 找 clip 的同轨同素材同起点兄弟块(File 轨双块:视频↔音频;同素材多块按起点配对)。
+  function siblingClip(clip: { track_id: string; lane?: string | null; asset: { asset_id: string }; start: number }): typeof doc.clips[0] | null {
     const track = doc.tracks.find((tr) => tr.id === clip.track_id);
     if (track?.kind !== "File") return null;
     const siblingLane = clip.lane === "Audio" ? "Video" : "Audio";
     return doc.clips.find(
-      (c) => c.track_id === clip.track_id && c.lane === siblingLane && c.asset.asset_id === clip.asset.asset_id
+      (c) => c.track_id === clip.track_id && c.lane === siblingLane && c.asset.asset_id === clip.asset.asset_id && c.start === clip.start
     ) ?? null;
   }
 
@@ -756,13 +756,14 @@ function TimelineInner({
 
       // 只有 File 轨道使用文件块渲染
       if (track.kind === "File") {
-        const blockKey = `${clip.track_id}-${clip.asset.asset_id}`;
+        // 块标识:轨道+素材+起点(同素材可重复放置,不同起点=不同块)
+        const blockKey = `${clip.track_id}-${clip.asset.asset_id}-${clip.start}`;
         if (renderedFileBlocks.has(blockKey)) continue;
         renderedFileBlocks.add(blockKey);
 
-        // 获取该文件块的所有 clip
+        // 获取该文件块的所有 clip(同轨同素材同起点:视频+音频配对)
         const blockClips = doc.clips
-          .filter((c) => c.track_id === clip.track_id && c.asset.asset_id === clip.asset.asset_id)
+          .filter((c) => c.track_id === clip.track_id && c.asset.asset_id === clip.asset.asset_id && c.start === clip.start)
           .map((c) => ({ clip: c, lane: c.lane === "Audio" ? "Audio" as const : "Video" as const }));
 
         const x = clip.start * pxPerTick;
@@ -1199,13 +1200,13 @@ function TimelineInner({
     return track.kind === "Audio" ? "Audio" : "Video";
   }
 
-  /// 文件块标识:track + asset 唯一确定一个跨三行块。
+  /// 文件块标识:track + asset + start 唯一确定一个跨三行块(同素材可重复放置)。
   function blockKeyOf(clipId: string): string | null {
     const c = doc.clips.find((x) => x.id === clipId);
     if (!c) return null;
     const track = doc.tracks.find((t) => t.id === c.track_id);
     if (track?.kind !== "File") return null;
-    return `${c.track_id}-${c.asset.asset_id}`;
+    return `${c.track_id}-${c.asset.asset_id}-${c.start}`;
   }
 
   function snapTicks(t: number, excludeClipId?: string): number {

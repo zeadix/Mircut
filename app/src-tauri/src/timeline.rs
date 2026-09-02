@@ -80,8 +80,9 @@ pub(crate) fn add_clip(
     } else {
         start
     };
+    let mut seq = inner.doc.clips.len();
     let clip = Clip {
-        id: format!("c{}", inner.doc.clips.len() + 1),
+        id: next_clip_id(&inner.doc, &mut seq),
         track_id: track_id.clone(),
         start: effective_start,
         duration,
@@ -302,6 +303,18 @@ pub(crate) struct MoveEntry {
     pub lane: Option<String>,
 }
 
+/// 生成不与现有片段冲突的新片段 id。
+/// (旧实现 `len+n` 在删除片段后会撞号:两个 clip 同 id 导致前端配对/命中错乱)
+fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
+    loop {
+        *seq += 1;
+        let id = format!("c{}", seq);
+        if doc.clip(&id).is_none() {
+            return id;
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) fn drop_asset(
     asset_id: String,
@@ -409,8 +422,9 @@ pub(crate) fn drop_asset(
         target_track = id;
     }
 
-    let mk = |lane: veditor_core::Lane, n: usize| Clip {
-        id: format!("c{}", inner.doc.clips.len() + n),
+    let mut seq = inner.doc.clips.len();
+    let mk = |lane: veditor_core::Lane, id: String| Clip {
+        id,
         track_id: target_track.clone(),
         start: start.max(0),
         duration,
@@ -426,8 +440,9 @@ pub(crate) fn drop_asset(
         fx: Default::default(),
     };
     let mut clips_to_add: Vec<Clip> = Vec::new();
-    for (i, l) in lanes_needed.iter().enumerate() {
-        clips_to_add.push(mk(*l, i + 1));
+    for l in &lanes_needed {
+        let id = next_clip_id(&inner.doc, &mut seq);
+        clips_to_add.push(mk(*l, id));
     }
 
     // 插入语义:同 lane 内落点重叠的已有片段右移让位(保持顺序)
@@ -517,7 +532,8 @@ pub(crate) fn duplicate_clip(
     let Some(src) = inner.doc.clip(&clip_id).cloned() else {
         return Err("片段不存在".into());
     };
-    let new_id = format!("{}-copy{}", clip_id, inner.doc.clips.len() + 1);
+    let mut seq = inner.doc.clips.len();
+    let new_id = next_clip_id(&inner.doc, &mut seq);
     let dup = Clip {
         id: new_id.clone(),
         track_id: track_id.clone(),
