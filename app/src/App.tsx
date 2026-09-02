@@ -77,6 +77,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
   // 拖拽中的素材类型(缝隙建轨提示用)
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
+  // 拖拽中的素材 id(时间轴块状落点轮廓用)
+  const [dragAssetId, setDragAssetId] = useState<string | null>(null);
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const rafRef = useRef<number>(0);
@@ -1063,6 +1065,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           onImportFiles={onImportFiles}
           onScanMusicDir={onScanMusicDir}
           onDragKind={setDragKind}
+          onDragAsset={setDragAssetId}
           onAssetPreview={setAssetPreview}
           onAddToTimeline={addToTimeline}
           onImportPack={onImportPack}
@@ -1172,6 +1175,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               alignEdges={alignEdges}
               onDropAsset={onDropAsset}
               dragKind={dragKind}
+              dragAssetId={dragAssetId}
               onReorderTrack={onReorderTrack}
               onClipRangeSet={onClipRangeSet}
               onRenameTrack={onRenameTrack}

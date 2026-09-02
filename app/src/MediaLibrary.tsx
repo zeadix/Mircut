@@ -13,6 +13,8 @@ interface Props {
   onImportFiles: (files: FileList | null) => void;
   onScanMusicDir: () => void;
   onDragKind: (k: "video" | "audio") => void;
+  /// 拖拽开始(id)/结束(null)上报:时间轴据此显示块状落点轮廓
+  onDragAsset?: (assetId: string | null) => void;
   onAssetPreview: (p: { path: string; secs: number }) => void;
   onAddToTimeline: (assetId: string) => void;
   onImportPack: () => void;
@@ -46,6 +48,7 @@ export default function MediaLibrary({
   onImportFiles,
   onScanMusicDir,
   onDragKind,
+  onDragAsset,
   onAssetPreview,
   onAddToTimeline,
   onImportPack,
@@ -269,8 +272,10 @@ export default function MediaLibrary({
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/x-veditor-asset", a.id);
                 onDragKind(a.has_video ? "video" : "audio");
+                onDragAsset?.(a.id);
                 e.dataTransfer.effectAllowed = "copy";
               }}
+              onDragEnd={() => onDragAsset?.(null)}
               onDoubleClick={() => onAddToTimeline(a.id)}
               onClick={(e) => onCardClick(e, a.id, a.path, a.duration_secs / 2)}
               title="拖到时间轴放置;双击追加到末尾;单击预览;Ctrl/Shift 点击多选"

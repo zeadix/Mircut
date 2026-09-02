@@ -47,6 +47,8 @@ interface Props {
   alignEdges?: number[];
   onDropAsset?: (assetId: string, trackId: string | null, startTicks: number, laneHint: "Video" | "Audio" | null) => void;
   dragKind?: "video" | "audio";
+  /// 正在拖拽的素材 id(用于显示块状落点轮廓)
+  dragAssetId?: string | null;
   onReorderTrack?: (fromIdx: number, toIdx: number) => void;
   onClipRangeEdit?: (clipId: string) => void;
   onClipRangeSet?: (clipId: string, startSecs: number, durSecs: number, srcInSecs: number) => void;
@@ -161,6 +163,7 @@ function TimelineInner({
   alignEdges,
   onDropAsset,
   dragKind = "video",
+  dragAssetId,
   onReorderTrack,
   onClipRangeEdit,
   onClipRangeSet,
@@ -184,7 +187,7 @@ function TimelineInner({
   const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number; laneOff: number; h: number } | null>(null);
   const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; x: number; y: number } | null>(null);
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
-  const [dropHint, setDropHint] = useState<{ x: number; y: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
+  const [dropHint, setDropHint] = useState<{ x: number; y: number; w: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
   /// 重排 drop 是否已执行(dragend 兜底:drop 不触发时用缓存插入位补执行)。
   const reorderDropped = useRef(false);
@@ -1070,25 +1073,36 @@ function TimelineInner({
       ctx.fillText(txt, bx + 5, trimHint.y - 8);
     }
 
-    // 拖放置预览
+    // 拖放置预览:块状轮廓(宽度=素材时长),松手即落在轮廓处
     if (dropHint) {
       const gy = dropHint.y;
       const gh = dropHint.h;
-      const zoneColor = dropHint.kind === "audio" ? "rgba(126, 168, 255, 0.16)" : "rgba(126, 217, 87, 0.16)";
-      ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : zoneColor;
-      ctx.fillRect(sx, gy, viewW, gh);
-      ctx.strokeStyle = "#7ed957";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(sx + 1, gy + 1, viewW - 2, gh - 2);
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(dropHint.x, gy);
-      ctx.lineTo(dropHint.x, gy + gh);
-      ctx.stroke();
-      if (dropHint.newLayer) {
-        ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
-        ctx.font = "11px sans-serif";
-        ctx.fillText("+ 新建文件轨道", sx + 8, gy + 16);
+      if (dropHint.w > 0) {
+        const gx = dropHint.x;
+        const gw = Math.max(dropHint.w, 8);
+        const zoneColor = dropHint.kind === "audio" ? "rgba(126, 168, 255, 0.16)" : "rgba(126, 217, 87, 0.16)";
+        ctx.fillStyle = dropHint.newLayer ? "rgba(126, 200, 255, 0.10)" : zoneColor;
+        ctx.fillRect(gx, gy, gw, gh);
+        ctx.strokeStyle = "#7ed957";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(gx, gy, gw, gh);
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+        if (dropHint.newLayer) {
+          ctx.fillStyle = dropHint.kind === "audio" ? "#7fb8a2" : "#7ec8ff";
+          ctx.font = "11px sans-serif";
+          ctx.fillText("+ 新建文件轨道", gx + 8, gy + 16);
+        }
+      } else {
+        // 无素材信息(如素材包条目):退化为插入线
+        ctx.strokeStyle = "#7ed957";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(dropHint.x, gy);
+        ctx.lineTo(dropHint.x, gy + gh);
+        ctx.stroke();
+        ctx.lineWidth = 1;
       }
     }
   }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio]);
@@ -1794,7 +1808,8 @@ function TimelineInner({
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const yIn = e.clientY - rect.top;
-    const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
+    // 落点吸附(与轮廓显示一致:所见即所放)
+    const t = Math.max(0, snapTicks(Math.round((e.clientX - rect.left) / pxPerTick)));
     // 轨道内容区下方空白 → 新建 File 轨
     if (yIn >= geo.totalH) {
       return { trackId: "__newlayer__", start: t, lane: null };
@@ -1845,9 +1860,6 @@ function TimelineInner({
     if (!onDropAsset) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
     const target = dropTargetFromEvent(e);
     if (!target) {
       dropTargetRef.current = null;
@@ -1856,7 +1868,9 @@ function TimelineInner({
     }
     // 缓存可靠落点(drop 事件坐标在 WebKitGTK 不可靠)
     dropTargetRef.current = target;
-    const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
+    // 计算块状落点轮廓:按拖拽素材时长确定宽度
+    const dragAsset = dragAssetId ? doc.assets.find((a) => a.id === dragAssetId) : null;
+    const durTicks = dragAsset ? Math.max(1, Math.round(dragAsset.duration_secs * tps)) : 0;
     // 计算 dropHint 可视化框(基于 canvas 行几何,File 轨高亮整个三行块区)
     let hy = 0;
     let hh = trackH;
@@ -1884,8 +1898,9 @@ function TimelineInner({
       hh = TIME_ROW_H + VIDEO_ROW_H + AUDIO_ROW_H;
     }
     setDropHint({
-      x: t * pxPerTick,
+      x: target.start * pxPerTick,
       y: hy,
+      w: durTicks * pxPerTick,
       h: hh,
       newLayer: target.trackId === "__newlayer__",
       kind: dragKind,
