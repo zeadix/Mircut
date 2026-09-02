@@ -1795,6 +1795,10 @@ function TimelineInner({
     const rect = canvas.getBoundingClientRect();
     const yIn = e.clientY - rect.top;
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
+    // 轨道内容区下方空白 → 新建 File 轨
+    if (yIn >= geo.totalH) {
+      return { trackId: "__newlayer__", start: t, lane: null };
+    }
     // 找 yIn 落在哪个 canvas 行
     let targetCanvasRow = 0;
     let acc = 0;
@@ -1812,12 +1816,19 @@ function TimelineInner({
     let rowAcc = 0;
     for (let ti = 0; ti < doc.tracks.length; ti++) {
       const tr = doc.tracks[ti];
-      const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
-      const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
-      const rows = vH + aH;
+      // File 轨 3 行(时间+视频+音频),普通轨 1 行
+      const rows = tr.kind === "File"
+        ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
+        : 1;
       if (rowAcc + rows > targetCanvasRow) {
         targetTrackIdx = ti;
-        targetLane = rows > 1 && targetCanvasRow - rowAcc === 1 ? "Audio" : "Video";
+        const rowInFile = targetCanvasRow - rowAcc;
+        if (tr.kind === "File") {
+          // 0=时间行,1=视频行,2=音频行;lane 仅作落点类型参考
+          targetLane = rowInFile === 2 ? "Audio" : "Video";
+        } else {
+          targetLane = tr.kind === "Audio" ? "Audio" : "Video";
+        }
         break;
       }
       rowAcc += rows;
@@ -1846,7 +1857,7 @@ function TimelineInner({
     // 缓存可靠落点(drop 事件坐标在 WebKitGTK 不可靠)
     dropTargetRef.current = target;
     const t = Math.max(0, Math.round((e.clientX - rect.left) / pxPerTick));
-    // 计算 dropHint 可视化框(基于 canvas 行几何)
+    // 计算 dropHint 可视化框(基于 canvas 行几何,File 轨高亮整个三行块区)
     let hy = 0;
     let hh = trackH;
     if (target.trackId && target.trackId !== "__newlayer__") {
@@ -1855,24 +1866,22 @@ function TimelineInner({
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
         if (tr.id === target.trackId) {
-          const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : trackH) : trackH;
-          const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : trackH) : 0;
-          hy = geo.tops[acc] ?? acc;
-          hh = vH + aH;
+          hy = geo.tops[acc] ?? 0;
+          hh = tr.kind === "File"
+            ? (collapsed[tr.id]?.time ? 0 : TIME_ROW_H) +
+              (collapsed[tr.id]?.video ? 0 : VIDEO_ROW_H) +
+              (collapsed[tr.id]?.audio ? 0 : AUDIO_ROW_H)
+            : trackH;
           break;
         }
-        if (tr.kind === "File") {
-          const vH = collapsed[tr.id]?.video ? 0 : trackH;
-          const aH = collapsed[tr.id]?.audio ? 0 : trackH;
-          acc += (vH > 0 ? 1 : 0) + (aH > 0 ? 1 : 0);
-        } else {
-          acc += 1;
-        }
+        acc += tr.kind === "File"
+          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
+          : 1;
       }
     } else if (target.trackId === "__newlayer__") {
-      // 新建轨道:在末尾追加
+      // 新建轨道:在末尾追加,高亮完整新块高度
       hy = geo.totalH;
-      hh = trackH;
+      hh = TIME_ROW_H + VIDEO_ROW_H + AUDIO_ROW_H;
     }
     setDropHint({
       x: t * pxPerTick,
