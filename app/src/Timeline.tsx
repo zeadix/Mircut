@@ -1609,28 +1609,18 @@ function TimelineInner({
       const laneOff = 0;
       const gh = isFile ? TIME_ROW_H + VIDEO_ROW_H + AUDIO_ROW_H - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
-      const rawStart = Math.max(0, t - grab);
-      // 插入点判定:File 轨单块移动用中心点语义(光标压块判左/右),
-      // 空隙处磁吸;多选组移动与普通轨保留原磁吸逻辑
+      // 抓取跟随:虚影保持按下时鼠标在块上的相对位置(抓取偏移),
+      // 先磁吸吸附(像素容差),再对重叠块贴缘,避免虚影压块
+      const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), d.clipId));
       const mt = moveTargetRef.current;
-      const groupMoving = !!moveGroupRef.current && moveGroupRef.current.ids.length > 0;
-      const fileTarget = doc.tracks.find((tr) => tr.id === (mt?.trackId ?? ""))?.kind === "File";
-      let magStart: number;
-      if (fileTarget && !groupMoving) {
-        const exclude = new Set([clip.id]);
-        const sib0 = siblingClip(clip);
-        if (sib0) exclude.add(sib0.id);
-        magStart = insertionStartFor(mt?.trackId ?? clip.track_id, t, exclude);
-      } else {
-        magStart = computeMagneticStart(
-          rawStart,
-          clip,
-          doc.clips,
-          laneOf,
-          mt?.trackId ?? clip.track_id,
-          mt?.lane ?? null
-        );
-      }
+      const magStart = computeMagneticStart(
+        rawStart,
+        clip,
+        doc.clips,
+        laneOf,
+        mt?.trackId ?? clip.track_id,
+        mt?.lane ?? null
+      );
       setGhost({
         clipId: d.clipId,
         start: magStart,
@@ -1763,8 +1753,6 @@ function TimelineInner({
       const clip = doc.clips.find((c) => c.id === d.clipId);
       if (clip && target && Math.abs(e.clientX - (d as { startX: number }).startX) > 3) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
-        const rawT = ticksFromClientX(e.clientX) - grab;
-        const cursorT = ticksFromClientX(e.clientX);
         const group = moveGroupRef.current;
         moveGroupRef.current = null;
         // File 轨双块:主块移动时同步兄弟块
@@ -1772,22 +1760,19 @@ function TimelineInner({
         const sib = primaryClip ? siblingClip(primaryClip) : null;
         const fileTarget = doc.tracks.find((tr) => tr.id === target.trackId)?.kind === "File";
         const groupMoving = !!group && group.ids.length > 0;
-        // 插入点判定:File 轨单块移动用中心点语义;其余磁吸
-        const magStart =
-          fileTarget && !groupMoving
-            ? insertionStartFor(
-                target.trackId,
-                cursorT,
-                new Set(sib ? [d.clipId, sib.id] : [d.clipId])
-              )
-            : computeMagneticStart(
-                rawT,
-                clip,
-                doc.clips,
-                laneOf,
-                target.trackId,
-                target.lane ?? null
-              );
+        // 与虚影一致:抓取偏移 + 磁吸吸附 + 对重叠块贴缘(所见即所放)
+        const snapStart = Math.max(
+          0,
+          snapTicks(Math.max(0, ticksFromClientX(e.clientX) - grab), d.clipId)
+        );
+        const magStart = computeMagneticStart(
+          snapStart,
+          clip,
+          doc.clips,
+          laneOf,
+          target.trackId,
+          target.lane ?? null
+        );
         const entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[] = [];
         if (groupMoving && onMoveClips) {
           const delta = magStart - clip.start;

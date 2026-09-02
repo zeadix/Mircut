@@ -273,6 +273,27 @@ export default function MediaLibrary({
                 e.dataTransfer.setData("application/x-veditor-asset", a.id);
                 onDragKind(a.has_video ? "video" : "audio");
                 onDragAsset?.(a.id);
+                // 块状拖拽跟随图(虚线框),替换素材卡片默认跟随样式
+                try {
+                  let ghost = document.getElementById("veditor-drag-ghost") as HTMLDivElement | null;
+                  if (!ghost) {
+                    ghost = document.createElement("div");
+                    ghost.id = "veditor-drag-ghost";
+                    document.body.appendChild(ghost);
+                  }
+                  const isAudio = !a.has_video;
+                  ghost.style.cssText =
+                    "position:fixed;left:-1000px;top:-1000px;width:140px;height:84px;" +
+                    "border:2px dashed " +
+                    (isAudio ? "#5f83b8" : "#5f9e73") +
+                    ";border-radius:8px;background:rgba(126,217,87,0.12);" +
+                    "display:flex;align-items:center;justify-content:center;" +
+                    `color:${isAudio ? "#5f83b8" : "#5f9e73"};font-size:11px;`;
+                  ghost.textContent = isAudio ? "音频块" : "视频块";
+                  e.dataTransfer.setDragImage(ghost, 70, 42);
+                } catch {
+                  /* setDragImage 不可用时回退默认跟随 */
+                }
                 e.dataTransfer.effectAllowed = "copy";
               }}
               onDragEnd={() => onDragAsset?.(null)}
