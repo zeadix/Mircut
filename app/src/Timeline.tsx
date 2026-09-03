@@ -4,7 +4,7 @@ import { snapToEdges, computeMagneticStart, cascadePushBlocks, buildFileBlocks }
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
-import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerSlash, X } from "@phosphor-icons/react";
+import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerLow, SpeakerSlash, Video, VideoCameraSlash, X } from "@phosphor-icons/react";
 
 interface Props {
   doc: Document;
@@ -2350,8 +2350,12 @@ function TimelineInner({
                           </button>
                         );
                       })}
-                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.35, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "#5f9e73" : "#8b93a1" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
-                        视频
+                      {/* 视频/音频合成开关(图标样式,与锁定/隐藏/静音按钮一致) */}
+                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.4, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
+                        {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
+                      </button>
+                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.4, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
+                        <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
                       </button>
                       <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
                         <X size={12} />
@@ -2382,9 +2386,6 @@ function TimelineInner({
                           音频
                         </span>
                       </div>
-                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.35, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "#5f83b8" : "#8b93a1" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
-                        音频
-                      </button>
                     </div>
                   );
                 }
