@@ -2279,7 +2279,16 @@ function TimelineInner({
                         background: "rgba(120, 120, 120, 0.05)",
                       }}
                     >
-                      {/* 时间行占位(时间行常显,无折叠开关) */}
+                      {/* 轨道级操作集中在此行:拖拽排序 + 锁定 + 删除 */}
+                      <span title="拖动排序轨道" draggable onDragStart={(ev) => { ev.dataTransfer.setData("application/x-veditor-track", String(ti)); ev.dataTransfer.effectAllowed = "move"; reorderFrom.current = ti; reorderDropped.current = false; setReorderHint(ti); }} onDragEnd={() => { const from = reorderFrom.current; if (from !== null && !reorderDropped.current) { const insert = reorderInsertRef.current; if (insert !== null) { const toIdx = insertToMoveIdx(from, insert); if (toIdx !== null) onReorderTrack?.(from, toIdx); } } reorderFrom.current = null; reorderDropped.current = false; reorderInsertRef.current = null; setReorderInsert(null); setReorderHint(null); }} style={{ cursor: "grab", alignSelf: "center", color: reorderHint === ti ? "var(--accent)" : "#565b66", fontSize: 13, lineHeight: "6px", letterSpacing: "1px", userSelect: "none", paddingLeft: 2 }}>
+                        {'\u2630'}
+                      </span>
+                      <button className="btn" style={{ alignSelf: "center", padding: "1px 3px", display: "flex", alignItems: "center", opacity: track.locked ? 1 : 0.4, borderColor: track.locked ? "var(--accent)" : undefined, color: track.locked ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, "locked")} title={track.locked ? "解锁轨道" : "锁定轨道"}>
+                        {track.locked ? <Lock size={11} weight="fill" /> : <LockOpen size={11} />}
+                      </button>
+                      <button className="btn" style={{ alignSelf: "center", padding: "1px 3px", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
+                        <X size={11} />
+                      </button>
                       <div style={{ flex: 1 }} />
                     </div>
                   );
@@ -2323,9 +2332,6 @@ function TimelineInner({
                       {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && vH === videoRowH && (
                         <div style={{ position: "absolute", bottom: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: 2, boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
                       )}
-                      <span title="拖动排序轨道" draggable onDragStart={(ev) => { ev.dataTransfer.setData("application/x-veditor-track", String(ti)); ev.dataTransfer.effectAllowed = "move"; reorderFrom.current = ti; reorderDropped.current = false; setReorderHint(ti); }} onDragEnd={() => { const from = reorderFrom.current; if (from !== null && !reorderDropped.current) { const insert = reorderInsertRef.current; if (insert !== null) { const toIdx = insertToMoveIdx(from, insert); if (toIdx !== null) onReorderTrack?.(from, toIdx); } } reorderFrom.current = null; reorderDropped.current = false; reorderInsertRef.current = null; setReorderInsert(null); setReorderHint(null); }} style={{ cursor: "grab", alignSelf: "center", color: reorderHint === ti ? "var(--accent)" : "#565b66", fontSize: 13, lineHeight: "6px", letterSpacing: "1px", userSelect: "none", paddingLeft: 2 }}>
-                        {'\u2630'}
-                      </span>
                       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
                         {renamingTrack === track.id ? (
                           <input className="ti" style={{ width: "100%", fontSize: 11, padding: "2px 4px" }} autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); } if (e.key === "Escape") setRenamingTrack(null); }} onBlur={() => { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); }} />
@@ -2335,23 +2341,9 @@ function TimelineInner({
                           </span>
                         )}
                       </div>
-                      {(["locked", "hidden", "muted"] as const).map((f) => {
-                        const on = track[f];
-                        return (
-                          <button key={f} className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: on ? 1 : 0.4, borderColor: on ? "var(--accent)" : undefined, color: on ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, f)} title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}>
-                            {f === "locked" ? (on ? <Lock size={12} weight="fill" /> : <LockOpen size={12} />) : f === "hidden" ? (on ? <EyeSlash size={12} /> : <Eye size={12} />) : (on ? <SpeakerSlash size={12} /> : <SpeakerHigh size={12} />)}
-                          </button>
-                        );
-                      })}
-                      {/* 视频/音频合成开关(图标样式,与锁定/隐藏/静音按钮一致) */}
+                      {/* 视频合成开关(本行专属) */}
                       <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.4, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
                         {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
-                      </button>
-                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.4, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
-                        <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
-                      </button>
-                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
-                        <X size={12} />
                       </button>
                     </div>
                   );
@@ -2379,6 +2371,10 @@ function TimelineInner({
                           音频
                         </span>
                       </div>
+                      {/* 音频合成开关(本行专属) */}
+                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.4, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
+                        <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
+                      </button>
                     </div>
                   );
                 }
