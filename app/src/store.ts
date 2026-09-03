@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import * as api from "./api";
+import { buildFileBlocks } from "./snap";
 import type { Document } from "./types";
 
 /**
@@ -46,6 +47,18 @@ function normalizeDoc(d: Document): Document {
     const track = d.tracks.find((t) => t.id === c.track_id);
     if (track?.kind === "File" && (c.lane === null || c.lane === undefined)) {
       c.lane = "Video";
+    }
+  }
+  // File 轨块级对齐:音频 start/duration 对齐视频(与后端 fixup 同语义)。
+  // 保证渲染/命中/交互三者几何一致;后端残留的配对漂移不会拖垮 UI。
+  for (const track of d.tracks) {
+    if (track.kind !== "File") continue;
+    for (const b of buildFileBlocks(d.clips, track.id)) {
+      if (!b.videoId || !b.audioId) continue;
+      const v = d.clips.find((c) => c.id === b.videoId)!;
+      const a = d.clips.find((c) => c.id === b.audioId)!;
+      if (a.start !== v.start) a.start = v.start;
+      if (a.duration !== v.duration) a.duration = v.duration;
     }
   }
   return d;

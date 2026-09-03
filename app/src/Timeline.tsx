@@ -587,10 +587,12 @@ function TimelineInner({
             ctx.fillRect(x + cw - foutX - 3, audioTop + 1, 6, 5);
           }
 
-          // ===== 波形图(常显;数据缺失时用确定性占位波形,保证永不空白) =====
+          // ===== 波形图(常显;数据缺失/空数组/全零时用确定性占位波形) =====
+          const realWf = waveforms?.[audioClip.asset.asset_id];
           const wf =
-            waveforms?.[audioClip.asset.asset_id] ??
-            placeholderWaveform(audioClip.asset.asset_id, audioClip.duration / tps);
+            realWf && realWf.some((p) => p > 0.01)
+              ? realWf
+              : placeholderWaveform(audioClip.asset.asset_id, audioClip.duration / tps);
           if (wf && cw > 8) {
             ctx.strokeStyle = "rgba(47, 111, 184, 0.85)";
             ctx.beginPath();
@@ -654,6 +656,11 @@ function TimelineInner({
             ctx.font = "9px sans-serif";
             ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, audioTop + 12);
           }
+        } else {
+          // 无配对音频 clip:明确提示(而非静默空白)
+          ctx.fillStyle = "rgba(90, 100, 115, 0.9)";
+          ctx.font = "10px sans-serif";
+          ctx.fillText("无音频", x + 6, audioTop + audioH / 2 + 3);
         }
       }
     }
