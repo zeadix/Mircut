@@ -2279,11 +2279,8 @@ function TimelineInner({
                         background: "rgba(120, 120, 120, 0.05)",
                       }}
                     >
-                      {/* 时间行占位 */}
+                      {/* 时间行占位(时间行常显,无折叠开关) */}
                       <div style={{ flex: 1 }} />
-                      <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: collapsed[track.id]?.time ? 0.4 : 1, color: collapsed[track.id]?.time ? "#8b93a1" : "#888" }} title="隐藏时间行" onClick={() => setCollapsedVal({ ...collapsed, [track.id]: { ...collapsed[track.id], time: !collapsed[track.id]?.time } })}>
-                        时间
-                      </button>
                     </div>
                   );
                 }
