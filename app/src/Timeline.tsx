@@ -2279,17 +2279,25 @@ function TimelineInner({
                         background: "rgba(120, 120, 120, 0.05)",
                       }}
                     >
-                      {/* 轨道级操作集中在此行:拖拽排序 + 锁定 + 删除 */}
+                      {/* 轨道级操作行:名称+拖拽排序左置;锁定+删除右贴边 */}
                       <span title="拖动排序轨道" draggable onDragStart={(ev) => { ev.dataTransfer.setData("application/x-veditor-track", String(ti)); ev.dataTransfer.effectAllowed = "move"; reorderFrom.current = ti; reorderDropped.current = false; setReorderHint(ti); }} onDragEnd={() => { const from = reorderFrom.current; if (from !== null && !reorderDropped.current) { const insert = reorderInsertRef.current; if (insert !== null) { const toIdx = insertToMoveIdx(from, insert); if (toIdx !== null) onReorderTrack?.(from, toIdx); } } reorderFrom.current = null; reorderDropped.current = false; reorderInsertRef.current = null; setReorderInsert(null); setReorderHint(null); }} style={{ cursor: "grab", alignSelf: "center", color: reorderHint === ti ? "var(--accent)" : "#565b66", fontSize: 13, lineHeight: "6px", letterSpacing: "1px", userSelect: "none", paddingLeft: 2 }}>
                         {'\u2630'}
                       </span>
+                      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
+                        {renamingTrack === track.id ? (
+                          <input className="ti" style={{ width: "100%", fontSize: 10, padding: "1px 3px" }} autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); } if (e.key === "Escape") setRenamingTrack(null); }} onBlur={() => { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); }} />
+                        ) : (
+                          <span style={{ color: "#c8cdd8", fontSize: 10, lineHeight: "14px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title="双击重命名" onDoubleClick={() => { setRenamingTrack(track.id); setRenameDraft(track.name); }}>
+                            {track.name}
+                          </span>
+                        )}
+                      </div>
                       <button className="btn" style={{ alignSelf: "center", padding: "1px 3px", display: "flex", alignItems: "center", opacity: track.locked ? 1 : 0.4, borderColor: track.locked ? "var(--accent)" : undefined, color: track.locked ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, "locked")} title={track.locked ? "解锁轨道" : "锁定轨道"}>
                         {track.locked ? <Lock size={11} weight="fill" /> : <LockOpen size={11} />}
                       </button>
                       <button className="btn" style={{ alignSelf: "center", padding: "1px 3px", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
                         <X size={11} />
                       </button>
-                      <div style={{ flex: 1 }} />
                     </div>
                   );
                 }
@@ -2332,14 +2340,12 @@ function TimelineInner({
                       {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && vH === videoRowH && (
                         <div style={{ position: "absolute", bottom: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: 2, boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
                       )}
-                      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", minWidth: 0 }}>
-                        {renamingTrack === track.id ? (
-                          <input className="ti" style={{ width: "100%", fontSize: 11, padding: "2px 4px" }} autoFocus value={renameDraft} onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); } if (e.key === "Escape") setRenamingTrack(null); }} onBlur={() => { onRenameTrack?.(track.id, renameDraft.trim() || track.name); setRenamingTrack(null); }} />
-                        ) : (
-                          <span style={{ color: "#c8cdd8", fontSize: videoRowH < 44 ? 10 : 12, lineHeight: "16px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title="双击重命名" onDoubleClick={() => { setRenamingTrack(track.id); setRenameDraft(track.name); }}>
-                            {track.name}
-                          </span>
-                        )}
+                      {/* 行标签:缩进与音频行对齐 */}
+                      <div style={{ width: 20, flexShrink: 0 }} />
+                      <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
+                        <span style={{ fontSize: 9, color: "#5f9e73", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          视频
+                        </span>
                       </div>
                       {/* 视频合成开关(本行专属) */}
                       <button className="btn" style={{ alignSelf: "center", padding: "2px 4px", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.4, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
