@@ -96,8 +96,8 @@ type DragSession =
   | { kind: "trimR"; clipId: string; origStart: number; origDuration: number }
   /// 空白处左键拖拽:框选。
   | { kind: "marquee" }
-  /// 音频块音量包络拖拽。
-  | { kind: "envelope"; clipId: string }
+  /// 音频块音量包络拖拽(fixedT = 编辑模式下节点/新建节点的固定时间,仅调值)。
+  | { kind: "envelope"; clipId: string; fixedT?: number }
   /// 淡入/淡出手柄拖拽(afade 秒数)。
   | { kind: "fade"; clipId: string; edge: "in" | "out" }
   /// 滚动修剪(共享切点):left/right 为相邻片段。
@@ -222,6 +222,8 @@ function TimelineInner({
   /// 左上角屏蔽开关(仅时间轴显示;不影响合成)。
   const [viewVideo, setViewVideo] = useState(true);
   const [viewAudio, setViewAudio] = useState(true);
+  /// 音频曲线编辑模式:开启后音频区点击/拖拽=调整音量曲线;关闭时=选中/移动块。
+  const [audioEditMode, setAudioEditMode] = useState(false);
   /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
   const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
@@ -589,13 +591,13 @@ function TimelineInner({
           }
 
           // ===== 音量包络曲线 =====
-          // 始终绘制(所见即可编辑);窄块简化为只画线+关键帧点,不画文字
+          // 始终绘制(所见即可编辑);编辑模式下加亮提示
           if (audioH > 0 && cw > 2) {
             const envLaneTop = audioTop + 2;
             const envLaneH = audioH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
-            ctx.strokeStyle = "rgba(255,255,255,0.55)";
+            ctx.strokeStyle = audioEditMode ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.55)";
             ctx.beginPath();
             const ex0 = Math.max(x, vx0);
             const ex1 = Math.min(x + cw, vx1);
@@ -636,9 +638,9 @@ function TimelineInner({
       }
     }
 
-    // 5. 选中时绘制调整手柄
+    // 5. 选中时绘制调整手柄(黄色,修剪/移动触发区提示)
     if (selected) {
-      ctx.fillStyle = "#0071e3";
+      ctx.fillStyle = "#ffd75e";
       // 左手柄
       ctx.fillRect(x - 1, timeTop + totalH / 2 - 6, 6, 12);
       // 右手柄
@@ -1111,7 +1113,7 @@ function TimelineInner({
         ctx.lineWidth = 1;
       }
     }
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, audioEditMode]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -1349,11 +1351,46 @@ function TimelineInner({
       const clip = doc.clips.find((c) => c.id === hit.clipId)!;
       const track = doc.tracks.find((tr) => tr.id === clip.track_id);
       if (track?.locked) return;
-      // 音频块音量包络:靠近音量线时进入包络拖拽(优先于移动)
+      // 音频块交互分区:
+      // 编辑模式 → 音频行专司曲线编辑(拖节点/点线上创建节点);
+      // 普通模式 → 音频行整体选中/移动块(仅顶边小手柄调淡入淡出)。
       const isAudioBlock = clip.lane === "Audio" || track?.kind === "Audio";
       const row = clipRow(clip);
       const laneGeo = row ? clipLaneGeo(row, clip) : null;
-      if (isAudioBlock && laneGeo && hit.edge === "body" && yIn - laneGeo.laneTop <= 7) {
+      const inAudioRow = row ? yIn >= row.audioTop && yIn < row.audioTop + row.audioH : false;
+      if (audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow) {
+        const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
+        const kfs = clip.fx?.volume?.keyframes ?? [];
+        // 1) 节点命中(±6px):拖拽既有节点(仅调值)
+        let hitKf: (typeof kfs)[number] | null = null;
+        for (const k of kfs) {
+          const kx = (clip.start + k.t) * pxPerTick;
+          const ky = envY(k.value, laneGeo.laneTop, laneGeo.h);
+          if (Math.abs(px - kx) <= 6 && Math.abs(yIn - ky) <= 6) {
+            hitKf = k;
+            break;
+          }
+        }
+        if (hitKf) {
+          onClipClick(clip.id, false);
+          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: hitKf.t };
+          setEnvLive({ clipId: clip.id, tLocal: hitKf.t, v: hitKf.value });
+          return;
+        }
+        // 2) 音量线上点击(±8px):创建新节点并进入拖拽(提交在 pointerup)
+        const vAt = valueAt(kfs, t - clip.start) ?? clip.volume;
+        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 8) {
+          onClipClick(clip.id, false);
+          const tLocal = Math.max(0, Math.min(clip.duration, t - clip.start));
+          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: tLocal };
+          setEnvLive({ clipId: clip.id, tLocal, v: envValFromY(yIn, laneGeo.laneTop, laneGeo.h) });
+          return;
+        }
+        // 3) 编辑模式下音频区其余点击:仅选中(防误移动)
+        onClipClick(clip.id, false);
+        return;
+      }
+      if (!audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow && yIn - laneGeo.laneTop <= 7) {
         // 淡入/淡出手柄:顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
         const maxFade = (clip.duration / tps) * 0.9;
@@ -1371,16 +1408,7 @@ function TimelineInner({
           return;
         }
       }
-      if (isAudioBlock && laneGeo && hit.edge === "body") {
-        const vAt = valueAt(clip.fx?.volume?.keyframes ?? [], t - clip.start) ?? clip.volume;
-        // 容差 5px:紧贴音量线才进入包络编辑,其余音频区域整体移动文件块
-        if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 5) {
-          onClipClick(clip.id, false);
-          dragRef.current = { kind: "envelope", clipId: clip.id };
-          setEnvLive({ clipId: clip.id, tLocal: Math.max(0, t - clip.start), v: vAt });
-          return;
-        }
-      }
+      // 普通模式:音频区其余点击全部落入选中/移动(无包络拦截)
       // Ctrl/Cmd + 边缘 = 滚动修剪(优先于增选:边缘处 Ctrl 语义让位 Roll)
       const isEdge = hit.edge === "left" || hit.edge === "right";
       if (isEdge && (e.ctrlKey || e.metaKey)) {
@@ -1524,7 +1552,11 @@ function TimelineInner({
         const t = ticksFromClientX(e.clientX);
         setEnvLive({
           clipId: d.clipId,
-          tLocal: Math.max(0, Math.min(clip.duration, t - clip.start)),
+          // 编辑模式节点拖拽:时间固定(fixedT),仅调值
+          tLocal:
+            d.fixedT != null
+              ? d.fixedT
+              : Math.max(0, Math.min(clip.duration, t - clip.start)),
           v: envValFromY(y, geo.laneTop, geo.h),
         });
       }
@@ -2091,6 +2123,12 @@ function TimelineInner({
         </label>
         <label title="修剪/删除后后方片段自动前移填补">
           <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
+        </label>
+        <label
+          title="音频曲线编辑:开启后点击/拖拽文件块音频区的音量线与节点调整曲线;关闭时音频区点击=选中/移动整块"
+          style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: audioEditMode ? "var(--accent)" : undefined }}
+        >
+          <input type="checkbox" checked={audioEditMode} onChange={(e) => setAudioEditMode(e.target.checked)} /> 编辑音频
         </label>
         <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }} title="时间轴显示屏蔽(仅弱化显示,不影响预览/导出合成)">
           <label style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10 }}>

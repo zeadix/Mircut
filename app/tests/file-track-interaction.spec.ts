@@ -46,7 +46,9 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
 
-  // ===== 1. 音频包络编辑:按住音量线(v=1 → y≈96)拖拽 =====
+  // ===== 1. 音频包络编辑:先开启"编辑音频"模式,按住音量线(v=1 → y≈96)拖拽 =====
+  await page.getByTitle(/音频曲线编辑/).locator("input").check();
+  await page.waitForTimeout(200);
   const envY = box!.y + 96;
   await page.mouse.move(midX, envY);
   await page.mouse.down();
@@ -61,6 +63,10 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(envCall).toBeTruthy();
   expect(envCall!.args.clipId).toBe("cAudio");
   expect(envCall!.args.prop).toBe("volume");
+
+  // 关闭编辑模式:音频区点击恢复为选中/移动
+  await page.getByTitle(/音频曲线编辑/).locator("input").uncheck();
+  await page.waitForTimeout(200);
 
   // ===== 2. 音频区拖拽整体移动:在包络线之外(y=110)按下拖动 =====
   await page.mouse.move(midX, box!.y + 110);
@@ -153,4 +159,70 @@ test("回归:抓音频区拖到视频行,lane 保持 Audio 且配对同行", asy
   expect(videoEntry!.lane).toBe("Video");
   // 配对同起点
   expect(audioEntry!.new_start).toBe(videoEntry!.new_start);
+});
+
+test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({ page }) => {
+  await page.addInitScript(() => {
+    const timer = setInterval(() => {
+      const w = window as unknown as {
+        __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        __mockDoc?: { clips: Record<string, unknown>[] };
+        __calls?: { cmd: string; args: Record<string, unknown> }[];
+      };
+      if (w.__TAURI_INTERNALS__ && w.__mockDoc) {
+        clearInterval(timer);
+        const orig = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+        w.__calls = [];
+        w.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+          w.__calls!.push({ cmd, args: args ?? {} });
+          return orig(cmd, args);
+        };
+        const v = w.__mockDoc.clips[0];
+        const audio = {
+          ...structuredClone(v),
+          id: "cAudio",
+          lane: "Audio",
+          fx: {
+            ...((v.fx as Record<string, unknown>) ?? {}),
+            volume: { keyframes: [{ t: 30, value: 0.8, interp: "Smooth" }] },
+          },
+        };
+        w.__mockDoc.clips.push(audio);
+      }
+    }, 5);
+  });
+
+  await page.goto("/");
+  await page.locator(".asset-card").first().waitFor({ timeout: 10000 });
+  await page.keyboard.press("m");
+  await page.waitForTimeout(600);
+
+  // 开启编辑音频模式
+  await page.getByTitle(/音频曲线编辑/).locator("input").check();
+  await page.waitForTimeout(200);
+
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+
+  // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 82, 36) ≈ 100(canvas 内)
+  const nodeX = box!.x + 15;
+  const nodeY = box!.y + 100;
+  await page.mouse.move(nodeX, nodeY);
+  await page.mouse.down();
+  await page.mouse.move(nodeX, nodeY + 15, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+
+  const envCall = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+    return calls.find((c) => c.cmd === "set_keyframe") ?? null;
+  });
+  expect(envCall, "节点拖拽应提交 set_keyframe").toBeTruthy();
+  expect(envCall!.args.clipId).toBe("cAudio");
+  expect(envCall!.args.prop).toBe("volume");
+  // 时间固定为节点原位(仅调值)
+  expect(envCall!.args.t).toBe(30);
+  const val = envCall!.args.value as number;
+  expect(val).toBeLessThan(0.8); // 向下拖 → 音量降低
 });
