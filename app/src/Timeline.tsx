@@ -131,6 +131,25 @@ function getThumbImg(src: string, onLoad: () => void): HTMLImageElement | null {
   return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
+/// 占位波形(无真实波形数据时按素材 id 确定性生成;真实数据到达后自动替换)。
+/// 保证音频块永不空白(ffmpeg 波形生成失败/未完成时也有可视曲线)。
+function placeholderWaveform(assetId: string, seconds: number): number[] {
+  let h = 0;
+  for (let i = 0; i < assetId.length; i++) h = (h * 31 + assetId.charCodeAt(i)) >>> 0;
+  const out: number[] = [];
+  const n = Math.max(10, Math.ceil(seconds * 10));
+  for (let i = 0; i < n; i++) {
+    const t = i / 10;
+    const v =
+      0.3 +
+      0.3 * Math.abs(Math.sin(t * 3.1 + (h % 7))) +
+      0.25 * Math.abs(Math.sin(t * 0.9 + (h % 13))) +
+      0.1 * Math.abs(Math.sin(t * 11.3 + (h % 5)));
+    out.push(Math.min(1, v));
+  }
+  return out;
+}
+
 function fmtTicks(t: number, tps: number): string {
   const secs = t / tps;
   const m = Math.floor(secs / 60);
@@ -568,8 +587,10 @@ function TimelineInner({
             ctx.fillRect(x + cw - foutX - 3, audioTop + 1, 6, 5);
           }
 
-          // ===== 波形图(常显;加深色提高与浅色底对比) =====
-          const wf = waveforms?.[audioClip.asset.asset_id];
+          // ===== 波形图(常显;数据缺失时用确定性占位波形,保证永不空白) =====
+          const wf =
+            waveforms?.[audioClip.asset.asset_id] ??
+            placeholderWaveform(audioClip.asset.asset_id, audioClip.duration / tps);
           if (wf && cw > 8) {
             ctx.strokeStyle = "rgba(47, 111, 184, 0.85)";
             ctx.beginPath();
