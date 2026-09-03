@@ -98,7 +98,12 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "gen_thumbnails":
       return { files: ["/tmp/mock-thumb.jpg"] };
     case "gen_waveform":
-      return { peaks: [0.5, 0.8, 0.3], samples_per_sec: 10, duration_secs: 3 };
+      // 按时长生成完整峰值序列(samples_per_sec=10),模拟真实波形数据
+      return {
+        peaks: Array.from({ length: 64 }, (_, i) => 0.35 + 0.55 * Math.abs(Math.sin(i * 0.9))),
+        samples_per_sec: 10,
+        duration_secs: 3,
+      };
     case "read_media_base64":
       return PIXEL_PNG;
     case "make_proxy":

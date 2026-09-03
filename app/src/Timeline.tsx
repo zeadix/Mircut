@@ -568,10 +568,10 @@ function TimelineInner({
             ctx.fillRect(x + cw - foutX - 3, audioTop + 1, 6, 5);
           }
 
-          // ===== 波形图 =====
+          // ===== 波形图(常显;加深色提高与浅色底对比) =====
           const wf = waveforms?.[audioClip.asset.asset_id];
           if (wf && cw > 8) {
-            ctx.strokeStyle = "rgba(220, 235, 255, 0.55)";
+            ctx.strokeStyle = "rgba(47, 111, 184, 0.85)";
             ctx.beginPath();
             const x0 = Math.max(x, vx0);
             const x1 = Math.min(x + cw, vx1);
@@ -590,14 +590,13 @@ function TimelineInner({
             ctx.stroke();
           }
 
-          // ===== 音量包络曲线 =====
-          // 始终绘制(所见即可编辑);编辑模式下加亮提示
-          if (audioH > 0 && cw > 2) {
+          // ===== 音量包络曲线(仅"编辑音频"模式显示) =====
+          if (audioEditMode && audioH > 0 && cw > 2) {
             const envLaneTop = audioTop + 2;
             const envLaneH = audioH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
-            ctx.strokeStyle = audioEditMode ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.55)";
+            ctx.strokeStyle = "rgba(255,255,255,0.95)";
             ctx.beginPath();
             const ex0 = Math.max(x, vx0);
             const ex1 = Math.min(x + cw, vx1);

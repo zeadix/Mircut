@@ -46,9 +46,40 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
 
+  // 音量线位置附近的近白色像素(包络线 v=1 → y≈96)
+  const whiteLinePixels = () =>
+    page.evaluate(() => {
+      const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      const img = ctx.getImageData(10, 93, 30, 6);
+      let n = 0;
+      for (let i = 0; i < img.data.length; i += 4) {
+        const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+        if (r > 235 && g > 235 && b > 235) n++;
+      }
+      return n;
+    });
+
+  // ===== 0. 普通模式:波形可见(深蓝),包络线不显示 =====
+  const wavePixels = await page.evaluate(() => {
+    const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
+    const ctx = canvas.getContext("2d")!;
+    const img = ctx.getImageData(10, 82, 30, 36);
+    let n = 0;
+    for (let i = 0; i < img.data.length; i += 4) {
+      const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+      if (b > 120 && b > r + 30 && g < 160) n++; // 深蓝波形色
+    }
+    return n;
+  });
+  expect(wavePixels, "普通模式音频区应显示波形").toBeGreaterThan(10);
+  expect(await whiteLinePixels()).toBe(0);
+
   // ===== 1. 音频包络编辑:先开启"编辑音频"模式,按住音量线(v=1 → y≈96)拖拽 =====
   await page.getByTitle(/音频曲线编辑/).locator("input").check();
   await page.waitForTimeout(200);
+  // 编辑模式下包络线出现
+  expect(await whiteLinePixels(), "编辑模式应显示音量节点曲线").toBeGreaterThan(5);
   const envY = box!.y + 96;
   await page.mouse.move(midX, envY);
   await page.mouse.down();
@@ -64,9 +95,10 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(envCall!.args.clipId).toBe("cAudio");
   expect(envCall!.args.prop).toBe("volume");
 
-  // 关闭编辑模式:音频区点击恢复为选中/移动
+  // 关闭编辑模式:包络线消失,回到波形显示
   await page.getByTitle(/音频曲线编辑/).locator("input").uncheck();
   await page.waitForTimeout(200);
+  expect(await whiteLinePixels(), "退出编辑模式包络线应消失").toBe(0);
 
   // ===== 2. 音频区拖拽整体移动:在包络线之外(y=110)按下拖动 =====
   await page.mouse.move(midX, box!.y + 110);
