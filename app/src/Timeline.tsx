@@ -1252,9 +1252,17 @@ function TimelineInner({
     return `${c.track_id}-${block.assetId}-${block.start}`;
   }
 
-  function snapTicks(t: number, excludeClipId?: string): number {
+  function snapTicks(t: number, excludeClipId?: string | string[] | null): number {
     // 容差按像素(10px)换算 ticks:低缩放下 6 ticks 不足 3px,几乎无吸附手感
-    return snapToEdges(t, doc.clips, tps, snap, excludeClipId, 10 / pxPerTick, alignEdges ?? []);
+    // excludeClipId 支持数组:修剪/移动时排除整个文件块(视频+音频),
+    // 否则兄弟块的同值边缘会把拖动"吸回原位"(左缘左拖不动的根因)
+    const ex = Array.isArray(excludeClipId)
+      ? excludeClipId
+      : excludeClipId
+        ? [excludeClipId]
+        : [];
+    const pool = ex.length > 0 ? doc.clips.filter((c) => !ex.includes(c.id)) : doc.clips;
+    return snapToEdges(t, pool, tps, snap, undefined, 10 / pxPerTick, alignEdges ?? []);
   }
 
   /// File 轨插入点判定(剪映式):
@@ -1323,14 +1331,36 @@ function TimelineInner({
         // 保证"所见即可选/可拖",即使音视频起点有偏差也按块范围命中
         const blocks = buildFileBlocks(doc.clips, track.id);
         const b = blocks.find((blk) => t >= blk.start && t < blk.start + blk.duration);
-        if (!b) return null;
-        const clipId = rowInFile === 2 ? (b.audioId ?? b.videoId) : (b.videoId ?? b.audioId);
-        if (!clipId) return null;
-        const bx0 = b.start * pxPerTick;
-        const bx1 = (b.start + b.duration) * pxPerTick;
-        if (px - bx0 <= EDGE_HIT_PX) return { clipId, edge: "left" };
-        if (bx1 - px <= EDGE_HIT_PX) return { clipId, edge: "right" };
-        return { clipId, edge: "body" };
+        if (b) {
+          const clipId = rowInFile === 2 ? (b.audioId ?? b.videoId) : (b.videoId ?? b.audioId);
+          if (!clipId) return null;
+          const bx0 = b.start * pxPerTick;
+          const bx1 = (b.start + b.duration) * pxPerTick;
+          if (px - bx0 <= EDGE_HIT_PX) return { clipId, edge: "left" };
+          if (bx1 - px <= EDGE_HIT_PX) return { clipId, edge: "right" };
+          return { clipId, edge: "body" };
+        }
+        // 未压在块上:边缘 ±EDGE_HIT_PX 内可从块外抓取修剪
+        // (贴缝抓取/缝隙内抓取不再落空变成框选)
+        const tol = EDGE_HIT_PX / pxPerTick;
+        let best: { clipId: string; edge: "left" | "right" } | null = null;
+        let bestDist = tol;
+        for (const blk of blocks) {
+          const vid = blk.videoId ?? blk.audioId;
+          if (!vid) continue;
+          const dL = Math.abs(t - blk.start);
+          const dR = Math.abs(blk.start + blk.duration - t);
+          if (dL <= bestDist) {
+            bestDist = dL;
+            best = { clipId: vid, edge: "left" };
+          }
+          if (dR <= bestDist) {
+            bestDist = dR;
+            best = { clipId: vid, edge: "right" };
+          }
+        }
+        if (best) return best;
+        return null;
       }
       laneFilter = track.kind === "Audio" ? "Audio" : "Video";
       targetTrackId = track.id;
@@ -1615,10 +1645,12 @@ function TimelineInner({
     }
     const clip = doc.clips.find((c) => c.id === d.clipId);
     if (!clip) return;
+    // 修剪/滚动/滑切的吸附排除整个文件块(视频+音频同值边缘互吸会粘住拖动)
+    const blockEx = siblingClip(clip) ? [d.clipId, siblingClip(clip)!.id] : [d.clipId];
     // move 拖动用鼠标原始 ticks(不吸附),其它操作(trim 等)继续用 snapTicks
     const t = d.kind === "move"
       ? Math.max(0, Math.floor(ticksFromClientX(e.clientX)))
-      : snapTicks(ticksFromClientX(e.clientX), d.clipId);
+      : snapTicks(ticksFromClientX(e.clientX), blockEx);
     const ti = doc.tracks.findIndex((tr) => tr.id === clip.track_id);
     const row = clipRow(clip);
     if (d.kind === "move") {
@@ -1694,8 +1726,9 @@ function TimelineInner({
       const gh = isFile ? timeRowH + videoRowH + audioRowH - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
       // 抓取跟随:虚影保持按下时鼠标在块上的相对位置(抓取偏移),
-      // 先磁吸吸附(像素容差),再对重叠块贴缘,避免虚影压块
-      const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), d.clipId));
+      // 先磁吸吸附(像素容差,排除自身块边缘防互吸),再对重叠块贴缘,避免虚影压块
+      const sib0 = siblingClip(clip);
+      const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), sib0 ? [d.clipId, sib0.id] : d.clipId));
       const mt = moveTargetRef.current;
       const magStart = computeMagneticStart(
         rawStart,
@@ -1824,7 +1857,12 @@ function TimelineInner({
       moveTargetRef.current = null;
       if (d.rightBtn && target) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
-        const t = snapTicks(ticksFromClientX(e.clientX) - grab, d.clipId);
+        const rc = doc.clips.find((c) => c.id === d.clipId);
+        const rs = rc ? siblingClip(rc) : null;
+        const t = snapTicks(
+          ticksFromClientX(e.clientX) - grab,
+          rs ? [d.clipId, rs.id] : d.clipId
+        );
         setDropMenu({
           x: e.clientX,
           y: e.clientY,
@@ -1844,10 +1882,13 @@ function TimelineInner({
         const sib = primaryClip ? siblingClip(primaryClip) : null;
         const fileTarget = doc.tracks.find((tr) => tr.id === target.trackId)?.kind === "File";
         const groupMoving = !!group && group.ids.length > 0;
-        // 与虚影一致:抓取偏移 + 磁吸吸附 + 对重叠块贴缘(所见即所放)
+        // 与虚影一致:抓取偏移 + 磁吸吸附(排除自身块边缘) + 对重叠块贴缘(所见即所放)
         const snapStart = Math.max(
           0,
-          snapTicks(Math.max(0, ticksFromClientX(e.clientX) - grab), d.clipId)
+          snapTicks(
+            Math.max(0, ticksFromClientX(e.clientX) - grab),
+            sib ? [d.clipId, sib.id] : d.clipId
+          )
         );
         const magStart = computeMagneticStart(
           snapStart,

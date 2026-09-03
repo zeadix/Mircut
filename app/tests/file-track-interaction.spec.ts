@@ -310,3 +310,89 @@ test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ pa
   expect(after, "点击音频行后应出现选中黄色手柄").toBeGreaterThan(before);
   expect(after).toBeGreaterThan(10);
 });
+
+test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ page }) => {
+  await page.addInitScript(() => {
+    const timer = setInterval(() => {
+      const w = window as unknown as {
+        __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        __mockDoc?: { clips: Record<string, unknown>[] };
+        __calls?: { cmd: string; args: Record<string, unknown> }[];
+      };
+      if (w.__TAURI_INTERNALS__ && w.__mockDoc) {
+        clearInterval(timer);
+        const orig = w.__TAURI_INTERNALS__.invoke.bind(w.__TAURI_INTERNALS__);
+        w.__calls = [];
+        w.__TAURI_INTERNALS__.invoke = (cmd, args) => {
+          w.__calls!.push({ cmd, args: args ?? {} });
+          return orig(cmd, args);
+        };
+        const mk = (id: string, asset: string, start: number, lane: string) => ({
+          id, track_id: "f1", start, duration: 90,
+          asset: { asset_id: asset, source_in: 0, source_out: 3 },
+          lane, speed: 1, volume: 1, muted: false, fx: undefined,
+        });
+        // 两块首尾相接:A[0,90) B[90,180) —— B 左缘 = A 右缘(贴缝)
+        w.__mockDoc.clips = [
+          mk("c1", "a1", 0, "Video"), mk("cAudio", "a1", 0, "Audio"),
+          mk("Bv", "a2", 90, "Video"), mk("Ba", "a2", 90, "Audio"),
+        ];
+      }
+    }, 5);
+  });
+
+  await page.goto("/");
+  await page.locator(".asset-card").first().waitFor({ timeout: 10000 });
+  await page.keyboard.press("m");
+  await page.waitForTimeout(600);
+
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+
+  const lastTrim = () =>
+    page.evaluate(() => {
+      const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+      const tc = calls.filter((c) => c.cmd === "trim_clip").pop();
+      if (tc) return tc.args;
+      return null;
+    });
+
+  // B 块左缘在 x=45px;抓缝(B 左缘 ±10px 内),从 x=48 向左拖 30px
+  // 期望:trim_clip(clipId=Bv, edge=left, newStart < 90) —— 而非 move_clips
+  await page.mouse.move(box!.x + 48, box!.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 18, box!.y + 50, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+
+  // 双块联动:主块+兄弟块各提交一次 trim;取最后两条
+  const trimsL = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "trim_clip").slice(-2).map((c) => c.args);
+  });
+  expect(trimsL.length, "左缘左拖应提交 trim_clip(主块+兄弟块)").toBe(2);
+  const idsL = trimsL.map((t) => t.clipId).sort();
+  expect(idsL).toEqual(["Ba", "Bv"]);
+  for (const t of trimsL) {
+    expect(t.edge).toBe("left");
+    expect(t.newStart as number).toBeLessThan(90);
+  }
+
+  // 右缘:B 块右缘 = 180ticks = 90px,抓 x=87(块内近右缘)向右拖 30px
+  await page.mouse.move(box!.x + 87, box!.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 117, box!.y + 50, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const trimsR = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "trim_clip").slice(-2).map((c) => c.args);
+  });
+  expect(trimsR.length).toBe(2);
+  const idsR = trimsR.map((t) => t.clipId).sort();
+  expect(idsR).toEqual(["Ba", "Bv"]);
+  for (const t of trimsR) {
+    expect(t.edge).toBe("right");
+  }
+});
