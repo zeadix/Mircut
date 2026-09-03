@@ -1207,13 +1207,18 @@ function TimelineInner({
     return track.kind === "Audio" ? "Audio" : "Video";
   }
 
-  /// 文件块标识:track + asset + start 唯一确定一个跨三行块(同素材可重复放置)。
+  /// 文件块标识:track + asset + 块起点(视频代表)唯一确定一个跨三行块。
+  /// 用 buildFileBlocks 配对结果,悬停/渲染 key 一致(音频漂移不影响)。
   function blockKeyOf(clipId: string): string | null {
     const c = doc.clips.find((x) => x.id === clipId);
     if (!c) return null;
     const track = doc.tracks.find((t) => t.id === c.track_id);
     if (track?.kind !== "File") return null;
-    return `${c.track_id}-${c.asset.asset_id}-${c.start}`;
+    const block = buildFileBlocks(doc.clips, c.track_id).find(
+      (b) => b.videoId === clipId || b.audioId === clipId
+    );
+    if (!block) return null;
+    return `${c.track_id}-${block.assetId}-${block.start}`;
   }
 
   function snapTicks(t: number, excludeClipId?: string): number {
@@ -1282,15 +1287,21 @@ function TimelineInner({
       if (trackIdx < 0) return null;
       const track = doc.tracks[trackIdx];
       if (track.kind === "File") {
-        // File 轨:0=时间行,1=视频行,2=音频行
-        if (rowInFile === 0) {
-          laneFilter = "__TIME__"; // 时间行命中整个文件块
-        } else {
-          laneFilter = rowInFile === 2 ? "Audio" : "Video";
-        }
-      } else {
-        laneFilter = track.kind === "Audio" ? "Audio" : "Video";
+        // ===== File 轨:块级命中(与渲染同一套 buildFileBlocks 几何)=====
+        // 时间行/视频行/音频行任意位置都命中整个文件块 ——
+        // 保证"所见即可选/可拖",即使音视频起点有偏差也按块范围命中
+        const blocks = buildFileBlocks(doc.clips, track.id);
+        const b = blocks.find((blk) => t >= blk.start && t < blk.start + blk.duration);
+        if (!b) return null;
+        const clipId = rowInFile === 2 ? (b.audioId ?? b.videoId) : (b.videoId ?? b.audioId);
+        if (!clipId) return null;
+        const bx0 = b.start * pxPerTick;
+        const bx1 = (b.start + b.duration) * pxPerTick;
+        if (px - bx0 <= EDGE_HIT_PX) return { clipId, edge: "left" };
+        if (bx1 - px <= EDGE_HIT_PX) return { clipId, edge: "right" };
+        return { clipId, edge: "body" };
       }
+      laneFilter = track.kind === "Audio" ? "Audio" : "Video";
       targetTrackId = track.id;
     }
     // 在该行内搜索(没有 Y 时退化为全文档)

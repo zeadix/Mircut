@@ -226,3 +226,55 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
   const val = envCall!.args.value as number;
   expect(val).toBeLessThan(0.8); // 向下拖 → 音量降低
 });
+
+test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ page }) => {
+  await page.addInitScript(() => {
+    const timer = setInterval(() => {
+      const w = window as unknown as {
+        __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+        __mockDoc?: { clips: Record<string, unknown>[] };
+      };
+      if (w.__TAURI_INTERNALS__ && w.__mockDoc) {
+        clearInterval(timer);
+        const mk = (id: string, lane: string) => ({
+          id, track_id: "f1", start: 0, duration: 90,
+          asset: { asset_id: "a1", source_in: 0, source_out: 3 },
+          lane, speed: 1, volume: 1, muted: false, fx: undefined,
+        });
+        w.__mockDoc.clips = [mk("c1", "Video"), mk("cAudio", "Audio")];
+      }
+    }, 5);
+  });
+
+  await page.goto("/");
+  await page.locator(".asset-card").first().waitFor({ timeout: 10000 });
+  await page.keyboard.press("m");
+  await page.waitForTimeout(600);
+
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+
+  const yellowPixels = () =>
+    page.evaluate(() => {
+      const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      // 选中手柄:块左缘 x[0..6],y≈timeTop+totalH/2±6 = [54..66]
+      const img = ctx.getImageData(0, 52, 8, 16);
+      let n = 0;
+      for (let i = 0; i < img.data.length; i += 4) {
+        const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
+        if (r > 230 && g > 180 && b < 150) n++;
+      }
+      return n;
+    });
+
+  const before = await yellowPixels();
+  // 点击音频行中部(x=22 在块主体,y=110 在音频行)
+  await page.mouse.click(box!.x + 22, box!.y + 110);
+  await page.waitForTimeout(300);
+  const after = await yellowPixels();
+
+  expect(after, "点击音频行后应出现选中黄色手柄").toBeGreaterThan(before);
+  expect(after).toBeGreaterThan(10);
+});
