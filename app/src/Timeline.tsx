@@ -2152,9 +2152,9 @@ function TimelineInner({
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
         </label>
-        <label title="修剪/删除后后方片段自动前移填补">
-          <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
-        </label>
+          <label title="波纹编辑:开启后,删除或修剪片段时后方的块自动前移填补空隙(与音频波形显示无关;波形为常显)">
+            <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
+          </label>
         <label
           title="音频曲线编辑:开启后点击/拖拽文件块音频区的音量线与节点调整曲线;关闭时音频区点击=选中/移动整块"
           style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: audioEditMode ? "var(--accent)" : undefined }}
