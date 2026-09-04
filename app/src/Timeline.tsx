@@ -1252,6 +1252,20 @@ function TimelineInner({
     return `${c.track_id}-${block.assetId}-${block.start}`;
   }
 
+  /// 取 clip 所在文件块的全部 clip id(经 buildFileBlocks 配对,起点漂移也能覆盖)。
+  /// 用于吸附排除:整块边缘都不作为磁吸候选,否则同值边缘会把拖动"吸回原位"。
+  function blockClipIds(clipId: string): string[] {
+    const c = doc.clips.find((x) => x.id === clipId);
+    if (!c) return [clipId];
+    const track = doc.tracks.find((t) => t.id === c.track_id);
+    if (track?.kind !== "File") return [clipId];
+    const block = buildFileBlocks(doc.clips, c.track_id).find(
+      (b) => b.videoId === clipId || b.audioId === clipId
+    );
+    if (!block) return [clipId];
+    return [block.videoId, block.audioId].filter((x): x is string => !!x);
+  }
+
   function snapTicks(t: number, excludeClipId?: string | string[] | null): number {
     // 容差按像素(10px)换算 ticks:低缩放下 6 ticks 不足 3px,几乎无吸附手感
     // excludeClipId 支持数组:修剪/移动时排除整个文件块(视频+音频),
@@ -1646,7 +1660,7 @@ function TimelineInner({
     const clip = doc.clips.find((c) => c.id === d.clipId);
     if (!clip) return;
     // 修剪/滚动/滑切的吸附排除整个文件块(视频+音频同值边缘互吸会粘住拖动)
-    const blockEx = siblingClip(clip) ? [d.clipId, siblingClip(clip)!.id] : [d.clipId];
+    const blockEx = blockClipIds(d.clipId);
     // move 拖动用鼠标原始 ticks(不吸附),其它操作(trim 等)继续用 snapTicks
     const t = d.kind === "move"
       ? Math.max(0, Math.floor(ticksFromClientX(e.clientX)))
@@ -1728,7 +1742,7 @@ function TimelineInner({
       // 抓取跟随:虚影保持按下时鼠标在块上的相对位置(抓取偏移),
       // 先磁吸吸附(像素容差,排除自身块边缘防互吸),再对重叠块贴缘,避免虚影压块
       const sib0 = siblingClip(clip);
-      const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), sib0 ? [d.clipId, sib0.id] : d.clipId));
+      const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), blockClipIds(d.clipId)));
       const mt = moveTargetRef.current;
       const magStart = computeMagneticStart(
         rawStart,
@@ -1864,11 +1878,7 @@ function TimelineInner({
       if (d.rightBtn && target) {
         const grab = "grabTicks" in d ? d.grabTicks : 0;
         const rc = doc.clips.find((c) => c.id === d.clipId);
-        const rs = rc ? siblingClip(rc) : null;
-        const t = snapTicks(
-          ticksFromClientX(e.clientX) - grab,
-          rs ? [d.clipId, rs.id] : d.clipId
-        );
+        const t = snapTicks(ticksFromClientX(e.clientX) - grab, blockClipIds(d.clipId));
         setDropMenu({
           x: e.clientX,
           y: e.clientY,
@@ -1891,10 +1901,7 @@ function TimelineInner({
         // 与虚影一致:抓取偏移 + 磁吸吸附(排除自身块边缘) + 对重叠块贴缘(所见即所放)
         const snapStart = Math.max(
           0,
-          snapTicks(
-            Math.max(0, ticksFromClientX(e.clientX) - grab),
-            sib ? [d.clipId, sib.id] : d.clipId
-          )
+          snapTicks(Math.max(0, ticksFromClientX(e.clientX) - grab), blockClipIds(d.clipId))
         );
         const magStart = computeMagneticStart(
           snapStart,
@@ -1940,7 +1947,7 @@ function TimelineInner({
         // 与前一块的新位置重叠才移动并贴齐(收尾相接);间隙足够不动。
         if (fileTarget && !groupMoving) {
           const D = clip.duration;
-          const excludeIds = new Set(sib ? [d.clipId, sib.id] : [d.clipId]);
+          const excludeIds = new Set(blockClipIds(d.clipId));
           for (const p of cascadePushBlocks(doc.clips, target.trackId, magStart, D, excludeIds)) {
             const c = doc.clips.find((x) => x.id === p.clipId);
             entries.push({

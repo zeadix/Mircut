@@ -392,6 +392,46 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
     expect(ns).toBeLessThan(90);
   }
 
+  // 正中边缘抓取:x=45px(恰在 B 左缘线上)向左拖 → 仍是修剪
+  await page.evaluate(() => {
+    (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
+  });
+  await page.mouse.move(box!.x + 45, box!.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 25, box!.y + 50, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const trimsE = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "trim_clip").map((c) => c.args);
+  });
+  expect(trimsE.length, "正中边缘向左拖=修剪").toBeGreaterThanOrEqual(2);
+  for (const t of trimsE) {
+    expect(t.edge).toBe("left");
+    expect(t.newStart as number).toBeLessThan(90);
+  }
+
+  // 块外贴边抓取:x=43px(B 左缘外 2px)向左拖 → 仍是修剪(不落空成框选)
+  await page.evaluate(() => {
+    (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
+  });
+  await page.mouse.move(box!.x + 43, box!.y + 50);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 30, box!.y + 50, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const trimsO = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "trim_clip").map((c) => c.args);
+  });
+  expect(trimsO.length, "块外贴边向左拖=修剪(不落空)").toBe(2);
+  // 贴缝左侧属于前一块(A)的右缘修剪 —— 命中即不落空(主块+兄弟块联动)
+  const idsO = trimsO.map((t) => t.clipId).sort();
+  expect(idsO).toEqual(["c1", "cAudio"]);
+  for (const t of trimsO) {
+    expect(t.edge).toBe("right");
+  }
+
   // 右缘:B 块右缘 = 180ticks = 90px,抓 x=87(块内近右缘)向右拖 30px
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
