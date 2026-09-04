@@ -1749,7 +1749,13 @@ function TimelineInner({
       setTrimHint(null);
     } else if (d.kind === "trimL") {
       const maxStart = clip.start + clip.duration - 1;
-      const newStart = Math.min(Math.max(0, t), maxStart);
+      // 左缘向左的边界 = 源起点(source_in ≥ 0):
+      // 可回移的 ticks = 源入点秒数 × tps / speed(越界会让 source_in 变负,破坏块数据)
+      const minStart = Math.max(
+        0,
+        clip.start - Math.floor((clip.asset.source_in * tps) / (clip.speed || 1))
+      );
+      const newStart = Math.min(Math.max(t, minStart), maxStart);
       const rect = canvasRef.current?.getBoundingClientRect();
       const laneGeoTrim = row ? clipLaneGeo(row, clip) : null;
       setTrimHint({

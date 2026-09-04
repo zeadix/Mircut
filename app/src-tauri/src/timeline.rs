@@ -774,7 +774,13 @@ pub(crate) fn trim_clip(
     let mut start = new_start.max(0);
     if edge == "left" {
         // 头修剪:入点右移量 -> source_in 增加
+        // 左界:source_in ≥ 0(可回移 ticks = 源入点秒数 × tps / speed)
+        let min_start = clip.start
+            - ((clip.asset.source_in * clip.speed.max(1e-3) * tps as f64).floor() as i64);
+        start = start.max(min_start.max(0));
         let delta_ticks = start - clip.start;
+        // 起点被钳制后时长随之修正(块末端保持不动)
+        dur = (clip.start + clip.duration - start).max(min_ticks);
         let delta_secs = tb.secs(delta_ticks.max(0)) * clip.speed;
         let new_source_in = clip.asset.source_in + delta_secs;
         if new_source_in >= asset.duration_secs {

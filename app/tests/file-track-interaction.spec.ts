@@ -327,15 +327,16 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
           w.__calls!.push({ cmd, args: args ?? {} });
           return orig(cmd, args);
         };
-        const mk = (id: string, asset: string, start: number, lane: string) => ({
+        const mk = (id: string, asset: string, start: number, lane: string, sIn = 0) => ({
           id, track_id: "f1", start, duration: 90,
-          asset: { asset_id: asset, source_in: 0, source_out: 3 },
+          asset: { asset_id: asset, source_in: sIn, source_out: sIn + 3 },
           lane, speed: 1, volume: 1, muted: false, fx: undefined,
         });
         // 两块首尾相接:A[0,90) B[90,180) —— B 左缘 = A 右缘(贴缝)
+        // B 的源入点=1s:左缘可向左修 1s(测试源边界内修剪)
         w.__mockDoc.clips = [
           mk("c1", "a1", 0, "Video"), mk("cAudio", "a1", 0, "Audio"),
-          mk("Bv", "a2", 90, "Video"), mk("Ba", "a2", 90, "Audio"),
+          mk("Bv", "a2", 90, "Video", 1), mk("Ba", "a2", 90, "Audio", 1),
         ];
       }
     }, 5);
@@ -360,11 +361,20 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
 
   // B 块左缘在 x=45px;抓缝(B 左缘 ±10px 内),从 x=48 向左拖 30px
   // 期望:trim_clip(clipId=Bv, edge=left, newStart < 90) —— 而非 move_clips
+  await page.evaluate(() => {
+    (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
+  });
   await page.mouse.move(box!.x + 48, box!.y + 50);
   await page.mouse.down();
   await page.mouse.move(box!.x + 18, box!.y + 50, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
+  // 边缘拖拽绝不允许变成移动
+  const movesL = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "move_clips" || c.cmd === "move_clip").length;
+  });
+  expect(movesL, "左缘拖拽不得产生移动命令").toBe(0);
 
   // 双块联动:主块+兄弟块各提交一次 trim;取最后两条
   const trimsL = await page.evaluate(() => {
@@ -376,15 +386,26 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   expect(idsL).toEqual(["Ba", "Bv"]);
   for (const t of trimsL) {
     expect(t.edge).toBe("left");
-    expect(t.newStart as number).toBeLessThan(90);
+    // 源边界钳制:start ≥ 90 - 1s×30tps = 60
+    const ns = t.newStart as number;
+    expect(ns).toBeGreaterThanOrEqual(60);
+    expect(ns).toBeLessThan(90);
   }
 
   // 右缘:B 块右缘 = 180ticks = 90px,抓 x=87(块内近右缘)向右拖 30px
+  await page.evaluate(() => {
+    (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
+  });
   await page.mouse.move(box!.x + 87, box!.y + 50);
   await page.mouse.down();
   await page.mouse.move(box!.x + 117, box!.y + 50, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
+  const movesR = await page.evaluate(() => {
+    const calls = (window as unknown as { __calls?: { cmd: string }[] }).__calls ?? [];
+    return calls.filter((c) => c.cmd === "move_clips" || c.cmd === "move_clip").length;
+  });
+  expect(movesR, "右缘拖拽不得产生移动命令").toBe(0);
   const trimsR = await page.evaluate(() => {
     const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
     return calls.filter((c) => c.cmd === "trim_clip").slice(-2).map((c) => c.args);
