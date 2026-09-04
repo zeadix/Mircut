@@ -786,7 +786,7 @@ pub struct SetClipRange {
     pub new_start: Ticks,
     pub new_duration: Ticks,
     pub source_in_delta: f64,
-    old: Option<(Ticks, Ticks, f64)>,
+    old: Option<(Ticks, Ticks, f64, f64)>,
 }
 
 impl SetClipRange {
@@ -812,18 +812,22 @@ impl Command for SetClipRange {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-            self.old = Some((c.start, c.duration, c.asset.source_in));
+            self.old = Some((c.start, c.duration, c.asset.source_in, c.asset.source_out));
             c.start = self.new_start;
             c.duration = self.new_duration;
             c.asset.source_in += self.source_in_delta;
+            // source_out 同步(与 TrimClip 一致:消耗区间覆盖新时长)
+            let tb = doc.timebase;
+            c.asset.source_out = c.asset.source_in + tb.secs(c.duration) * c.speed;
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some((start, duration, si)) = self.old.take() {
+        if let Some((start, duration, si, so)) = self.old.take() {
             if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
                 c.start = start;
                 c.duration = duration;
                 c.asset.source_in = si;
+                c.asset.source_out = so;
             }
         }
     }

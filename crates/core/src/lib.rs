@@ -647,7 +647,7 @@ pub struct TrimClip {
     pub new_start: Ticks,
     pub new_duration: Ticks,
     pub source_in_delta: f64,
-    old: Option<(Ticks, Ticks, f64)>, // (start, duration, source_in)
+    old: Option<(Ticks, Ticks, f64, f64)>, // (start, duration, source_in, source_out)
 }
 
 impl TrimClip {
@@ -673,18 +673,23 @@ impl Command for TrimClip {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-            self.old = Some((c.start, c.duration, c.asset.source_in));
+            self.old = Some((c.start, c.duration, c.asset.source_in, c.asset.source_out));
             c.start = self.new_start;
             c.duration = self.new_duration;
             c.asset.source_in += self.source_in_delta;
+            // source_out 同步:消耗区间 = source_in + 时长×速度(尾缘扩展/收缩的关键;
+            // 缺失此行会让尾缘扩展后 source_out 不变 → 新内容无源数据,修剪失效)
+            let tb = doc.timebase;
+            c.asset.source_out = c.asset.source_in + tb.secs(c.duration) * c.speed;
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some((start, duration, source_in)) = self.old.take() {
+        if let Some((start, duration, source_in, source_out)) = self.old.take() {
             if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
                 c.start = start;
                 c.duration = duration;
                 c.asset.source_in = source_in;
+                c.asset.source_out = source_out;
             }
         }
     }

@@ -468,6 +468,105 @@ mod tests {
         }
     }
 
+    /// 回归:素材有余量时,四个方向的边缘修剪都必须生效
+    /// (左缘向左扩展/右移收缩,右缘向右扩展/左移收缩)。
+    #[test]
+    fn trim_all_directions_with_source_headroom() {
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 30.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                name: None,
+                fps: None,
+                tags: vec![],
+            });
+            // 块 [300, 600)(10s~20s),源占用 [10s, 20s) —— 两侧都有余量
+            inner.doc.clips.push(Clip {
+                id: "v1".into(),
+                track_id: "f1".into(),
+                start: 300,
+                duration: 300,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 10.0,
+                    source_out: 20.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: None,
+                fx: Default::default(),
+            });
+            let tb = inner.doc.timebase;
+            let tps = tb.num / tb.den.max(1);
+
+            // 1) 左缘向左扩展:start 300 → 150(源入点 10s → 5s)
+            {
+                let c = inner.doc.clip("v1").unwrap();
+                let delta_secs = tb.secs(150 - c.start) * c.speed; // 负值
+                let dur = c.start + c.duration - 150;
+                inner.exec(Box::new(veditor_core::TrimClip::new(
+                    "v1", 150, dur, delta_secs,
+                )));
+            }
+            let c = inner.doc.clip("v1").unwrap();
+            assert_eq!(c.start, 150, "左缘向左扩展: start");
+            assert_eq!(c.duration, 450, "左缘向左扩展: duration 增大");
+            assert!((c.asset.source_in - 5.0).abs() < 1e-6, "source_in → 5s: {}", c.asset.source_in);
+
+            // 2) 左缘向右收缩:start 150 → 300(源入点 5s → 10s)
+            {
+                let c = inner.doc.clip("v1").unwrap();
+                let delta_secs = tb.secs(300 - c.start) * c.speed;
+                let dur = c.start + c.duration - 300;
+                inner.exec(Box::new(veditor_core::TrimClip::new(
+                    "v1", 300, dur, delta_secs,
+                )));
+            }
+            let c = inner.doc.clip("v1").unwrap();
+            assert_eq!(c.start, 300);
+            assert!((c.asset.source_in - 10.0).abs() < 1e-6);
+
+            // 3) 右缘向右扩展:duration 300 → 450(源出点 20s → 25s)
+            {
+                inner.exec(Box::new(veditor_core::TrimClip::new(
+                    "v1", 300, 450, 0.0,
+                )));
+            }
+            let c = inner.doc.clip("v1").unwrap();
+            assert_eq!(c.duration, 450, "右缘向右扩展");
+            assert!((c.asset.source_out - 25.0).abs() < 1e-6, "source_out → 25s: {}", c.asset.source_out);
+
+            // 4) 右缘向左收缩:duration 450 → 300(源出点 25s → 20s)
+            inner.exec(Box::new(veditor_core::TrimClip::new("v1", 300, 300, 0.0)));
+            let c = inner.doc.clip("v1").unwrap();
+            assert_eq!(c.duration, 300);
+            assert!((c.asset.source_out - 20.0).abs() < 1e-6);
+
+            // 块位置始终不动(start 全程 300)
+            assert_eq!(inner.doc.clip("v1").unwrap().start, 300, "修剪绝不移动块起点");
+        }
+    }
+
     /// 修剪:头修同步 source_in,撤销完整恢复。
     #[test]
     fn trim_clip_head_and_undo() {

@@ -472,20 +472,24 @@ function TimelineInner({
       ctx.fillStyle = "#f5f5f7";
       ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), timeH - 2);
 
-      // 时间文字
+      // 时间文字:显示时间轴入出点(与标尺一致) —— 拖拽两端修剪时双向可见
+      // (此前显示素材内 source_in/out,与时间轴语义混淆)
       const videoClip = blockClips.find(c => c.lane === "Video")?.clip ?? blockClips[0].clip;
-      const inSecs = videoClip.asset.source_in;
-      const outSecs = videoClip.asset.source_out;
-      const durSecs = outSecs - inSecs;
-      const inStr = `${Math.floor(inSecs / 60)}:${String(Math.floor(inSecs % 60)).padStart(2, '0')}`;
-      const outStr = `${Math.floor(outSecs / 60)}:${String(Math.floor(outSecs % 60)).padStart(2, '0')}`;
+      const inStr = fmtTicks(videoClip.start, tps);
+      const outStr = fmtTicks(videoClip.start + videoClip.duration, tps);
+      const durSecs = videoClip.duration / tps;
 
       ctx.fillStyle = "#666";
       ctx.font = "10px sans-serif";
       const inText = `入 ${inStr} → 出 ${outStr}`;
       const durText = `| ${durSecs.toFixed(1)}s`;
-      ctx.fillText(inText, x + 4, timeTop + timeH - 4);
-      ctx.fillText(durText, x + cw - 40, timeTop + timeH - 4);
+      if (cw > 110) {
+        ctx.fillText(inText, x + 4, timeTop + timeH - 4);
+        ctx.fillText(durText, x + cw - 40, timeTop + timeH - 4);
+      } else if (cw > 40) {
+        // 窄块:只显示时长
+        ctx.fillText(durText, x + 4, timeTop + timeH - 4);
+      }
     }
 
     // 3. 绘制视频块（精简模式：缩略图胶片）
