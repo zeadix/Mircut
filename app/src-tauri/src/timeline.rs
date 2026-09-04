@@ -384,6 +384,35 @@ fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
     }
 }
 
+/// 生成不与现有轨道冲突的新轨道 id。
+/// (旧实现 len+1 在删除轨道后撞号:__newlayer__ 新轨 id 与现存旧轨重复,
+///  新片段挂到同 id 旧轨上 → 块出现在错误轨道)
+fn fresh_track_id(doc: &veditor_core::Document, prefix: &str, seq: &mut usize) -> String {
+    loop {
+        *seq += 1;
+        let id = format!("{prefix}{seq}");
+        if doc.track(&id).is_none() {
+            return id;
+        }
+    }
+}
+
+/// 生成不冲突的新 File 轨(id 唯一,名称序号与 id 一致)。
+fn fresh_file_track(doc: &veditor_core::Document, seq: &mut usize) -> Track {
+    let id = fresh_track_id(doc, "f", seq);
+    let n: usize = id[1..].parse().unwrap_or(0);
+    Track {
+        id,
+        kind: TrackKind::File,
+        name: format!("文件轨 {n}"),
+        locked: false,
+        hidden: false,
+        muted: false,
+        video_on: true,
+        audio_on: true,
+    }
+}
+
 /// 块级插入推挤:插入块占据 [s, s+d) 后,末端越过 s 的现有文件块
 /// (视频+音频配对)按起点顺序级联最小位移右移(整块一起动,收尾相接)。
 /// 返回 (clip_id, new_start) 列表。
@@ -449,18 +478,9 @@ pub(crate) fn drop_asset(
     //  - "__newlayer__" -> 新建 File 轨(素材拖入时间轴缝隙)
     //  - 指定 File 轨(未锁定) -> 该轨
     //  - 其他/None -> 最上层可用 File 轨(无则新建)
+    let mut tseq = inner.doc.tracks.len();
     let mut target_track = if track_id.as_deref() == Some("__newlayer__") {
-        let n = inner.doc.tracks.len() + 1;
-        let track = Track {
-            id: format!("f{n}"),
-            kind: TrackKind::File,
-            name: format!("文件轨 {n}"),
-            locked: false,
-            hidden: false,
-            muted: false,
-            video_on: true,
-            audio_on: true,
-        };
+        let track = fresh_file_track(&inner.doc, &mut tseq);
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
         id
@@ -482,17 +502,7 @@ pub(crate) fn drop_asset(
                 .rfind(|t| t.kind == TrackKind::File && !t.locked)
                 .map(|t| t.id.clone())
                 .unwrap_or_else(|| {
-                    let n = inner.doc.tracks.len() + 1;
-                    let track = Track {
-                        id: format!("f{n}"),
-                        kind: TrackKind::File,
-                        name: format!("文件轨 {n}"),
-                        locked: false,
-                        hidden: false,
-                        muted: false,
-                        video_on: true,
-                        audio_on: true,
-                    };
+                    let track = fresh_file_track(&inner.doc, &mut tseq);
                     let id = track.id.clone();
                     inner.exec(Box::new(AddTrack { track }));
                     id
@@ -516,17 +526,7 @@ pub(crate) fn drop_asset(
         _ => false,
     };
     if mismatch {
-        let n = inner.doc.tracks.len() + 1;
-        let track = Track {
-            id: format!("f{n}"),
-            kind: TrackKind::File,
-            name: format!("文件轨 {n}"),
-            locked: false,
-            hidden: false,
-            muted: false,
-            video_on: true,
-            audio_on: true,
-        };
+        let track = fresh_file_track(&inner.doc, &mut tseq);
         let id = track.id.clone();
         inner.exec(Box::new(AddTrack { track }));
         target_track = id;
@@ -675,17 +675,8 @@ pub(crate) fn lanes_for_drop(
 pub(crate) fn create_file_track(state: State<'_, AppState>) -> Result<Track, String> {
     let mut inner = state.inner.lock().unwrap();
     inner.ensure();
-    let n = inner.doc.tracks.len() + 1;
-    let track = Track {
-        id: format!("f{n}"),
-        kind: TrackKind::File,
-        name: format!("文件轨 {n}"),
-        locked: false,
-        hidden: false,
-        muted: false,
-        video_on: true,
-        audio_on: true,
-    };
+    let mut tseq = inner.doc.tracks.len();
+    let track = fresh_file_track(&inner.doc, &mut tseq);
     inner.exec(Box::new(AddTrack {
         track: track.clone(),
     }));
@@ -939,10 +930,11 @@ pub(crate) fn add_track(
 ) -> Result<Track, String> {
     let mut inner = state.inner.lock().unwrap();
     inner.ensure();
-    let id = format!(
-        "{}{}",
+    let mut tseq = inner.doc.tracks.len();
+    let id = fresh_track_id(
+        &inner.doc,
         if kind == "video" { "v" } else { "a" },
-        inner.doc.tracks.len() + 1
+        &mut tseq,
     );
     let track = Track {
         id: id.clone(),
@@ -1102,6 +1094,29 @@ mod block_arrange_tests {
     }
 
     // ===== block_insert_push =====
+
+    #[test]
+    fn fresh_track_id_skips_collision() {
+        let mut doc = file_doc();
+        // 模拟历史:曾创建 f2/f3 后删除了 f2 → 现存 [f1, f3]
+        doc.tracks.push(Track {
+            id: "f3".into(),
+            kind: TrackKind::File,
+            name: "文件轨 3".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+            video_on: true,
+            audio_on: true,
+        });
+        let mut seq = doc.tracks.len(); // 旧实现:len+1 = 3 → "f3" 撞号
+        let id = fresh_track_id(&doc, "f", &mut seq);
+        assert_eq!(id, "f4", "跳过现存 f3,生成唯一 id");
+        assert!(doc.track(&id).is_none());
+        let id2 = fresh_track_id(&doc, "f", &mut seq);
+        assert_eq!(id2, "f5", "继续生成保持唯一");
+        assert!(doc.track(&id2).is_none());
+    }
 
     #[test]
     fn block_push_moves_pair_together() {
