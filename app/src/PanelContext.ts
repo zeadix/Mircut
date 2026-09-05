@@ -14,7 +14,7 @@ export interface PanelContextValue {
 export const PanelContext = createContext<PanelContextValue | null>(null);
 
 /// 面板内读取 App 状态与回调。
-export function usePanel<T = Record<string, any>>(): T {
+export function usePanel<T = PanelContextValue>(): T {
   const v = useContext(PanelContext);
   if (!v) throw new Error("PanelContext 缺失:面板必须挂在 Provider 内");
   return v as T;
