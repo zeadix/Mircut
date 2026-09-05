@@ -260,45 +260,6 @@ function TimelineInner({
     ) ?? null;
   }
 
-  /// File 轨父级操作:以兄弟块为镜像,同步调整另一 lane 的位置/时长。
-  function syncSibling(
-    primary: { clipId: string; start: number; duration: number },
-    sibling: { clipId: string; start: number; duration: number }
-  ) {
-    if (primary.start === sibling.start && primary.duration === sibling.duration) return;
-    if (onClipTrim) {
-      // 起点变化 → trim left
-      if (primary.start !== sibling.start) {
-        const deltaStart = primary.start - sibling.start;
-        const newSiblingDuration = sibling.duration - deltaStart;
-        if (newSiblingDuration > 0) {
-          onClipTrim(sibling.clipId, "left", sibling.start, newSiblingDuration, ripple);
-        }
-      }
-      // 时长变化 → trim right
-      if (primary.duration !== sibling.duration) {
-        const newSiblingDuration = sibling.duration - (primary.duration - sibling.duration);
-        if (newSiblingDuration > 0) {
-          onClipTrim(sibling.clipId, "right", sibling.start, newSiblingDuration, ripple);
-        }
-      }
-    }
-  }
-
-  /// File 轨父级移动:primary + sibling 同步移动到同一起点。
-  function syncSiblingMove(primaryId: string, siblingId: string, newStart: number) {
-    if (!onClipMove) return;
-    // 找 current positions
-    const primary = doc.clips.find((c) => c.id === primaryId);
-    const sibling = doc.clips.find((c) => c.id === siblingId);
-    if (!primary || !sibling) return;
-    const delta = newStart - primary.start;
-    if (delta === 0) return;
-    const newSiblingStart = Math.max(0, sibling.start + delta);
-    // 分开提交(move 各自,同步在 dragend 处理)
-    onClipMove(siblingId, newSiblingStart, sibling.track_id);
-  }
-
   const tps = doc.timebase.num / doc.timebase.den;
   /// 选中集合(绘制/命中判断用)。
   const selectedSet = useMemo(() => new Set(selectedClipIds), [selectedClipIds]);
