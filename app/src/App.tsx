@@ -9,17 +9,15 @@ import Preview from "./Preview";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
+import { FilmSlate, Export } from "@phosphor-icons/react";
 import {
-  FilmSlate,
-  Scissors,
-  Trash,
-  ArrowCounterClockwise,
-  ArrowClockwise,
-  Export,
-  Plus,
-  Sun,
-  Waves,
-} from "@phosphor-icons/react";
+  DockviewReact,
+  type DockviewApi,
+  type DockviewReadyEvent,
+  themeDark,
+  themeLight,
+} from "dockview-react";
+import "dockview-react/dist/styles/dockview.css";
 import { useEditor } from "./store";
 import { toggleTheme } from "./theme";
 import { t } from "./i18n";
@@ -27,6 +25,8 @@ import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
 import RightPanel from "./RightPanel";
 import ErrorBoundary from "./ErrorBoundary";
+import MenuBar, { type MenuItem } from "./MenuBar";
+import { PanelContext, usePanel } from "./PanelContext";
 
 /// 时间码显示:mm:ss.ff。
 function fmtTimecode(secs: number): string {
@@ -80,6 +80,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
   // 拖拽中的素材 id(时间轴块状落点轮廓用)
   const [dragAssetId, setDragAssetId] = useState<string | null>(null);
+  // dockview:api 引用 + 隐藏面板(窗口菜单可见性)
+  const dockApiRef = useRef<DockviewApi | null>(null);
+  const [hiddenPanels, setHiddenPanels] = useState<string[]>([]);
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const rafRef = useRef<number>(0);
@@ -951,148 +954,52 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   if (!doc) return <div style={{ color: "var(--text)", padding: 24 }}>{t("status.loading")}</div>;
 
-  return (
-    <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      {/* 顶栏 */}
-      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
-        <FilmSlate size={22} />
-        <strong>VEditor</strong>
-        <span style={{ flex: 1 }} />
-        <button className="btn" onClick={onUndo} title={t("menu.undo")}><ArrowCounterClockwise size={16} /></button>
-        <button className="btn" onClick={onRedo} title={t("menu.redo")}><ArrowClockwise size={16} /></button>
-        <button className="btn" onClick={onSplit} disabled={!selected} title={t("menu.split")}><Scissors size={16} /></button>
-        <button className="btn" onClick={onRemove} disabled={!selected} title={t("menu.delete")}><Trash size={16} /></button>
-        <button className="btn" onClick={onRippleDelete} disabled={!selected} title={t("menu.ripple")}><Waves size={16} /></button>
-        <div style={{ position: "relative" }}>
-          <button className="btn" onClick={() => setFileMenuOpen((v) => !v)}>{t("menu.file")}</button>
-          {fileMenuOpen && (
-            <>
-              <div
-                style={{ position: "fixed", inset: 0, zIndex: 100 }}
-                onMouseDown={() => setFileMenuOpen(false)}
-              />
-              <div
-                style={{
-                  position: "absolute",
-                  top: "100%",
-                  left: 0,
-                  marginTop: 4,
-                  background: "var(--card)",
-                  border: "1px solid var(--border-strong)",
-                  borderRadius: 8,
-                  padding: 6,
-                  minWidth: 210,
-                  fontSize: 12,
-                  color: "var(--text)",
-                  boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
-                  zIndex: 101,
-                }}
-              >
-                {[
-                  { label: t("menu.new"), fn: onNewProject, hint: "Ctrl+N" },
-                  { label: t("menu.open"), fn: onOpenProject, hint: "Ctrl+O" },
-                  { label: t("menu.save"), fn: onSaveProject, hint: "Ctrl+S" },
-                  { label: t("menu.saveAs"), fn: onSaveAsProject },
-                  { label: t("menu.importJianying"), fn: onImportJianying },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    className="btn"
-                    style={{
-                      width: "100%",
-                      justifyContent: "space-between",
-                      marginBottom: 3,
-                    }}
-                    onClick={item.fn}
-                  >
-                    <span>{item.label}</span>
-                    {item.hint && <span style={{ color: "var(--text-dim)" }}>{item.hint}</span>}
-                  </button>
-                ))}
-                {recentProjects.length > 0 && (
-                  <>
-                    <div style={{ borderTop: "1px solid var(--border)", margin: "4px 0", paddingTop: 4, fontSize: 10, color: "var(--text-dim)" }}>
-                      {t("menu.recent")}
-                    </div>
-                    {recentProjects.map((p) => (
-                      <button
-                        key={p}
-                        className="btn"
-                        style={{
-                          width: "100%",
-                          justifyContent: "flex-start",
-                          marginBottom: 2,
-                          textAlign: "left",
-                        }}
-                        title={p}
-                        onClick={() => openProjectPath(p)}
-                      >
-                        {p.split("/").pop()}
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            </>
-          )}
+  // ===== dockview 面板注册 =====
+  // 面板经 Portal 挂载,props 闭包会陈旧 —— 状态/回调一律经 PanelContext 读取。
+  const panelComponents = {
+    media: () => {
+      const c = usePanel();
+      return (
+        <div style={{ height: "100%", overflow: "hidden" }}>
+          <ErrorBoundary label="媒体库">
+            <MediaLibrary
+              doc={c.doc}
+              thumbs={c.thumbs}
+              waveforms={c.waveforms}
+              onPickFolder={c.onPickFolder}
+              onImportFiles={c.onImportFiles}
+              onScanMusicDir={c.onScanMusicDir}
+              onDragKind={c.setDragKind}
+              onDragAsset={c.setDragAssetId}
+              onAssetPreview={c.setAssetPreview}
+              onAddToTimeline={c.addToTimeline}
+              onImportPack={c.onImportPack}
+              onApplyPackItem={c.onApplyPackItem}
+              onRefresh={c.refresh}
+            />
+          </ErrorBoundary>
         </div>
-        <button className="btn" onClick={onCreateFileTrack} title="创建文件轨道"><Plus size={14} /> {t("menu.fileTrack")}</button>
-        <button
-          className="btn"
-          title={t("menu.theme")}
-          onClick={() => setTheme(toggleTheme())}
-        >
-          <Sun size={16} weight={theme === "light" ? "fill" : "regular"} />
-        </button>
-        <button
-          className="btn"
-          title="Language / 语言"
-          onClick={() => setLangState(lang === "zh" ? "en" : "zh")}
-        >
-          {lang === "zh" ? "EN" : "中"}
-        </button>
-        <button className="btn" onClick={onDetectBeats} title="节拍检测">{t("menu.beats")}</button>
-        <button className="btn" onClick={onRemoveSilence} title="AI 去静音">{t("menu.removeSilence")}</button>
-        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> {t("menu.export")}</button>
-      </header>
-
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* 媒体库 */}
-        <ErrorBoundary label="媒体库">
-          <MediaLibrary
-            doc={doc}
-            thumbs={thumbs}
-            waveforms={waveforms}
-            onPickFolder={onPickFolder}
-            onImportFiles={onImportFiles}
-            onScanMusicDir={onScanMusicDir}
-            onDragKind={setDragKind}
-            onDragAsset={setDragAssetId}
-            onAssetPreview={setAssetPreview}
-            onAddToTimeline={addToTimeline}
-            onImportPack={onImportPack}
-            onApplyPackItem={onApplyPackItem}
-            onRefresh={refresh}
-          />
-        </ErrorBoundary>
-
-        {/* 主区 */}
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      );
+    },
+    preview: () => {
+      const c = usePanel();
+      return (
+        <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "var(--panel)" }}>
             <button
               className="btn"
               onClick={() => {
-                if (playing) setPlayhead(playheadRef.current); // C4
-                setPlaying(!playing);
+                if (c.playing) c.playheadRef.current = c.playhead;
+                c.setPlaying(!c.playing);
               }}
               title="播放/暂停 (空格)"
             >
-              {playing ? `${t("play.pause")} ${playSpeed}x` : t("play.play")}
+              {c.playing ? `${t("play.pause")} ${c.playSpeed}x` : t("play.play")}
             </button>
             <select
               className="ti"
-              value={String(Math.abs(playSpeed))}
-              onChange={(e) => setPlaySpeed(parseFloat(e.target.value))}
+              value={String(Math.abs(c.playSpeed))}
+              onChange={(e) => c.setPlaySpeed(parseFloat(e.target.value))}
               title={t("play.speed")}
             >
               <option value="0.25">0.25x</option>
@@ -1104,105 +1011,273 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             </select>
             <select
               className="ti"
-              value={renderMode}
-              onChange={(e) => onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
+              value={c.renderMode}
+              onChange={(e) => c.onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
               title={t("play.engine")}
             >
               <option value="proxy">{t("play.proxy")}</option>
               <option value="realtime">{t("play.realtime")}</option>
             </select>
-            {/* 时间码输入跳转(支持 ss.s / mm:ss / hh:mm:ss) */}
             <input
               className="ti"
               style={{ width: 78, fontSize: 11 }}
-              value={tcDraft ?? fmtTimecode(playhead / fps)}
-              onChange={(e) => setTcDraft(e.target.value)}
-              onFocus={() => setTcDraft(fmtTimecode(playhead / fps))}
-              onBlur={() => setTcDraft(null)}
+              value={c.tcDraft ?? c.fmtTimecode(c.playhead / c.fps)}
+              onChange={(e) => c.setTcDraft(e.target.value)}
+              onFocus={() => c.setTcDraft(c.fmtTimecode(c.playhead / c.fps))}
+              onBlur={() => c.setTcDraft(null)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
-                  const secs = parseTimecode(tcDraft ?? "");
+                  const secs = c.parseTimecode(c.tcDraft ?? "");
                   if (Number.isFinite(secs)) {
-                    playheadRef.current = Math.max(0, Math.round(secs * fps));
-                    setPlayhead(playheadRef.current);
+                    c.playheadRef.current = Math.max(0, Math.round(secs * c.fps));
+                    c.setPlayhead(c.playheadRef.current);
                   }
-                  setTcDraft(null);
+                  c.setTcDraft(null);
                   (e.target as HTMLInputElement).blur();
                 }
-                if (e.key === "Escape") setTcDraft(null);
+                if (e.key === "Escape") c.setTcDraft(null);
               }}
               title="时间码跳转:回车确认(格式 12.5 / 1:05 / 1:02.5)"
             />
           </div>
-          <Preview
-            playheadTicks={playhead}
-            fps={fps}
-            playing={playing}
-            renderMode={renderMode}
-            assetPreview={assetPreview}
-            onAssetPreviewDone={clearAssetPreview}
-            doc={doc}
-            selectedClipIds={selected}
-            onSetRect={onSetRect}
-            onStickerMove={onStickerMove}
-            onSelectClip={onClipClick ? (id: string) => onClipClick(id, false) : undefined}
-          />
-          <Scopes playheadTicks={playhead} fps={fps} playing={playing} />
-          <div style={{ padding: "4px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)" }}>
-            {status}
-          </div>
-          <div style={{ flex: 1, minHeight: 220, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <ErrorBoundary label="时间轴">
-              <Timeline
-                doc={doc}
-              playheadTicks={playhead}
-              onSeek={(t) => {
-                setPlayhead(t);
-              }}
-              onClipClick={onClipClick}
-              onSelectMany={selectMany}
-              onClipAction={onClipAction}
-              onSetVolumeKeyframe={onSetVolumeKeyframe}
-              onSetAudioFade={onSetAudioFade}
-              onRollEdit={onRollEdit}
-              onRemoveMarker={onRemoveMarker}
-              onMoveClips={onMoveClips}
-              onDropPackItem={onDropPackItem}
-              selectedClipIds={selected}
-              onClipMove={onClipMove}
-              onClipTrim={onClipTrim}
-              onToggleTrack={onToggleTrack}
-              onToggleTrackMedia={onToggleTrackMedia}
-              onToggleLaneView={onToggleLaneView}
-              waveforms={waveforms}
-              thumbs={thumbs}
-              alignEdges={alignEdges}
-              onDropAsset={onDropAsset}
-              dragKind={dragKind}
-              dragAssetId={dragAssetId}
-              onReorderTrack={onReorderTrack}
-              onClipRangeSet={onClipRangeSet}
-              onRenameTrack={onRenameTrack}
-              onRemoveTrack={onRemoveTrack}
-              onDuplicateClip={onDuplicateClip}
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <Preview
+              playheadTicks={c.playhead}
+              fps={c.fps}
+              playing={c.playing}
+              renderMode={c.renderMode}
+              assetPreview={c.assetPreview}
+              onAssetPreviewDone={c.clearAssetPreview}
+              doc={c.doc}
+              selectedClipIds={c.selected}
+              onSetRect={c.onSetRect}
+              onStickerMove={c.onStickerMove}
+              onSelectClip={c.onClipClick ? (id: string) => c.onClipClick(id, false) : undefined}
             />
-            </ErrorBoundary>
           </div>
-        </main>
+          <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
+        </div>
+      );
+    },
+    timeline: () => {
+      const c = usePanel();
+      return (
+        <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <ErrorBoundary label="时间轴">
+            <Timeline
+              doc={c.doc}
+              playheadTicks={c.playhead}
+              onSeek={(t) => {
+                c.setPlayhead(t);
+              }}
+              onClipClick={c.onClipClick}
+              onSelectMany={c.selectMany}
+              onClipAction={c.onClipAction}
+              onSetVolumeKeyframe={c.onSetVolumeKeyframe}
+              onSetAudioFade={c.onSetAudioFade}
+              onRollEdit={c.onRollEdit}
+              onRemoveMarker={c.onRemoveMarker}
+              onMoveClips={c.onMoveClips}
+              onDropPackItem={c.onDropPackItem}
+              selectedClipIds={c.selected}
+              onClipMove={c.onClipMove}
+              onClipTrim={c.onClipTrim}
+              onToggleTrack={c.onToggleTrack}
+              onToggleTrackMedia={c.onToggleTrackMedia}
+              onToggleLaneView={c.onToggleLaneView}
+              waveforms={c.waveforms}
+              thumbs={c.thumbs}
+              alignEdges={c.alignEdges}
+              onDropAsset={c.onDropAsset}
+              dragKind={c.dragKind}
+              dragAssetId={c.dragAssetId}
+              onReorderTrack={c.onReorderTrack}
+              onClipRangeSet={c.onClipRangeSet}
+              onRenameTrack={c.onRenameTrack}
+              onRemoveTrack={c.onRemoveTrack}
+              onDuplicateClip={c.onDuplicateClip}
+            />
+          </ErrorBoundary>
+        </div>
+      );
+    },
+    inspector: () => {
+      const c = usePanel();
+      return (
+        <div style={{ height: "100%", overflow: "hidden" }}>
+          <ErrorBoundary label="属性面板">
+            <RightPanel
+              doc={c.doc}
+              selectedClipIds={c.selected}
+              playhead={c.playhead}
+              fps={c.fps}
+              onRefresh={c.refresh}
+              onStatus={c.setStatus}
+              onBatchRemove={c.onBatchRemove}
+              onBatchAudio={c.onBatchAudio}
+            />
+          </ErrorBoundary>
+        </div>
+      );
+    },
+  };
 
-        {/* 属性检查器 / 字幕 / 文字 / 贴纸 */}
-        <ErrorBoundary label="属性面板">
-          <RightPanel
-            doc={doc}
-            selectedClipIds={selected}
-            playhead={playhead}
-            fps={fps}
-            onRefresh={refresh}
-            onStatus={setStatus}
-            onBatchRemove={onBatchRemove}
-            onBatchAudio={onBatchAudio}
-          />
-        </ErrorBoundary>
+  /// 默认布局:左媒体库 | 中上预览 + 中下时间轴 | 右属性面板
+  const buildDefaultLayout = (api: DockviewApi) => {
+    api.clear();
+    api.addPanel({ id: "preview", component: "preview", title: t("menu.panelPreview") });
+    api.addPanel({ id: "media", component: "media", title: t("menu.panelMedia"), position: { referencePanel: "preview", direction: "left" } });
+    api.addPanel({ id: "inspector", component: "inspector", title: t("menu.panelInspector"), position: { referencePanel: "preview", direction: "right" } });
+    api.addPanel({ id: "timeline", component: "timeline", title: t("menu.panelTimeline"), position: { referencePanel: "preview", direction: "below" } });
+  };
+
+  const onDockReady = (e: DockviewReadyEvent) => {
+    dockApiRef.current = e.api;
+    const saved = localStorage.getItem("veditor-dock-layout");
+    if (saved) {
+      try {
+        e.api.fromJSON(JSON.parse(saved));
+        return;
+      } catch {
+        /* 布局数据损坏:回退默认 */
+      }
+    }
+    buildDefaultLayout(e.api);
+  };
+
+  const togglePanelVisible = (id: string) => {
+    setHiddenPanels((prev) => {
+      const next = prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id];
+      const panel = dockApiRef.current?.getPanel(id);
+      // dockview 8:可见性在 DockviewApi 级别(面板所在组整体显隐;默认布局每面板独立组)
+      if (panel && dockApiRef.current) {
+        (dockApiRef.current as unknown as {
+          setVisible: (panel: unknown, visible: boolean) => void;
+        }).setVisible(panel, !next.includes(id));
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      {/* 顶栏:Logo + 菜单栏 + 导出 */}
+      <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
+        <FilmSlate size={22} />
+        <strong style={{ marginRight: 8 }}>VEditor</strong>
+        <MenuBar
+          menus={[
+            {
+              label: t("menu.file"),
+              items: [
+                { label: t("menu.new"), hint: "Ctrl+N", fn: onNewProject },
+                { label: t("menu.open"), hint: "Ctrl+O", fn: onOpenProject },
+                { label: t("menu.save"), hint: "Ctrl+S", fn: onSaveProject },
+                { label: t("menu.saveAs"), fn: onSaveAsProject },
+                { label: t("menu.importJianying"), fn: onImportJianying },
+                { separator: true },
+                ...(recentProjects.length > 0
+                  ? ([{ label: t("menu.recent"), disabled: true }] as MenuItem[])
+                  : []),
+                ...recentProjects.map((p) => ({
+                  label: p.split("/").pop() || p,
+                  hint: undefined as string | undefined,
+                  fn: () => openProjectPath(p),
+                })),
+              ],
+            },
+            {
+              label: t("menu.edit"),
+              items: [
+                { label: t("menu.undo"), hint: "Ctrl+Z", fn: onUndo },
+                { label: t("menu.redo"), hint: "Ctrl+Shift+Z", fn: onRedo },
+                { separator: true },
+                { label: t("menu.split"), hint: "S", fn: onSplit, disabled: !selected },
+                { label: t("menu.delete"), hint: "Del", fn: onRemove, disabled: !selected },
+                { label: t("menu.ripple"), fn: onRippleDelete, disabled: !selected },
+                { separator: true },
+                { label: t("menu.newFileTrack"), fn: onCreateFileTrack },
+              ],
+            },
+            {
+              label: t("menu.layout"),
+              items: [
+                {
+                  label: t("menu.saveLayout"),
+                  fn: () => {
+                    const api = dockApiRef.current;
+                    if (api) localStorage.setItem("veditor-dock-layout", JSON.stringify(api.toJSON()));
+                  },
+                },
+                {
+                  label: t("menu.resetLayout"),
+                  fn: () => {
+                    localStorage.removeItem("veditor-dock-layout");
+                    const api = dockApiRef.current;
+                    if (api) buildDefaultLayout(api);
+                  },
+                },
+              ],
+            },
+            {
+              label: t("menu.window"),
+              items: [
+                { label: t("menu.panelMedia"), checked: !hiddenPanels.includes("media"), fn: () => togglePanelVisible("media") },
+                { label: t("menu.panelPreview"), checked: !hiddenPanels.includes("preview"), fn: () => togglePanelVisible("preview") },
+                { label: t("menu.panelTimeline"), checked: !hiddenPanels.includes("timeline"), fn: () => togglePanelVisible("timeline") },
+                { label: t("menu.panelInspector"), checked: !hiddenPanels.includes("inspector"), fn: () => togglePanelVisible("inspector") },
+              ],
+            },
+            {
+              label: t("menu.view"),
+              items: [
+                { label: t("menu.theme"), fn: () => setTheme(toggleTheme()) },
+                { label: lang === "zh" ? "English / 英语" : "中文 / Chinese", fn: () => setLangState(lang === "zh" ? "en" : "zh") },
+              ],
+            },
+            {
+              label: t("menu.tools"),
+              items: [
+                { label: t("menu.beats"), fn: onDetectBeats },
+                { label: t("menu.removeSilence"), fn: onRemoveSilence },
+              ],
+            },
+          ]}
+        />
+        <span style={{ flex: 1 }} />
+        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> {t("menu.export")}</button>
+      </header>
+
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <PanelContext.Provider
+            value={{
+              doc, thumbs, waveforms, playhead, selected, playing, playSpeed, playheadRef,
+              renderMode, assetPreview, status, fps, dragKind, dragAssetId, alignEdges,
+              setPlaying, setPlayhead, setPlaySpeed, setDragKind, setDragAssetId,
+              setAssetPreview, setTcDraft, setStatus, selectMany, onClipClick, onClipAction,
+              onClipMove, onClipTrim, onSetVolumeKeyframe, onSetAudioFade, onRollEdit,
+              onRemoveMarker, onMoveClips, onDropPackItem, onDropAsset, onReorderTrack,
+              onClipRangeSet, onRenameTrack, onRemoveTrack, onDuplicateClip,
+              onToggleTrack, onToggleTrackMedia, onToggleLaneView,
+              onPickFolder, onImportFiles, onScanMusicDir, onImportPack, onApplyPackItem,
+              addToTimeline, refresh, onSwitchRenderMode, onSetRect, onStickerMove,
+              clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
+              tcDraft, onDetectBeats, onRemoveSilence,
+            }}
+          >
+            <div className="dock-host" style={{ width: "100%", height: "100%" }}>
+              <DockviewReact
+                components={panelComponents}
+                onReady={onDockReady}
+                className={theme === "light" ? themeLight.className : themeDark.className}
+              />
+            </div>
+          </PanelContext.Provider>
+        </div>
+        <div style={{ padding: "3px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)", borderTop: "1px solid var(--border)" }}>
+          {status}
+        </div>
       </div>
 
       {/* 导出操作窗口(所有导出配置集中于此) */}

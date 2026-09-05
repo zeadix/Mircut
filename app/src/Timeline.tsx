@@ -664,6 +664,16 @@ function TimelineInner({
 
   const viewWRef = useRef(800);
 
+  // 容器尺寸变化(停靠面板拖拽缩放)触发重绘
+  const [viewSize, setViewSize] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setViewSize(el.clientWidth * 31 + el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // ================= 静态层:仅 doc/选中/几何/波形/滚动 变化时重绘 =================
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1109,7 +1119,7 @@ function TimelineInner({
         ctx.lineWidth = 1;
       }
     }
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, audioEditMode]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, audioEditMode, viewSize]);
 
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
@@ -1163,14 +1173,14 @@ function TimelineInner({
     return () => cancelAnimationFrame(id);
   }, [pxPerTick]);
 
-  // 鼠标滚轮 = 水平时间帧缩放(与上方缩放 slider 同步同一 pxPerTick);
-  // Shift+滚轮 = 纵向滚动(浏览器默认,不拦截)。
+  // 鼠标滚轮 = 原生滚动(纵向;Shift=横向,浏览器默认)。
+  // Ctrl+滚轮 = 时间轴缩放(与工具栏缩放 slider 同步同一 pxPerTick)。
   // React onWheel 是 passive 无法 preventDefault,故用原生监听。
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (e.shiftKey) return; // Shift 让出纵向滚动
+      if (!e.ctrlKey) return; // 非缩放:交还原生滚动(当前组件滚动条)
       e.preventDefault();
       const factor = e.deltaY < 0 ? 1.12 : 0.89;
       setPxPerTick((p) => Math.min(4, Math.max(0.1, p * factor)));

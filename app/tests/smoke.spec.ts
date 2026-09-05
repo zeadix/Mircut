@@ -126,7 +126,8 @@ test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page
   expect(dark.text).toBeTruthy();
   // 自引用 token 会解析为空 -> 显式断言非空即防回归
 
-  // 切亮色
+  // 切亮色(主题开关已移入"视图"菜单)
+  await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: /切换亮\/暗主题/ }).click();
   await page.waitForTimeout(300);
   const light = await page.evaluate(() => ({
