@@ -31,7 +31,15 @@ pub(crate) fn read_media_base64(path: String) -> Result<String, String> {
 pub(crate) fn preview_asset_frame(path: String, secs: f64) -> SeekResult {
     let dir = std::env::temp_dir().join("veditor-render-cache/asset");
     let _ = std::fs::create_dir_all(&dir);
-    let jpeg = dir.join(format!("{}.jpg", (secs * 1000.0) as i64));
+    // 文件名含路径哈希:多层同刻取帧并行写时互不覆盖(此前只按毫秒命名会互写)
+    let path_hash = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        path.hash(&mut h);
+        h.finish()
+    };
+    let jpeg = dir.join(format!("{path_hash:x}_{}.jpg", (secs * 1000.0) as i64));
     let mut source = secs;
     for _ in 0..4 {
         let out = std::process::Command::new("ffmpeg")
@@ -265,6 +273,7 @@ pub(crate) fn remove_silence(path: String, state: State<'_, AppState>) -> Result
             muted: false,
             lane: None,
             fx: Default::default(),
+            text: None,
         });
         cursor += end - start;
     }

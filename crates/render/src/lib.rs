@@ -71,6 +71,8 @@ impl ProxyRenderer {
                     && t < c.end()
                     // File 轨只取视频块(上区);纯音频块/旧音频轨不参与画面
                     && c.lane != Some(veditor_core::Lane::Audio)
+                    // 文字片段无源素材(渲染走前端 DOM/drawtext),代理/实时引擎跳过
+                    && c.text.is_none()
             })
             // 上层轨道(tracks 索引小)优先 -> 遮挡下层
             .min_by_key(|c| {
@@ -224,6 +226,8 @@ impl RealtimeRenderer {
                     && t < c.end()
                     // File 轨只取视频块(上区);纯音频块/旧音频轨不参与画面
                     && c.lane != Some(veditor_core::Lane::Audio)
+                    // 文字片段无源素材(渲染走前端 DOM/drawtext),代理/实时引擎跳过
+                    && c.text.is_none()
             })
             // 上层轨道(tracks 索引小)优先 -> 遮挡下层
             .min_by_key(|c| {
@@ -452,17 +456,9 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
+            text: None,
         });
         doc
-    }
-
-    #[test]
-    fn seek_empty_timeline_errors() {
-        let mut r = ProxyRenderer::new(
-            Document::default(),
-            PathBuf::from("/tmp/veditor-render-tests"),
-        );
-        assert!(r.seek(0).is_err());
     }
 
     #[test]

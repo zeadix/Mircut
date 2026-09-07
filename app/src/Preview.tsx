@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Clip, ColorGrade, Document, FxRect, Mask, Transition } from "./types";
+import type { Clip, ClipAnimKind, ColorGrade, Document, FxRect, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
-import { Magnet } from "@phosphor-icons/react";
+import { Crosshair, Magnet } from "@phosphor-icons/react";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
 type TransitionKind = Transition["kind"];
@@ -31,6 +31,32 @@ type SeekResp = { jpeg_path: string | null; error: string | null };
 /// 帧文件 -> veditor:// 协议 URL(WebView 二进制直载,零 IPC 负载)。
 function frameUrl(path: string): string {
   return `veditor://preview/${encodeURIComponent(path)}`;
+}
+
+/// ===== 层帧 LRU 缓存(播放流畅度的核心) =====
+/// 键 = "素材路径|20Hz 秒桶"。命中则零 IPC 零解码直接换帧;
+/// 播放预取与循环回放都从这里吃红利。上限防止长期编辑内存无界。
+const frameCache = new Map<string, string>();
+const FRAME_CACHE_MAX = 300;
+
+function cachedFrame(path: string, bucket: number): string | null {
+  const k = `${path}|${bucket}`;
+  const v = frameCache.get(k);
+  if (v === undefined) return null;
+  // 触碰即提升到队尾(LRU)
+  frameCache.delete(k);
+  frameCache.set(k, v);
+  return v;
+}
+
+function putFrame(path: string, bucket: number, url: string) {
+  const k = `${path}|${bucket}`;
+  frameCache.delete(k);
+  if (frameCache.size >= FRAME_CACHE_MAX) {
+    const oldest = frameCache.keys().next().value;
+    if (oldest !== undefined) frameCache.delete(oldest);
+  }
+  frameCache.set(k, url);
 }
 
 /// 混合模式 -> CSS mix-blend-mode(与导出 blend=all_mode 对应)。
@@ -75,36 +101,56 @@ function maskClip(mask?: Mask): string | undefined {
 
 /// 片段画布矩形:关键帧(>=2 帧)动画优先,回退静态 rect / 旧模型单帧语义。
 /// 与导出 compile 的取值规则对齐(export fallback:x/y 为剩余空间系数)。
-function deriveRect(c: Clip, tLocal: number): { rect: FxRect; rotate: number } {
+/// tLocalTicks 为片段本地 ticks(关键帧 t 同单位)。
+function deriveRect(c: Clip, tLocalTicks: number, native: FxRect | null): { rect: FxRect; rotate: number } {
   const fx = c.fx;
   const rect = fx?.rect;
   const sk = fx?.scale?.keyframes ?? [];
   const xk = fx?.x_offset?.keyframes ?? [];
   const yk = fx?.y_offset?.keyframes ?? [];
   const anim = sk.length >= 2 || xk.length >= 2 || yk.length >= 2;
-  const rotate = valueAt(fx?.rotate?.keyframes, tLocal) ?? 0;
+  const rotate = valueAt(fx?.rotate?.keyframes, tLocalTicks) ?? 0;
   let r: FxRect;
   if (!anim && rect) {
     r = rect;
   } else if (!anim) {
-    const w = valueAt(sk, 0) ?? 0.35;
-    const px = valueAt(xk, 0) ?? 0.72;
-    const py = valueAt(yk, 0) ?? 0.72;
-    r = { x: px * (1 - w) + w / 2, y: py * (1 - w) + w / 2, w, h: w };
+    // 无 rect:素材按自身分辨率落画布(新建片段默认);旧素材无尺寸信息时回退旧模型小窗
+    r = native ?? { x: 0.72 * (1 - 0.35) + 0.35 / 2, y: 0.72 * (1 - 0.35) + 0.35 / 2, w: 0.35, h: 0.35 };
   } else if (rect) {
     r = {
-      x: valueAt(xk, tLocal) ?? rect.x,
-      y: valueAt(yk, tLocal) ?? rect.y,
-      w: valueAt(sk, tLocal) ?? rect.w,
-      h: valueAt(sk, tLocal) ?? rect.h,
+      x: valueAt(xk, tLocalTicks) ?? rect.x,
+      y: valueAt(yk, tLocalTicks) ?? rect.y,
+      w: valueAt(sk, tLocalTicks) ?? rect.w,
+      h: valueAt(sk, tLocalTicks) ?? rect.h,
     };
   } else {
-    const w = valueAt(sk, tLocal) ?? 0.35;
-    const px = valueAt(xk, tLocal) ?? 0.72;
-    const py = valueAt(yk, tLocal) ?? 0.72;
+    const w = valueAt(sk, tLocalTicks) ?? 0.35;
+    const px = valueAt(xk, tLocalTicks) ?? 0.72;
+    const py = valueAt(yk, tLocalTicks) ?? 0.72;
     r = { x: px * (1 - w) + w / 2, y: py * (1 - w) + w / 2, w, h: w };
   }
   return { rect: r, rotate };
+}
+
+/// 原生尺寸矩形:素材像素相对合成画布,居中(新建片段的默认显示)。
+export function nativeRect(assetW: number, assetH: number, compW: number, compH: number): FxRect {
+  return { x: 0.5, y: 0.5, w: assetW / compW, h: assetH / compH };
+}
+
+/// 适配矩形:等比 contain 铺满合成画布,居中(双击全屏)。
+export function fitRect(assetW: number, assetH: number, compW: number, compH: number): FxRect {
+  const s = Math.min(compW / assetW, compH / assetH);
+  return { x: 0.5, y: 0.5, w: (assetW * s) / compW, h: (assetH * s) / compH };
+}
+
+/// rect 近似相等(双击状态判定用)。
+/// 无括号 return:hooks-rule 静态防护以 2 空格 `return (` 定位组件主 return。
+export function rectsEq(a: FxRect, b: FxRect, eps = 1e-3): boolean {
+  const dx = Math.abs(a.x - b.x) < eps;
+  const dy = Math.abs(a.y - b.y) < eps;
+  const dw = Math.abs(a.w - b.w) < eps;
+  const dh = Math.abs(a.h - b.h) < eps;
+  return dx && dy && dw && dh;
 }
 
 interface Layer {
@@ -113,6 +159,17 @@ interface Layer {
   secs: number;
   rect: FxRect;
   z: number;
+  /// 素材像素尺寸(双击全屏/恢复原始分辨率的计算依据;未知为 null)。
+  assetW: number | null;
+  assetH: number | null;
+  /// 强行拉伸(rect.stretch;"全屏平铺"):层框内不保比例填充。
+  stretch: boolean;
+  /// 文字片段(Some = 渲染为文本而非帧图)。
+  text?: TextClipData;
+  /// 入场动画(种类 + 已进行比例 p:0→1)。
+  animIn?: { kind: ClipAnimKind; p: number };
+  /// 出场动画(种类 + 剩余比例 rem:1→0)。
+  animOut?: { kind: ClipAnimKind; rem: number };
   /// 不透明度(关键帧 value_at,默认 1)。
   opacity: number;
   /// CSS mix-blend-mode(未设置 = 正常)。
@@ -168,7 +225,7 @@ function snapVal(v: number, candidates: number[], tol = SNAP_TOL): { v: number; 
  * - 磁吸:层边/中心 与 画面边界/其他层边 吸附(可开关)
  * - 预览高度可拖拽调整
  */
-export default function Preview({
+function PreviewInner({
   playheadTicks,
   fps,
   playing,
@@ -181,7 +238,7 @@ export default function Preview({
   onStickerMove,
   onSelectClip,
 }: Props) {
-  const [url, setUrl] = useState<string | null>(null);
+const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /// 层帧缓存:clipId -> url(拖拽/播放时持续刷新)。
   const [layerUrls, setLayerUrls] = useState<Record<string, string>>({});
@@ -217,6 +274,28 @@ export default function Preview({
   // 与导出行为一致;素材直读除外)
   const composing = !assetPreview && !!doc && doc.tracks.length > 0;
 
+  /// 合成画布分辨率(预览舞台与导出共同真源;旧工程缺省 1920x1080)。
+  const compW = doc?.width ?? 1920;
+  const compH = doc?.height ?? 1080;
+  /// 画布在宿主内的像素尺寸 = 最大内接矩形(保持合成比例,黑边留白)。
+  const frameHostRef = useRef<HTMLDivElement>(null);
+  const [framePx, setFramePx] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = frameHostRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cw = el.clientWidth;
+      const ch = el.clientHeight;
+      if (cw <= 0 || ch <= 0) return;
+      const s = Math.min(cw / compW, ch / compH);
+      setFramePx({ w: Math.floor(compW * s), h: Math.floor(compH * s) });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [compW, compH]);
+
   /// 单个片段 -> 合成层(取出帧时刻与全部视觉属性)。
   const buildLayer = useCallback(
     (c: Clip, doc: Document, t: number, forcedSecs: number | null, trans?: { kind: TransitionKind; p: number }): Layer | null => {
@@ -225,15 +304,37 @@ export default function Preview({
       const tps = doc.timebase.num / doc.timebase.den;
       const tLocalTicks = t - c.start;
       const rawSecs = forcedSecs ?? c.asset.source_in + sourceSecsAt(c.speed, c.fx?.speed?.keyframes, doc.timebase.num, doc.timebase.den, tLocalTicks);
-      const tLocal = tLocalTicks / tps;
-      const { rect, rotate } = deriveRect(c, tLocal);
+      // 关键帧求值一律用 ticks(与 Rust 导出 value_at 单位一致)
+      const compW = doc.width ?? 1920;
+      const compH = doc.height ?? 1080;
+      const native =
+        asset.width && asset.height ? nativeRect(asset.width, asset.height, compW, compH) : null;
+      const { rect, rotate } = deriveRect(c, tLocalTicks, native);
+      // 入场/出场动画进度:in p = 已进行比例(0→1);out rem = 剩余比例(1→0)
+      let animIn: Layer["animIn"];
+      let animOut: Layer["animOut"];
+      const durSecs = c.duration / tps;
+      if (c.fx?.enter) {
+        const d = Math.max(0.05, c.fx.enter.dur_secs);
+        animIn = { kind: c.fx.enter.kind, p: Math.min(1, Math.max(0, tLocalTicks / tps / d)) };
+      }
+      if (c.fx?.exit) {
+        const d = Math.max(0.05, c.fx.exit.dur_secs);
+        animOut = { kind: c.fx.exit.kind, rem: Math.min(1, Math.max(0, (durSecs - tLocalTicks / tps) / d)) };
+      }
       return {
         clipId: c.id,
         path: asset.path,
         secs: Math.max(0, Math.min(rawSecs, asset.duration_secs - 0.05)),
         rect,
         z: 0,
-        opacity: valueAt(c.fx?.opacity?.keyframes, tLocal) ?? 1,
+        assetW: asset.width ?? null,
+        assetH: asset.height ?? null,
+        text: c.text ?? undefined,
+        stretch: !!c.fx?.rect?.stretch,
+        animIn,
+        animOut,
+        opacity: valueAt(c.fx?.opacity?.keyframes, tLocalTicks) ?? 1,
         blend: c.fx?.blend_mode ? BLEND_CSS[c.fx.blend_mode] : undefined,
         filter: gradeFilter(c.fx?.grade),
         rotate,
@@ -299,29 +400,70 @@ export default function Preview({
   const activeRect = liveRect ?? selected?.rect ?? null;
 
   // 层帧拉取:每层独立 preview_asset_frame(有缓存,ffmpeg 秒级)。节流复用旧循环思想。
-  const layersKey = layers.map((l) => `${l.clipId}:${Math.round(l.secs * 20)}`).join("|");
+  /// 层帧拉取管线(播放流畅度关键路径):
+  /// - 20Hz 秒桶为缓存键;播放中刷新粒度降到 10Hz(需求减半,缓存键仍 20Hz 对齐)
+  /// - 各层并行取帧(此前串行,多层延迟成倍)
+  /// - generation 过期丢弃:新请求到达后旧结果不再 setState,也不阻塞新帧
+  /// - 播放中每层预取前方 3 桶填缓存,当前帧几乎总命中 → 消除冻结感
+  const bucketRate = playing ? 10 : 20;
+  const layersKey = layers.map((l) => `${l.clipId}:${Math.round(l.secs * bucketRate)}`).join("|");
   const layerFetchRef = useRef("");
+  const fetchGenRef = useRef(0);
   useEffect(() => {
     if (assetPreview) return; // 素材直读模式不走层
     if (layersKey === layerFetchRef.current) return;
     layerFetchRef.current = layersKey;
-    let cancelled = false;
+    const gen = ++fetchGenRef.current;
+    const fetchOne = async (path: string, secs: number, clipId: string, next: Record<string, string>) => {
+      if (path.startsWith("text://")) return; // 文字片段无源帧
+      const bucket = Math.round(secs * 20);
+      const hit = cachedFrame(path, bucket);
+      if (hit) {
+        next[clipId] = hit;
+        return;
+      }
+      try {
+        const r: SeekResp = await invoke("preview_asset_frame", { path, secs });
+        if (r.jpeg_path) {
+          const url = frameUrl(r.jpeg_path);
+          // 缓存写入无条件执行(与时间无关;过期请求的帧在未来仍可复用)
+          putFrame(path, bucket, url);
+          if (fetchGenRef.current !== gen) return; // 过期:仅跳过显示更新
+          next[clipId] = url;
+        }
+      } catch {
+        // 单层失败不阻塞其他层
+      }
+    };
     (async () => {
       const next: Record<string, string> = {};
-      for (const l of layers) {
-        try {
-          const r: SeekResp = await invoke("preview_asset_frame", { path: l.path, secs: l.secs });
-          if (!cancelled && r.jpeg_path) next[l.clipId] = frameUrl(r.jpeg_path);
-        } catch {
-          // 单层失败不阻塞其他层
+      await Promise.all(layers.map((l) => fetchOne(l.path, l.secs, l.clipId, next)));
+      if (fetchGenRef.current !== gen) return;
+      setLayerUrls(next);
+      // 播放预取:前方 3 桶(约 0.15~0.3s)提前解码入缓存,fire-and-forget
+      // (不做 gen 检查:缓存写入永不过期,预取完成时即使播放头已推进,
+      //  这些桶也会在稍后播放到时命中)
+      if (playing) {
+        const step = 1 / bucketRate;
+        for (const l of layers) {
+          for (let i = 1; i <= 3; i++) {
+            const ahead = l.secs + step * i;
+            const bucket = Math.round(ahead * 20);
+            if (cachedFrame(l.path, bucket)) continue;
+            void invoke<SeekResp>("preview_asset_frame", { path: l.path, secs: ahead })
+              .then((r: SeekResp) => {
+                if (r.jpeg_path) putFrame(l.path, bucket, frameUrl(r.jpeg_path));
+              })
+              .catch(() => {});
+          }
         }
       }
-      if (!cancelled) setLayerUrls(next);
     })();
     return () => {
-      cancelled = true;
+      // 旧 effect 卸载即失效(cancellation 由 generation 检查承担)
+      fetchGenRef.current++;
     };
-  }, [layersKey, layers, assetPreview]);
+  }, [layersKey, layers, assetPreview, playing]);
 
   // 单帧模式(素材预览;合成模式一律走 stage 层)
   useEffect(() => {
@@ -359,6 +501,7 @@ export default function Preview({
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let inFlight = false;
+    let lastPulledT = -1;
     async function pull() {
       if (stopped || inFlight) return;
       inFlight = true;
@@ -386,7 +529,14 @@ export default function Preview({
         inFlight = false;
       }
       if (!stopped) {
-        const wait = latest.current.playing ? 150 : 80;
+        // 播放 150ms;暂停时播放头未变则退避 500ms(空工程不再 80ms 空转 ffmpeg)
+        const wait =
+          latest.current.playing
+            ? 150
+            : latest.current.t === lastPulledT
+              ? 500
+              : 80;
+        lastPulledT = latest.current.t;
         timer = setTimeout(pull, wait);
       }
     }
@@ -427,6 +577,16 @@ export default function Preview({
       overflow: "hidden",
       zIndex: selected?.clipId ? undefined : undefined,
     };
+  }
+
+  /// 双击层:铺满画布(等比 contain)↔ 原始分辨率(素材自身大小)。
+  /// 经 onSetRect 持久化到 fx.rect —— 预览与导出共用,所见即所得。
+  function toggleLayerFit(l: Layer) {
+    if (!onSetRect || !l.assetW || !l.assetH) return;
+    const cur = l.clipId === selId ? (liveRect ?? l.rect) : l.rect;
+    const fit = fitRect(l.assetW, l.assetH, compW, compH);
+    const next = rectsEq(cur, fit) ? nativeRect(l.assetW, l.assetH, compW, compH) : fit;
+    onSetRect(l.clipId, next);
   }
 
   /// 自动选取:点击位置命中最高层(自上而下第一个包含该点的层)。
@@ -700,23 +860,43 @@ export default function Preview({
         </span>
       )}
 
-      {/* 多层合成舞台(画中画) */}
+      {/* 多层合成舞台:画布按合成分辨率等比呈现,居中(黑边区域不参与层坐标) */}
       {composing && (
         <div
-          ref={stageRef}
+          ref={frameHostRef}
           style={{
-            position: "relative",
             width: "100%",
             height: "100%",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
             overflow: "hidden",
             background: "var(--bg)",
           }}
-          onPointerDown={onStagePointerDown}
-          onPointerMove={(e) => {
-            if (gripRef.current) onGripMove(e);
-          }}
-          onPointerUp={onGripUp}
         >
+          <div
+            ref={stageRef}
+            data-veditor-comp-frame=""
+            style={{
+              position: "relative",
+              width: framePx?.w ?? "100%",
+              height: framePx?.h ?? "100%",
+              overflow: "hidden",
+              background: "#000",
+              flexShrink: 0,
+            }}
+            onDoubleClick={(e) => {
+              // 双击视频层:铺满画布(contain)↔ 原始分辨率
+              const l = layerAtPoint(e.clientX, e.clientY);
+              if (l) toggleLayerFit(l);
+            }}
+            onPointerDown={onStagePointerDown}
+            onPointerMove={(e) => {
+              if (gripRef.current) onGripMove(e);
+            }}
+            onPointerUp={onGripUp}
+          >
           {/* 黑场提示(合成模式无视频层时) */}
           {layers.length === 0 && (
             <span
@@ -736,8 +916,37 @@ export default function Preview({
           {layers.map((l) => {
             const r = l.clipId === selId ? (liveRect ?? l.rect) : l.rect;
             const img = layerUrls[l.clipId];
-            const op = Math.max(0, Math.min(1, l.opacity * l.fade));
+            // 入场/出场动画:Fade 乘不透明度;Slide 位移按画布像素(从画布外滑入/
+            // 滑出到画布外);Zoom 缩放。与转场(trans)的效果叠加。
+            let animOp = 1;
+            let animTf = "";
+            const fw = framePx?.w ?? 0;
+            const fh = framePx?.h ?? 0;
+            if (l.animIn) {
+              const { kind, p } = l.animIn;
+              const q = 1 - p;
+              if (kind === "Fade") animOp *= p;
+              else if (kind === "SlideLeft") animTf += ` translateX(${(q * fw).toFixed(1)}px)`;
+              else if (kind === "SlideRight") animTf += ` translateX(${(-q * fw).toFixed(1)}px)`;
+              else if (kind === "SlideUp") animTf += ` translateY(${(q * fh).toFixed(1)}px)`;
+              else if (kind === "SlideDown") animTf += ` translateY(${(-q * fh).toFixed(1)}px)`;
+              else if (kind === "ZoomIn") animTf += ` scale(${(0.3 + 0.7 * p).toFixed(3)})`;
+              else if (kind === "ZoomOut") animTf += ` scale(${(2 - p).toFixed(3)})`;
+            }
+            if (l.animOut) {
+              const { kind, rem } = l.animOut;
+              const q = 1 - rem;
+              if (kind === "Fade") animOp *= rem;
+              else if (kind === "SlideLeft") animTf += ` translateX(${(-q * fw).toFixed(1)}px)`;
+              else if (kind === "SlideRight") animTf += ` translateX(${(q * fw).toFixed(1)}px)`;
+              else if (kind === "SlideUp") animTf += ` translateY(${(-q * fh).toFixed(1)}px)`;
+              else if (kind === "SlideDown") animTf += ` translateY(${(q * fh).toFixed(1)}px)`;
+              else if (kind === "ZoomIn") animTf += ` scale(${(1 + q).toFixed(3)})`;
+              else if (kind === "ZoomOut") animTf += ` scale(${(rem + 0.3 * q).toFixed(3)})`;
+            }
+            const op = Math.max(0, Math.min(1, l.opacity * l.fade * animOp));
             let tf = l.rotate ? `rotate(${l.rotate.toFixed(2)}deg)` : "";
+            tf += animTf;
             if (l.trans) {
               if (l.trans.kind === "SlideLeft") tf += ` translateX(${((1 - l.trans.p) * 100).toFixed(1)}%)`;
               if (l.trans.kind === "SlideRight") tf += ` translateX(${(-(1 - l.trans.p) * 100).toFixed(1)}%)`;
@@ -746,6 +955,7 @@ export default function Preview({
             return (
               <div
                 key={l.clipId}
+                data-veditor-layer={l.clipId}
                 style={{
                   ...stageRectStyle(r),
                   opacity: op,
@@ -754,7 +964,36 @@ export default function Preview({
                   transform: tf || undefined,
                 }}
               >
-                {img ? (
+                {l.text ? (
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      pointerEvents: "none",
+                      color: l.text.color,
+                      // 字号 = rect.h × 舞台高(与导出 font_size/1080×H 同语义)
+                      fontSize: Math.max(10, r.h * (framePx?.h ?? 300)),
+                      fontWeight: l.text.bold ? 700 : 500,
+                      whiteSpace: "pre-wrap",
+                      textAlign: "center",
+                      WebkitTextStroke: l.text.outline ? `1.5px ${l.text.outline}` : undefined,
+                      textShadow: l.text.outline2
+                        ? `0 0 4px ${l.text.outline2}, 0 0 4px ${l.text.outline2}`
+                        : l.text.shadow
+                          ? "2px 2px 4px rgba(0,0,0,0.8)"
+                          : undefined,
+                      background: l.text.bg_color ? `${l.text.bg_color}99` : undefined,
+                      borderRadius: 4,
+                      padding: "0.1em 0.4em",
+                    }}
+                  >
+                    {l.text.content}
+                  </div>
+                ) : img ? (
                   <img
                     src={img}
                     alt=""
@@ -763,7 +1002,9 @@ export default function Preview({
                     style={{
                       width: "100%",
                       height: "100%",
-                      objectFit: "contain",
+                      // stretch(全屏平铺)= 强行填满层框不保比例,与导出 scale=w:h 一致;
+                      // 其余 = 层框内等比 contain,与导出 decrease+pad 一致
+                      objectFit: l.stretch ? "fill" : "contain",
                       pointerEvents: "none",
                       filter: l.filter,
                     }}
@@ -852,42 +1093,6 @@ export default function Preview({
               );
             })}
 
-          {/* 文字叠层(与导出 drawtext 样式/动画对齐) */}
-          {(doc?.text_overlays ?? [])
-            .filter((o) => playheadTicks >= o.start && playheadTicks < o.end)
-            .map((o) => {
-              const tpsL = doc!.timebase.num / doc!.timebase.den;
-              const p = Math.min(1, Math.max(0, (playheadTicks - o.start) / tpsL / 0.5));
-              const style: React.CSSProperties = {
-                position: "absolute",
-                left: `${o.x * 100}%`,
-                top: `${o.y * 100}%`,
-                transform: `translate(-50%, -50%)`,
-                color: o.color,
-                fontSize: Math.max(10, (o.font_size * panelH) / 1080),
-                fontWeight: o.bold ? 700 : 500,
-                whiteSpace: "pre",
-                pointerEvents: "none",
-                zIndex: 4,
-              };
-              if (o.outline) style.WebkitTextStroke = `1.5px ${o.outline}`;
-              if (o.outline2) style.textShadow = `0 0 4px ${o.outline2}, 0 0 4px ${o.outline2}`;
-              else if (o.shadow) style.textShadow = "2px 2px 4px rgba(0,0,0,0.8)";
-              if (o.bg_color) {
-                style.background = `${o.bg_color}99`;
-                style.padding = "0.1em 0.4em";
-                style.borderRadius = 4;
-              }
-              if (o.animation === "FadeIn") style.opacity = p;
-              if (o.animation === "SlideUp") style.transform += ` translateY(${((1 - p) * panelH * 0.3).toFixed(1)}px)`;
-              if (o.animation === "Zoom") style.transform += ` scale(${(0.3 + 0.7 * p).toFixed(3)})`;
-              return (
-                <div key={o.id} style={style}>
-                  {o.text}
-                </div>
-              );
-            })}
-
           {/* 字幕(与导出 drawtext 位置/样式对齐) */}
           {(doc?.subtitles?.cues ?? [])
             .filter((cue) => {
@@ -933,7 +1138,7 @@ export default function Preview({
                     height: 10,
                     background: "var(--text)",
                     border: "1px solid var(--accent)",
-                    borderRadius: 2,
+                    borderRadius: "var(--radius-ctl)",
                     cursor: h.cursor,
                     pointerEvents: "auto",
                   }}
@@ -997,50 +1202,24 @@ export default function Preview({
 
           {/* 自动选取开关 */}
           <button
-            className="btn"
-            style={{
-              position: "absolute",
-              left: 64,
-              top: 8,
-              padding: "2px 8px",
-              fontSize: 10,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              opacity: autoSelect ? 1 : 0.5,
-              borderColor: autoSelect ? "var(--accent)" : undefined,
-              zIndex: 10,
-              background: "rgba(20,20,24,0.8)",
-            }}
+            className={`btn icon sm float${autoSelect ? " on" : ""}`}
+            style={{ position: "absolute", left: 36, top: 8, zIndex: 10 }}
             onClick={() => setAutoSelect((v) => !v)}
             title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
           >
-            ⌖ 选取
+            <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
           </button>
 
           {/* 吸附开关 */}
           <button
-            className="btn"
-            style={{
-              position: "absolute",
-              left: 8,
-              top: 8,
-              padding: "2px 8px",
-              fontSize: 10,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              opacity: snapOn ? 1 : 0.5,
-              borderColor: snapOn ? "var(--accent)" : undefined,
-              zIndex: 10,
-              background: "rgba(20,20,24,0.8)",
-            }}
+            className={`btn icon sm float${snapOn ? " on" : ""}`}
+            style={{ position: "absolute", left: 8, top: 8, zIndex: 10 }}
             onClick={() => setSnapOn((v) => !v)}
             title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
           >
-            <Magnet size={12} weight={snapOn ? "fill" : "regular"} />
-            磁吸
+            <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
           </button>
+          </div>
         </div>
       )}
 
@@ -1086,3 +1265,7 @@ export default function Preview({
     </div>
   );
 }
+
+/// memo:status/拖拽态等无关更新不再触发预览区重渲(playhead 变化仍正常穿透)。
+const Preview = memo(PreviewInner);
+export default Preview;

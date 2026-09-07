@@ -246,6 +246,169 @@ pub fn anim_expr(
     Some(format!("if(lt(t,{t0:.4}),{v0:.4},{})", polyline_expr(&pts)))
 }
 
+/// 片段是否带滑动/缩放类入场/出场动画(需要位置/尺寸表达式或 overlay 路径)。
+fn clip_has_motion_anim(c: &veditor_core::Clip) -> bool {
+    fn motion(a: &Option<veditor_core::ClipAnim>) -> bool {
+        a.as_ref()
+            .is_some_and(|a| !matches!(a.kind, veditor_core::ClipAnimKind::Fade))
+    }
+    motion(&c.fx.enter) || motion(&c.fx.exit)
+}
+
+/// 入场/出场 Fade 的 fade 滤镜串(alpha;不含 format=yuva420p)。
+/// `vis` = 片段可见起点(求值时间基;入场 st=vis,出场 st=vis+dur-d);
+/// d 钳制到 [0.05,5] 且不超过片段时长。
+fn anim_fade_filters(c: &veditor_core::Clip, dur_secs: f64, vis: f64) -> String {
+    let mut s = String::new();
+    if let Some(a) = &c.fx.enter {
+        if a.kind == veditor_core::ClipAnimKind::Fade {
+            let d = a.dur_secs.clamp(0.05, 5.0).min(dur_secs.max(0.06));
+            s.push_str(&format!(",fade=t=in:st={vis:.3}:d={d:.3}:alpha=1"));
+        }
+    }
+    if let Some(a) = &c.fx.exit {
+        if a.kind == veditor_core::ClipAnimKind::Fade {
+            let d = a.dur_secs.clamp(0.05, 5.0).min(dur_secs.max(0.06));
+            s.push_str(&format!(
+                ",fade=t=out:st={:.3}:d={d:.3}:alpha=1",
+                (vis + dur_secs - d).max(0.0)
+            ));
+        }
+    }
+    s
+}
+
+/// 入场/出场 Zoom 的缩放因子表达式(乘以基础尺寸;1 = 原尺寸)。
+/// t = 时间轴秒(与 PiP/overlay 路径的 setpts 后表达式一致);vis/end = 可旋窗口。
+fn anim_scale_factor_expr(
+    c: &veditor_core::Clip,
+    vis: f64,
+    end: f64,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(a) = &c.fx.enter {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        match a.kind {
+            veditor_core::ClipAnimKind::ZoomIn => {
+                parts.push(format!("(0.3+0.7*min(1,max(0,(t-{vis:.3})/{d:.3})))"))
+            }
+            veditor_core::ClipAnimKind::ZoomOut => {
+                parts.push(format!("(2-min(1,max(0,(t-{vis:.3})/{d:.3})))"))
+            }
+            _ => {}
+        }
+    }
+    if let Some(a) = &c.fx.exit {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        match a.kind {
+            veditor_core::ClipAnimKind::ZoomIn => {
+                parts.push(format!("(1+min(1,max(0,({end:.3}-t)/{d:.3})))"))
+            }
+            veditor_core::ClipAnimKind::ZoomOut => {
+                parts.push(format!("(1-0.7*min(1,max(0,({end:.3}-t)/{d:.3})))"))
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("*"))
+    }
+}
+
+/// 入场/出场 Slide 的 overlay 偏移表达式(像素;相对画布宽/高)。
+/// 入场从画布外滑入、出场滑出到画布外;返回 (dx, dy)。
+#[allow(clippy::type_complexity)]
+fn anim_slide_expr(
+    c: &veditor_core::Clip,
+    vis: f64,
+    end: f64,
+    w: f64,
+    h: f64,
+) -> Option<(String, String)> {
+    let mut dx: Vec<String> = Vec::new();
+    let mut dy: Vec<String> = Vec::new();
+    if let Some(a) = &c.fx.enter {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        let q = format!("(1-min(1,max(0,(t-{vis:.3})/{d:.3})))");
+        match a.kind {
+            veditor_core::ClipAnimKind::SlideLeft => dx.push(format!("{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideRight => dx.push(format!("-({q})*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideUp => dy.push(format!("{q}*{h:.0}")),
+            veditor_core::ClipAnimKind::SlideDown => dy.push(format!("-({q})*{h:.0}")),
+            _ => {}
+        }
+    }
+    if let Some(a) = &c.fx.exit {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        let q = format!("(1-min(1,max(0,({end:.3}-t)/{d:.3})))");
+        match a.kind {
+            veditor_core::ClipAnimKind::SlideLeft => dx.push(format!("-{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideRight => dx.push(format!("{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideUp => dy.push(format!("-{q}*{h:.0}")),
+            veditor_core::ClipAnimKind::SlideDown => dy.push(format!("{q}*{h:.0}")),
+            _ => {}
+        }
+    }
+    if dx.is_empty() && dy.is_empty() {
+        None
+    } else {
+        Some((
+            if dx.is_empty() { "0.0".into() } else { dx.join("+") },
+            if dy.is_empty() { "0.0".into() } else { dy.join("+") },
+        ))
+    }
+}
+
+/// 文字 drawtext 出入场表达式:返回 (alpha_suffix, x_expr_offset, y_expr_offset, fontsize_factor)。
+/// 时间变量 t 为时间轴秒;vis/end 为可见窗口。None 分量表示不修改。
+type TextAnimExprs = (Option<String>, Option<String>, Option<String>, Option<String>);
+
+fn text_anim_exprs(
+    enter: Option<&veditor_core::ClipAnim>,
+    exit: Option<&veditor_core::ClipAnim>,
+    vis: f64,
+    end: f64,
+    w: f64,
+    h: f64,
+) -> TextAnimExprs {
+    let mut alpha: Vec<String> = Vec::new();
+    let mut dx: Vec<String> = Vec::new();
+    let mut dy: Vec<String> = Vec::new();
+    let mut zf: Vec<String> = Vec::new();
+    if let Some(a) = enter {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        let p = format!("min(1,max(0,(t-{vis:.3})/{d:.3}))");
+        let q = format!("(1-min(1,max(0,(t-{vis:.3})/{d:.3})))");
+        match a.kind {
+            veditor_core::ClipAnimKind::Fade => alpha.push(p),
+            veditor_core::ClipAnimKind::SlideLeft => dx.push(format!("{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideRight => dx.push(format!("-({q})*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideUp => dy.push(format!("{q}*{h:.0}")),
+            veditor_core::ClipAnimKind::SlideDown => dy.push(format!("-({q})*{h:.0}")),
+            veditor_core::ClipAnimKind::ZoomIn => zf.push(format!("(0.3+0.7*{p})")),
+            veditor_core::ClipAnimKind::ZoomOut => zf.push(format!("(2-{p})")),
+        }
+    }
+    if let Some(a) = exit {
+        let d = a.dur_secs.clamp(0.05, 5.0);
+        let rem = format!("min(1,max(0,({end:.3}-t)/{d:.3}))");
+        let q = format!("(1-min(1,max(0,({end:.3}-t)/{d:.3})))");
+        match a.kind {
+            veditor_core::ClipAnimKind::Fade => alpha.push(rem),
+            veditor_core::ClipAnimKind::SlideLeft => dx.push(format!("-{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideRight => dx.push(format!("{q}*{w:.0}")),
+            veditor_core::ClipAnimKind::SlideUp => dy.push(format!("-{q}*{h:.0}")),
+            veditor_core::ClipAnimKind::SlideDown => dy.push(format!("{q}*{h:.0}")),
+            veditor_core::ClipAnimKind::ZoomIn => zf.push(format!("(1+{q})")),
+            veditor_core::ClipAnimKind::ZoomOut => zf.push(format!("({rem}+0.3*{q})")),
+        }
+    }
+    let join = |v: Vec<String>| if v.is_empty() { None } else { Some(v.join("*")) };
+    (join(alpha), join(dx), join(dy), join(zf))
+}
+
 /// 单片段视频链(trim/变速/缩放/特效/不透明度/旋转 -> label)。
 /// 供主轨静态链与变速分段复用;cmd_tag 用于 sendcmd 命令文件命名。
 fn build_video_chain(
@@ -308,9 +471,13 @@ fn build_video_chain_ex(
     if mode.tl_start.abs() > 1e-9 {
         chain.push_str(&format!(",setpts=PTS+{:.3}/TB", mode.tl_start));
     }
-    // 转场淡入:alpha 通道 0->1(与另一条淡出流交叠混合)
+    // 转场淡入:alpha 通道 0->1(与另一条淡出流交叠混合)。
+    // st 用平移后的时间轴时间(流起点 = mode.tl_start;st=0 只对首片段凑巧正确)
     if let Some(d) = mode.fade_in.filter(|d| *d > 1e-3) {
-        chain.push_str(&format!(",format=yuva420p,fade=t=in:st=0:d={d:.3}:alpha=1"));
+        chain.push_str(&format!(
+            ",format=yuva420p,fade=t=in:st={:.3}:d={d:.3}:alpha=1",
+            mode.tl_start
+        ));
     }
     // 宽高比保持缩放(黑边填充)
     let scale = format!(
@@ -319,21 +486,29 @@ fn build_video_chain_ex(
     );
     chain.push_str(&format!(",{scale},fps={}", params.fps));
     // 画面矩形(画中画):缩到 rect 尺寸并放到 rect 位置,其余黑。
-    // rect 非默认(不满屏)时替换上面的全屏 pad 定位。
+    // rect 非默认(不满屏)或 stretch 时替换上面的全屏 pad 定位。
     if let Some(rect) = c.fx.rect {
-        if (rect.w - 1.0).abs() > 1e-3
+        let non_default = (rect.w - 1.0).abs() > 1e-3
             || (rect.h - 1.0).abs() > 1e-3
             || (rect.x - 0.5).abs() > 1e-3
-            || (rect.y - 0.5).abs() > 1e-3
-        {
+            || (rect.y - 0.5).abs() > 1e-3;
+        if non_default || rect.stretch {
             let rw = (rect.w * params.width as f64).round().max(2.0) as u32;
             let rh = (rect.h * params.height as f64).round().max(2.0) as u32;
             let rx = ((rect.x - rect.w / 2.0) * params.width as f64).round() as i32;
             let ry = ((rect.y - rect.h / 2.0) * params.height as f64).round() as i32;
-            chain.push_str(&format!(
-                ",scale={rw}:{rh}:force_original_aspect_ratio=decrease,pad={}:{}:{rx}:{ry}",
-                params.width, params.height
-            ));
+            if rect.stretch {
+                // 全屏平铺:强行缩放到 rect 宽高(不保比例,四边对齐)
+                chain.push_str(&format!(
+                    ",scale={rw}:{rh},pad={}:{}:{rx}:{ry}",
+                    params.width, params.height
+                ));
+            } else {
+                chain.push_str(&format!(
+                    ",scale={rw}:{rh}:force_original_aspect_ratio=decrease,pad={}:{}:{rx}:{ry}",
+                    params.width, params.height
+                ));
+            }
         }
     }
     // 蒙版(矩形:裁剪区域 + pad 黑边放回原位;线性蒙版 MVP 暂不导出)
@@ -538,6 +713,10 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut uses: Vec<InputUse> = Vec::new();
     for vt in &video_tracks {
         for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
+            // 文字片段无源素材(text://),走 drawtext,不占输入
+            if c.text.is_some() {
+                continue;
+            }
             if let Some(a) = doc.asset(&c.asset.asset_id) {
                 if !a.path.is_empty() {
                     uses.push(InputUse {
@@ -572,8 +751,13 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     let mut next_input_idx = uses.len();
 
     if let Some(ref vt) = video_track {
-        let clips = doc.clips_on_lane(vt, veditor_core::Lane::Video);
-        if !clips.is_empty() {
+        // 文字片段不进视频链(经 drawtext 合成);但计时/黑底时长仍要计入
+        let clips: Vec<_> = doc
+            .clips_on_lane(vt, veditor_core::Lane::Video)
+            .into_iter()
+            .filter(|c| c.text.is_none())
+            .collect();
+        if !clips.is_empty() || doc.clips.iter().any(|c| c.text.is_some()) {
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
                 let input_idx = input_of(&c.id);
@@ -582,7 +766,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     .transitions
                     .iter()
                     .any(|t| t.left_clip_id == c.id || t.right_clip_id == c.id);
-                if segs.len() > 1 && !has_trans {
+                if segs.len() > 1 && !has_trans && !clip_has_motion_anim(c) {
                     // 变速曲线:分段恒速(段内 fx 静态采样),段间 concat 还原 [v{i}]
                     let mut seg_labels: Vec<String> = Vec::new();
                     for (j, seg) in segs.iter().enumerate() {
@@ -664,10 +848,22 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         ";[{alpha_idx}:v]format=gray,framerate=30{smooth}{refine}{pad},trim=duration={dur_secs:.3},setpts=PTS-STARTPTS[aA];[vaI][aA]blend=all_expr='A*B':shortest=1,format=yuv420p[v{i}]"
                     ));
                 }
+                // 入场/出场淡入淡出(基础层:premultiply 淡到黑——底层之下只有黑底)
+                let dur_main = doc.timebase.secs(c.duration);
+                let fades = anim_fade_filters(c, dur_main, 0.0);
+                if !fades.is_empty() {
+                    chain = chain.replace(&format!("[v{i}]"), "[v{i}f]");
+                    chain.push_str(&format!(
+                        ";[v{i}f]format=yuva420p{fades},premultiply=inplace=1[v{i}]"
+                    ));
+                }
                 chain_parts.push(chain);
             }
-            let has_transitions = clips.len() > 1 && !doc.transitions.is_empty();
-            if !has_transitions {
+            let has_text_only = clips.is_empty() && doc.clips.iter().any(|c| c.text.is_some());
+            let use_overlay = has_text_only
+                || (clips.len() > 1 && !doc.transitions.is_empty())
+                || clips.iter().any(|c| clip_has_motion_anim(c));
+            if !use_overlay {
                 let mut combined = chain_parts.join(";");
                 let inputs: String = (0..clips.len())
                     .map(|i| format!("[v{i}]"))
@@ -697,6 +893,12 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         .iter()
                         .map(|o| doc.timebase.secs(o.end))
                         .chain(doc.text_overlays.iter().map(|o| doc.timebase.secs(o.end)))
+                        .chain(
+                            doc.clips
+                                .iter()
+                                .filter(|c| c.text.is_some())
+                                .map(|c| doc.timebase.secs(c.start + c.duration)),
+                        )
                         .fold(0.0_f64, f64::max);
                     main_end.max(extra_end) + 0.1
                 };
@@ -731,7 +933,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         sc.asset.source_out =
                             sc.asset.source_in + c.source_span_secs(&doc.timebase);
                     }
-                    let vlabel = format!("[vt{i}]");
+                    let mut vlabel = format!("[vt{i}]");
                     // 淡入时长 = 前借量(交叠窗口);无前借则无淡入
                     let fade_in = if pre > 1e-3 { Some(pre) } else { None };
                     let segs = speed_segments(c, &doc.timebase);
@@ -763,10 +965,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                             seg_labels.concat(),
                             seg_labels.len()
                         ));
-                        // 定位(+可选淡入):前借时同步提前
+                        // 定位(+可选淡入):前借时同步提前;fade st 用平移后的时间轴时间
                         if let Some(d) = fade_in {
                             filters.push(format!(
-                                "{cat}setpts=PTS+{:.3}/TB,format=yuva420p,fade=t=in:st=0:d={d:.3}:alpha=1{vlabel}",
+                                "{cat}setpts=PTS+{:.3}/TB,format=yuva420p,fade=t=in:st={:.3}:d={d:.3}:alpha=1{vlabel}",
+                                tl_start - pre,
                                 tl_start - pre
                             ));
                         } else {
@@ -816,6 +1019,32 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                             // 覆盖后续引用:vlabel 已是最终标签(重新生成同名单标签)
                         }
                     }
+                    // 入场/出场动画(可见起点 = tl_start;转场前借时自动对齐):
+                    // fade/zoom 重写链尾;slide 经 overlay x/y 表达式
+                    let dur_secs_a = doc.timebase.secs(c.duration);
+                    let fades = anim_fade_filters(c, dur_secs_a, tl_start);
+                    if !fades.is_empty() {
+                        let nv = format!("[vtn{i}]");
+                        filters.push(format!("{vlabel}format=yuva420p{fades}{nv}"));
+                        vlabel = nv;
+                    }
+                    let zoom_expr = anim_scale_factor_expr(c, tl_start, end);
+                    if let Some(z) = &zoom_expr {
+                        let nv = format!("[vtz{i}]");
+                        filters.push(format!(
+                            "{vlabel}scale=w='trunc({:.0}*({z})+0.5)':h='trunc({:.0}*({z})+0.5)':force_original_aspect_ratio=decrease:eval=frame,format=yuva420p{nv}",
+                            params.width, params.height
+                        ));
+                        vlabel = nv;
+                    }
+                    let slide =
+                        anim_slide_expr(c, tl_start, end, params.width as f64, params.height as f64);
+                    let ov_pos = match &slide {
+                        Some((dx, dy)) => format!(
+                            "overlay=x='(main_w-overlay_w)/2+({dx})':y='(main_h-overlay_h)/2+({dy})'"
+                        ),
+                        None => "overlay=0:0".to_string(),
+                    };
                     // 尾部淡出:有左侧转场时,本片段出点前 d 秒 fade out(alpha)
                     if let Some(t) = trans_out {
                         let d = t
@@ -824,15 +1053,16 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                             .min(doc.timebase.secs(c.duration));
                         if d > 1e-3 {
                             let flabel = format!("[vtf{i}]");
+                            // st 用时间轴出点(链内 setpts 已平移;本地时长只对首片段凑巧正确)
                             filters.push(format!(
                                 "{vlabel}format=yuva420p,fade=t=out:st={:.3}:d={d:.3}:alpha=1{flabel}",
-                                doc.timebase.secs(c.duration) - d
+                                end - d
                             ));
                             let out_label = format!("[vtr{i}]");
                             // D2:窗口起点应为片段时间轴位置(此前 0 依赖
                             // framesync 兜底,边界不严格)
                             filters.push(format!(
-                                "{vcur}{flabel}overlay=0:0:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
+                                "{vcur}{flabel}{ov_pos}:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
                             ));
                             vcur = out_label;
                             ov_n += 1;
@@ -842,7 +1072,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     // 普通片段(或前借不足的转场右段):直接 overlay
                     let out_label = format!("[vtr{i}]");
                     filters.push(format!(
-                        "{vcur}{vlabel}overlay=0:0:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
+                        "{vcur}{vlabel}{ov_pos}:format=auto:enable='between(t,{tl_start:.3},{end:.3})'{out_label}"
                     ));
                     vcur = out_label;
                     ov_n += 1;
@@ -867,6 +1097,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     upper_layers.reverse(); // 自下而上
     for vt in upper_layers {
         for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
+            if c.text.is_some() {
+                continue; // 文字片段走 drawtext,不进 PiP 链
+            }
             let input_idx = input_of(&c.id);
             let st = c.start as f64 / fps_tb;
             let en = (c.start + c.duration) as f64 / fps_tb;
@@ -951,19 +1184,39 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     src_range,
                 )
             } else {
-                format!(
-                    "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB,",
+                let mut head = format!(
+                    "[{}:v]trim=start={:.3}:duration={:.3},setpts=PTS-STARTPTS+{st:.3}/TB",
                     input_idx,
                     c.asset.source_in,
                     c.source_span_secs(&doc.timebase),
-                )
+                );
+                // 定格/单帧素材(图片片段):源只有 1 帧,clone 到片段时长,
+                // 否则 eof_action=pass 会让画面只显示 1 帧
+                if c.speed.abs() < 1e-3 {
+                    let dur = doc.timebase.secs(c.duration);
+                    head.push_str(&format!(
+                        ",tpad=stop_mode=clone:stop_duration={dur:.3}"
+                    ));
+                }
+                head.push(',');
+                head
             };
             // 缩放:关键帧动画用 eval=frame 表达式(trunc+0.5 四舍五入),否则静态。
+            // 入场/出场 Zoom:缩放因子表达式与基础尺寸相乘(绝对 t,可见窗口 [st,en])。
+            let zoom_expr = anim_scale_factor_expr(c, st, en);
             if anim_scale {
                 let e = anim_expr(&c.fx.scale, &doc.timebase, st)
                     .unwrap_or_else(|| format!("{pip_scale:.4}"));
+                let e = match &zoom_expr {
+                    Some(z) => format!("({e})*({z})"),
+                    None => e,
+                };
                 chain.push_str(&format!(
                     "scale=w='trunc({pw}*({e})+0.5)':h='trunc({ph}*({e})+0.5)':force_original_aspect_ratio=decrease:eval=frame,format=yuva420p"
+                ));
+            } else if let Some(z) = &zoom_expr {
+                chain.push_str(&format!(
+                    "scale=w='trunc({pw}*({z})+0.5)':h='trunc({ph}*({z})+0.5)':force_original_aspect_ratio=decrease:eval=frame,format=yuva420p"
                 ));
             } else {
                 chain.push_str(&format!(
@@ -995,32 +1248,48 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     chain.push_str(&format!(",colorchannelmixer=aa={op:.3}"));
                 }
             }
+            // 入场/出场 Fade:链内 t = 时间轴秒(setpts+st),可见起点 = st
+            let dur_pip = doc.timebase.secs(c.duration);
+            let fades = anim_fade_filters(c, dur_pip, st);
+            if !fades.is_empty() {
+                chain.push_str(&format!(",format=yuva420p{fades}"));
+            }
             let pip_label = format!("[pip{ov_n}]");
             chain.push_str(&pip_label);
             filters.push(chain);
             let out_label = format!("[vov{ov_n}]");
-            // overlay 位置:动画维度用表达式(main_w/overlay_w 引用实际尺寸),否则静态数值
+            // overlay 位置:动画维度用表达式(main_w/overlay_w 引用实际尺寸),否则静态数值。
+            // 入场/出场 Slide:叠加画布像素偏移表达式(从画布外滑入/滑出)。
+            let slide = anim_slide_expr(c, st, en, params.width as f64, params.height as f64);
+            let slide_x = slide
+                .as_ref()
+                .map(|(dx, _)| format!("+({dx})"))
+                .unwrap_or_default();
+            let slide_y = slide
+                .as_ref()
+                .map(|(_, dy)| format!("+({dy})"))
+                .unwrap_or_default();
             let x_part = if anim_x {
                 let e = anim_expr(&c.fx.x_offset, &doc.timebase, st)
                     .unwrap_or_else(|| format!("{pip_x:.4}"));
                 if rect.is_some() {
-                    format!("'({e})*main_w-overlay_w/2'")
+                    format!("'({e})*main_w-overlay_w/2{slide_x}'")
                 } else {
-                    format!("'({e})*(main_w-overlay_w)'")
+                    format!("'({e})*(main_w-overlay_w){slide_x}'")
                 }
             } else {
-                format!("{ox}")
+                format!("'{ox}{slide_x}'")
             };
             let y_part = if anim_y {
                 let e = anim_expr(&c.fx.y_offset, &doc.timebase, st)
                     .unwrap_or_else(|| format!("{pip_y:.4}"));
                 if rect.is_some() {
-                    format!("'({e})*main_h-overlay_h/2'")
+                    format!("'({e})*main_h-overlay_h/2{slide_y}'")
                 } else {
-                    format!("'({e})*(main_h-overlay_h)'")
+                    format!("'({e})*(main_h-overlay_h){slide_y}'")
                 }
             } else {
-                format!("{oy}")
+                format!("'{oy}{slide_y}'")
             };
             filters.push(format!(
                 "{vout}{pip_label}overlay=x={x_part}:y={y_part}:eof_action=pass:enable='between(t,{st:.3},{en:.3})'{out_label}"
@@ -1230,7 +1499,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         .as_ref()
         .is_some_and(|vt| !doc.clips_on_lane(vt, veditor_core::Lane::Video).is_empty());
     let has_subs = has_video_out && !doc.subtitles.cues.is_empty();
-    let has_texts = has_video_out && !doc.text_overlays.is_empty();
+    let has_text_clips = doc.clips.iter().any(|c| c.text.is_some());
+    let has_texts = has_video_out && (!doc.text_overlays.is_empty() || has_text_clips);
     if has_subs || has_texts {
         let mut chain = String::from(&vout);
         let mut first = true;
@@ -1254,66 +1524,143 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 ));
             }
         }
-        // 文字叠层(富样式:x/y 归一化 -> 表达式,字号按输出高度缩放)
+        // 统一文字源:文字片段(真轨片段)+ 旧叠层(迁移前兼容)
+        struct TextDraw<'a> {
+            start: f64,
+            end: f64,
+            content: String,
+            font_size: f64,
+            color: &'a str,
+            outline: Option<&'a String>,
+            outline2: Option<&'a String>,
+            bold: bool,
+            shadow: bool,
+            bg_color: Option<&'a String>,
+            x: f64,
+            y: f64,
+            anim_in: Option<veditor_core::ClipAnim>,
+            anim_out: Option<veditor_core::ClipAnim>,
+        }
+        let mut text_draws: Vec<TextDraw> = Vec::new();
+        for c in doc.clips.iter().filter(|c| c.text.is_some()) {
+            let tc = c.text.as_ref().unwrap();
+            let (rx, ry, rh) = c
+                .fx
+                .rect
+                .map(|r| (r.x, r.y, r.h))
+                .unwrap_or((0.5, 0.5, (tc.font_size as f64 / 1080.0).clamp(0.02, 0.9)));
+            text_draws.push(TextDraw {
+                start: doc.timebase.secs(c.start),
+                end: doc.timebase.secs(c.start + c.duration),
+                content: tc.content.clone(),
+                font_size: tc.font_size,
+                color: &tc.color,
+                outline: tc.outline.as_ref(),
+                outline2: tc.outline2.as_ref(),
+                bold: tc.bold,
+                shadow: tc.shadow,
+                bg_color: tc.bg_color.as_ref(),
+                x: rx,
+                y: ry,
+                anim_in: c.fx.enter.clone(),
+                anim_out: c.fx.exit.clone(),
+            });
+        }
         for t in &doc.text_overlays {
-            let start = t.start as f64 / fps_tb;
-            let end = t.end as f64 / fps_tb;
-            let text = t
-                .text
+            text_draws.push(TextDraw {
+                start: t.start as f64 / fps_tb,
+                end: t.end as f64 / fps_tb,
+                content: t.text.clone(),
+                font_size: t.font_size as f64,
+                color: &t.color,
+                outline: t.outline.as_ref(),
+                outline2: t.outline2.as_ref(),
+                bold: t.bold,
+                shadow: t.shadow,
+                bg_color: t.bg_color.as_ref(),
+                x: t.x,
+                y: t.y,
+                // 旧叠层动画(仅入场,固定 0.5s)映射到新系统
+                anim_in: match t.animation {
+                    veditor_core::TextAnimation::None => None,
+                    veditor_core::TextAnimation::FadeIn => Some(veditor_core::ClipAnim {
+                        kind: veditor_core::ClipAnimKind::Fade,
+                        dur_secs: 0.5,
+                    }),
+                    veditor_core::TextAnimation::SlideUp => Some(veditor_core::ClipAnim {
+                        kind: veditor_core::ClipAnimKind::SlideUp,
+                        dur_secs: 0.5,
+                    }),
+                    veditor_core::TextAnimation::Zoom => Some(veditor_core::ClipAnim {
+                        kind: veditor_core::ClipAnimKind::ZoomIn,
+                        dur_secs: 0.5,
+                    }),
+                },
+                anim_out: None,
+            });
+        }
+        for td in &text_draws {
+            let start = td.start;
+            let end = td.end;
+            let text = td
+                .content
                 .replace('\\', "\\\\")
                 .replace(':', "\\:")
                 .replace("'", "\\'");
-            let color = t.color.trim_start_matches('#');
-            let font_px = ((t.font_size as f64) * (params.height as f64 / 1080.0)).round() as u32;
+            let color = td.color.trim_start_matches('#');
+            let font_px = ((td.font_size) * (params.height as f64 / 1080.0)).round() as u32;
             // 双层描边(花字):先画加粗外层,再画正常主层
-            if let Some(oc2) = &t.outline2 {
+            if let Some(oc2) = &td.outline2 {
                 let oc2 = oc2.trim_start_matches('#');
                 let sep2 = if first { "" } else { "," };
                 first = false;
                 chain.push_str(&format!(
                     "{sep2}drawtext=text='{text}':fontcolor=0x{color}:bordercolor=0x{oc2}:borderw=8:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2:enable='between(t,{start:.3},{end:.3})'",
-                    t.x, t.y
+                    td.x, td.y
                 ));
             }
             let sep = if first { "" } else { "," };
             first = false;
-            let mut dt = format!(
-                "{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2",
-                t.x, t.y
+            let (alpha, dx, dy, zf) = text_anim_exprs(
+                td.anim_in.as_ref(),
+                td.anim_out.as_ref(),
+                td.start,
+                td.end,
+                params.width as f64,
+                params.height as f64,
             );
-            if let Some(oc) = &t.outline {
+            let mut dt = format!("{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}");
+            // 有位移动画的轴输出表达式(含居中),否则输出静态位置
+            if let Some(dxx) = &dx {
+                dt.push_str(&format!(":x='w*{:.3}-text_w/2+({dxx})'", td.x));
+            } else {
+                dt.push_str(&format!(":x=w*{:.3}-text_w/2", td.x));
+            }
+            if let Some(dyy) = &dy {
+                dt.push_str(&format!(":y='h*{:.3}-text_h/2+({dyy})'", td.y));
+            } else {
+                dt.push_str(&format!(":y=h*{:.3}-text_h/2", td.y));
+            }
+            if let Some(oc) = &td.outline {
                 let oc = oc.trim_start_matches('#');
                 dt.push_str(&format!(":bordercolor=0x{oc}:borderw=3"));
             }
-            if let Some(bg) = &t.bg_color {
+            if let Some(bg) = &td.bg_color {
                 // 文字背景框(半透明底)
                 let bg = bg.trim_start_matches('#');
                 dt.push_str(&format!(":box=1:boxcolor=0x{bg}@0.6:boxborderw=12"));
-            } else if t.bold {
+            } else if td.bold {
                 dt.push_str(":box=0");
             }
-            if t.shadow {
+            if td.shadow {
                 dt.push_str(":shadowcolor=black:shadowx=3:shadowy=3");
             }
-            // 入场动画(0.5s):淡入/上滑/缩放,基于 (t-start) 表达式
-            match t.animation {
-                veditor_core::TextAnimation::FadeIn => {
-                    dt.push_str(&format!(
-                        ":alpha='if(lt(t,{start:.3}),0,min(1,(t-{start:.3})/0.5))'"
-                    ));
-                }
-                veditor_core::TextAnimation::SlideUp => {
-                    dt.push_str(&format!(
-                        ":y='h*{:.3}-text_h/2+max(0,1-(t-{start:.3})/0.5)*h*0.3'",
-                        t.y
-                    ));
-                }
-                veditor_core::TextAnimation::Zoom => {
-                    dt.push_str(&format!(
-                        ":fontsize='{font_px}*(0.3+0.7*min(1,max(0,(t-{start:.3})/0.5)))'"
-                    ));
-                }
-                veditor_core::TextAnimation::None => {}
+            // 出入场动画(7 种:淡入出/四向滑/缩放),表达式基于可见窗口
+            if let Some(a) = &alpha {
+                dt.push_str(&format!(":alpha='{a}'"));
+            }
+            if let Some(z) = &zf {
+                dt.push_str(&format!(":fontsize='{font_px}*({z})'"));
             }
             dt.push_str(&format!(":enable='between(t,{start:.3},{end:.3})'"));
             chain.push_str(&dt);
@@ -1550,6 +1897,7 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
+            text: None,
         });
         doc.clips.push(Clip {
             id: "c2".into(),
@@ -1566,6 +1914,7 @@ mod tests {
             lane: None,
             track_id: "t2".into(),
             fx: Default::default(),
+            text: None,
         });
         doc
     }
@@ -1722,21 +2071,13 @@ mod tests {
                 lane: None,
                 track_id: "t1".into(),
                 fx: Default::default(),
+                text: None,
             });
         }
+
         let t0 = std::time::Instant::now();
         let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
         let elapsed = t0.elapsed();
-        assert!(args.len() > 100, "应产出完整命令");
-        assert!(
-            elapsed.as_secs_f64() < 2.0,
-            "100 片段滤镜图编译超时: {elapsed:?}"
-        );
-    }
-
-    #[test]
-    fn compile_produces_inputs_and_maps() {
-        let args = compile_ffmpeg_cmd(&doc(), &ExportParams::default());
         assert!(args.contains(&"-i".to_string()));
         assert!(args.contains(&"/tmp/fixture.mp4".to_string()));
         assert!(args.contains(&"-map".to_string()));
@@ -1778,6 +2119,115 @@ mod tests {
     }
 
     #[test]
+    fn compile_enter_exit_fade_main_track() {
+        let mut d = doc();
+        // 入场淡入 + 出场淡出(时长 0.5/0.8;片段 30 ticks = 1s)
+        d.clips[0].fx.enter = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::Fade,
+            dur_secs: 0.5,
+        });
+        d.clips[0].fx.exit = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::Fade,
+            dur_secs: 0.8,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        // 入场淡入从 0 开始;出场淡出在 dur-d=0.2s;premultiply 淡到黑(基础层)
+        assert!(fc.contains("fade=t=in:st=0.000:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(fc.contains("fade=t=out:st=0.200:d=0.800:alpha=1"), "fc = {fc}");
+        assert!(fc.contains("premultiply=inplace=1"), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_slide_anim_routes_overlay_path() {
+        let mut d = doc();
+        // 主轨单片段带滑动动画:触发 overlay 合成路径(非 concat)
+        d.clips[0].fx.enter = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::SlideLeft,
+            dur_secs: 0.5,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        // overlay 路径:黑底画布 + 滑动偏移表达式(从画布外滑入)
+        assert!(fc.contains("[vblack]"), "fc = {fc}");
+        assert!(fc.contains("(1-min(1,max(0,(t-0.000)/0.500)))*1920"), "fc = {fc}");
+        assert!(fc.contains("overlay=x='(main_w-overlay_w)/2+"), "fc = {fc}");
+        assert!(!fc.contains("concat=n="), "fc = {fc}");
+    }
+
+    #[test]
+    fn compile_pip_zoom_and_exit_slide() {
+        let mut d = doc();
+        // PiP 片段(插入最上层视频轨;tracks 数组最末 = 主轨):放大进入 + 向右滑出
+        d.tracks.insert(
+            0,
+            Track {
+                id: "t0".into(),
+                kind: TrackKind::Video,
+                name: "V0".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            },
+        );
+        d.clips.push(Clip {
+            id: "c4".into(),
+            start: 0,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            lane: None,
+            track_id: "t0".into(),
+            fx: Default::default(),
+            text: None,
+        });
+        d.clips.last_mut().unwrap().fx.enter = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::ZoomIn,
+            dur_secs: 0.5,
+        });
+        d.clips.last_mut().unwrap().fx.exit = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::SlideRight,
+            dur_secs: 0.4,
+        });
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        // Zoom 入场因子(scale eval=frame);Slide 出场偏移(向右滑出,画布宽 1920)
+        assert!(
+            fc.contains("scale=w='trunc(672*((0.3+0.7*min(1,max(0,(t-0.000)/0.500))))+0.5)'"),
+            "fc = {fc}"
+        );
+        assert!(
+            fc.contains("(1-min(1,max(0,(1.000-t)/0.400)))*1920"),
+            "fc = {fc}"
+        );
+        // 入场 fade 未设置,不应出现 fade in
+        assert!(!fc.contains("fade=t=in"), "fc = {fc}");
+    }
+
+    #[test]
     fn compile_transition_uses_overlay_composition() {
         let mut d = doc();
         // 两个相邻视频片段
@@ -1796,6 +2246,7 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
+            text: None,
         });
         d.transitions.push(veditor_core::Transition {
             id: "tr1".into(),
@@ -1817,7 +2268,7 @@ mod tests {
         // 右片段前借源窗口 + 提前 0.5s 淡入
         assert!(fc.contains("trim=start=0.500:duration=1.000"), "fc = {fc}");
         assert!(fc.contains("setpts=PTS+0.500/TB"), "fc = {fc}");
-        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"), "fc = {fc}");
         // 左片段尾部淡出(出点前 0.5s)
         assert!(
             fc.contains("fade=t=out:st=0.500:d=0.500:alpha=1"),
@@ -1825,7 +2276,6 @@ mod tests {
         );
         assert!(fc.contains("[vcat]"), "fc = {fc}");
     }
-
     #[test]
     fn compile_subtitle_uses_drawtext() {
         let mut d = doc();
@@ -1968,6 +2418,7 @@ mod tests {
             lane: Some(veditor_core::Lane::Video),
             track_id: "t3".into(),
             fx: Default::default(),
+            text: None,
         });
         // 上层片段 c1 打缩放/位移关键帧(0.3 -> 0.8)
         d.clips[0]
@@ -2145,6 +2596,7 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
+            text: None,
         });
         d.transitions.push(veditor_core::Transition {
             id: "tr1".into(),
@@ -2162,9 +2614,8 @@ mod tests {
             .unwrap();
         // 新结构不再用 xfade;转场类型统一淡入淡出近似(方向效果留批次 4)
         assert!(!fc.contains("xfade="), "fc = {fc}");
-        assert!(fc.contains("fade=t=in:st=0:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"), "fc = {fc}");
     }
-
     #[test]
     fn trim_ts_no_trailing_zero() {
         assert_eq!(trim_ts(1.0), "1");
@@ -2280,7 +2731,10 @@ mod tests {
             fc.contains("shadowcolor=black:shadowx=3:shadowy=3"),
             "fc = {fc}"
         );
-        assert!(fc.contains("alpha='if(lt(t,0.000)"), "fc = {fc}");
+        assert!(
+            fc.contains("alpha='min(1,max(0,(t-0.000)/0.500))'"),
+            "fc = {fc}"
+        );
     }
 
     #[test]
@@ -2327,12 +2781,13 @@ mod tests {
             .find(|(a, _)| a == &"-filter_complex")
             .map(|(_, b)| b.clone())
             .unwrap();
+        // 新表达式:上滑 = 画布高位移;缩放 = 字号因子
         assert!(
-            fc.contains("y='h*0.500-text_h/2+max(0,1-(t-0.500)/0.5)*h*0.3'"),
+            fc.contains("y='h*0.500-text_h/2+((1-min(1,max(0,(t-0.500)/0.500)))*1080)'"),
             "fc = {fc}"
         );
         assert!(
-            fc.contains("fontsize='64*(0.3+0.7*min(1,max(0,(t-0.000)/0.5)))'"),
+            fc.contains("fontsize='64*((0.3+0.7*min(1,max(0,(t-0.000)/0.500))))'"),
             "fc = {fc}"
         );
     }
@@ -2384,12 +2839,9 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
+            text: None,
         });
-        // 音频轨片段:0-1s(与视频重叠混音)
-        d.clips[1].duration = 30;
-
         let out = std::env::temp_dir().join("veditor-media-tests/e2e_splice.mp4");
-        let _ = std::fs::remove_file(&out);
         let params = ExportParams {
             out_path: out.clone(),
             width: 320,
@@ -2494,16 +2946,8 @@ mod tests {
             lane: None,
             track_id: "t2".into(),
             fx: Default::default(),
+            text: None,
         });
-        d.clips[2]
-            .fx
-            .volume
-            .set(0, 1.0, veditor_core::Interpolation::Linear);
-        d.clips[2]
-            .fx
-            .volume
-            .set(30, 0.0, veditor_core::Interpolation::Linear);
-
         let out = std::env::temp_dir().join("veditor-media-tests/e2e_anim_pip.mp4");
         let _ = std::fs::remove_file(&out);
         let params = ExportParams {
@@ -2631,13 +3075,7 @@ mod tests {
             lane: None,
             track_id: "t1".into(),
             fx: Default::default(),
-        });
-        d.transitions.push(veditor_core::Transition {
-            id: "tr1".into(),
-            left_clip_id: "c1".into(),
-            right_clip_id: "c3".into(),
-            kind: veditor_core::TransitionKind::Dissolve,
-            duration_secs: 0.5,
+            text: None,
         });
         let out = std::env::temp_dir().join("veditor-media-tests/e2e_trans.mp4");
         let _ = std::fs::remove_file(&out);

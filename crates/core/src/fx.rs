@@ -285,6 +285,10 @@ pub struct FxRect {
     pub w: f64,
     /// 高(相对画面高,>0)。
     pub h: f64,
+    /// 强行拉伸到 rect 宽高(不保比例;"全屏平铺"用)。
+    /// false/缺省 = 在 rect 框内等比 contain(与旧行为一致)。
+    #[serde(default)]
+    pub stretch: bool,
 }
 
 impl Default for FxRect {
@@ -294,6 +298,7 @@ impl Default for FxRect {
             y: 0.5,
             w: 1.0,
             h: 1.0,
+            stretch: false,
         }
     }
 }
@@ -334,6 +339,53 @@ pub struct ClipFx {
     /// 时序平滑(导出 tmix)自动生效。
     #[serde(default)]
     pub alpha_matting: Option<AlphaMatting>,
+    /// 入场动画(片段开头 dur_secs 内的预设动画;None = 无)。
+    #[serde(default)]
+    pub enter: Option<ClipAnim>,
+    /// 出场动画(片段结尾 dur_secs 内的预设动画;None = 无)。
+    #[serde(default)]
+    pub exit: Option<ClipAnim>,
+}
+
+/// 片段入场/出场动画种类。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum ClipAnimKind {
+    /// 淡入/淡出。
+    Fade,
+    /// 入场:从右侧滑入;出场:向左滑出。
+    SlideLeft,
+    /// 入场:从左侧滑入;出场:向右滑出。
+    SlideRight,
+    /// 入场:从下方滑入;出场:向上滑出。
+    SlideUp,
+    /// 入场:从上方滑入;出场:向下滑出。
+    SlideDown,
+    /// 入场:放大进入(0.3→1);出场:放大消失(1→2)。
+    ZoomIn,
+    /// 入场:缩小进入(2→1);出场:缩小消失(1→0.3)。
+    ZoomOut,
+}
+
+/// 入场/出场动画预设(种类 + 时长)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ClipAnim {
+    pub kind: ClipAnimKind,
+    /// 动画时长(秒,0.1~5)。
+    #[serde(default = "default_anim_dur")]
+    pub dur_secs: f64,
+}
+
+fn default_anim_dur() -> f64 {
+    0.5
+}
+
+impl Default for ClipAnim {
+    fn default() -> Self {
+        Self {
+            kind: ClipAnimKind::Fade,
+            dur_secs: default_anim_dur(),
+        }
+    }
 }
 
 /// AI 人像抠像(RVM alpha 序列叠层)。

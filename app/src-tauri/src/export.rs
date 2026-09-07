@@ -31,21 +31,22 @@ pub(crate) fn export_video(
     use veditor_export::ExportProgress;
     let (args, total_secs) = {
         let inner = state.inner.lock().unwrap();
+        // C9:队列任务带快照时按入队时刻的文档编译,不受排队期间剪辑影响
+        let doc = req
+            .doc_snapshot
+            .clone()
+            .unwrap_or_else(|| inner.doc.clone());
+        // 合成分辨率:请求未显式指定(0)时用工程画布尺寸 —— 预览分辨率即导出分辨率
         let params = veditor_export::ExportParams {
             out_path: PathBuf::from(&req.out_path),
-            width: req.width,
-            height: req.height,
+            width: if req.width > 0 { req.width } else { doc.width },
+            height: if req.height > 0 { req.height } else { doc.height },
             fps: req.fps,
             crf: req.crf,
             vcodec: req.vcodec.unwrap_or_else(|| "libx264".into()),
             loudness_normalize: req.loudness_normalize,
             ..Default::default()
         };
-        // C9:队列任务带快照时按入队时刻的文档编译,不受排队期间剪辑影响
-        let doc = req
-            .doc_snapshot
-            .clone()
-            .unwrap_or_else(|| inner.doc.clone());
         // 进度分母 = 时间轴总长(所有片段中最晚的出点)
         let total = doc
             .clips

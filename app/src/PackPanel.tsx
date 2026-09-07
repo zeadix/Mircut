@@ -151,7 +151,7 @@ function PackPanelInner({ doc, playheadTicks, onRefresh, onStatus }: Props) {
                     title={`${String(item.name ?? "")} — 点击应用`}
                     style={{
                       cursor: "pointer",
-                      borderRadius: 6,
+                      borderRadius: "var(--radius-ctl)",
                       border: "1px solid var(--border)",
                       height: 56,
                       ...itemThumb(p, item),
@@ -165,7 +165,7 @@ function PackPanelInner({ doc, playheadTicks, onRefresh, onStatus }: Props) {
                         color: "var(--text)",
                         background: "rgba(0,0,0,0.45)",
                         padding: "1px 4px",
-                        borderRadius: 4,
+                        borderRadius: "var(--radius-ctl)",
                         width: "fit-content",
                         maxWidth: "100%",
                         overflow: "hidden",

@@ -23,8 +23,8 @@ pub use commands_m2::{
     SetTransition, TagAsset,
 };
 pub use fx::{
-    bezier_eval, AlphaMatting, Animatable, BlendMode, ChromaKey, ClipFx, ColorGrade, FxRect,
-    Interpolation, Keyframe, Mask, MaskKind, Transition, TransitionKind,
+    bezier_eval, AlphaMatting, Animatable, BlendMode, ChromaKey, ClipAnim, ClipAnimKind, ClipFx,
+    ColorGrade, FxRect, Interpolation, Keyframe, Mask, MaskKind, Transition, TransitionKind,
 };
 
 /// 有理数时间基(如 30fps -> 1/30)。
@@ -92,6 +92,52 @@ pub struct Clip {
     /// 特效属性(不透明度/缩放/旋转/位移/调色/音量动画)。
     #[serde(default)]
     pub fx: ClipFx,
+    /// 文字片段(Some = 文字;无源素材,asset 指向合成资产 text://…)。
+    /// 与视频同管道:时间/轨道/裁剪/出入场动画全部通用。
+    #[serde(default)]
+    pub text: Option<TextClipData>,
+}
+
+/// 文字片段内容与样式(字号为 1080p 画布基准像素)。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextClipData {
+    pub content: String,
+    #[serde(default = "default_text_font_size")]
+    pub font_size: f64,
+    #[serde(default = "default_text_color")]
+    pub color: String,
+    #[serde(default)]
+    pub outline: Option<String>,
+    #[serde(default)]
+    pub outline2: Option<String>,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub shadow: bool,
+    #[serde(default)]
+    pub bg_color: Option<String>,
+}
+
+fn default_text_font_size() -> f64 {
+    64.0
+}
+fn default_text_color() -> String {
+    "#ffffff".into()
+}
+
+impl Default for TextClipData {
+    fn default() -> Self {
+        Self {
+            content: "双击编辑".into(),
+            font_size: default_text_font_size(),
+            color: default_text_color(),
+            outline: None,
+            outline2: None,
+            bold: false,
+            shadow: false,
+            bg_color: None,
+        }
+    }
 }
 
 impl Clip {
@@ -291,6 +337,11 @@ pub struct Document {
     pub tracks: Vec<Track>,
     pub clips: Vec<Clip>,
     pub assets: Vec<Asset>,
+    /// 合成画布分辨率(预览舞台与导出画面的共同真源;片段 fx.rect 相对它归一化)。
+    #[serde(default = "default_comp_width")]
+    pub width: u32,
+    #[serde(default = "default_comp_height")]
+    pub height: u32,
     /// 片段间转场。
     #[serde(default)]
     pub transitions: Vec<Transition>,
@@ -308,6 +359,13 @@ pub struct Document {
     pub image_overlays: Vec<ImageOverlay>,
 }
 
+fn default_comp_width() -> u32 {
+    1920
+}
+fn default_comp_height() -> u32 {
+    1080
+}
+
 impl Default for Document {
     fn default() -> Self {
         Self {
@@ -315,6 +373,8 @@ impl Default for Document {
             tracks: Vec::new(),
             clips: Vec::new(),
             assets: Vec::new(),
+            width: default_comp_width(),
+            height: default_comp_height(),
             transitions: Vec::new(),
             subtitles: SubtitleTrack::default(),
             text_overlays: Vec::new(),
@@ -760,6 +820,7 @@ impl Command for SplitClip {
             muted: left.muted,
             lane: left.lane,
             fx: left.fx.clone(),
+            text: left.text.clone(),
         };
         doc.clips.push(right);
         self.right_id = Some(right_id);
@@ -851,6 +912,7 @@ mod tests {
             muted: false,
             lane: None,
             fx: Default::default(),
+            text: None,
         }
     }
 
@@ -892,6 +954,7 @@ mod tests {
             muted: false,
             lane: None,
             fx: Default::default(),
+            text: None,
         });
         doc.clips.push(Clip {
             id: "c2".into(),
@@ -908,6 +971,7 @@ mod tests {
             muted: false,
             lane: None,
             fx: Default::default(),
+            text: None,
         });
         doc.migrate_to_file_tracks();
         // 单视频轨 -> 单 File 轨;音频并入其 Audio lane

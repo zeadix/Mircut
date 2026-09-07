@@ -2,3 +2,8 @@
 app/node_modules
 app/dist
 .superpowers/
+
+# ZCode CLI 工作区
+.zcode/
+app/test-results/
+app/playwright-report/

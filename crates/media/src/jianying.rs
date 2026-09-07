@@ -165,6 +165,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 muted: false,
                 lane: Some(lane),
                 fx: Default::default(),
+                text: None,
             });
         }
     }

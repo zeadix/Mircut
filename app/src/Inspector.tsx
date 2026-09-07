@@ -133,6 +133,29 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     await onRefresh();
   }
 
+  /// 文字片段内容/样式写入(整体覆写 text)。
+  async function applyTextClip(patch: Partial<NonNullable<Clip["text"]>>) {
+    if (!clip?.text) return;
+    const { setClipText } = await import("./api");
+    await setClipText(clip.id, { ...clip.text, ...patch });
+    await onRefresh();
+  }
+
+  /// 入场/出场动画写入(kind "None" = 移除;整体覆写 fx)。
+  async function applyAnim(slot: "enter" | "exit", kind: string, durSecs: number) {
+    if (!clip) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    const fx = clip.fx ?? emptyFx();
+    if (kind === "None") {
+      delete fx[slot];
+    } else {
+      const dur = Math.min(5, Math.max(0.1, durSecs || 0.5));
+      fx[slot] = { kind, dur_secs: dur } as NonNullable<Clip["fx"]>["enter"];
+    }
+    await invoke("set_clip_fx", { clipId: clip.id, fx });
+    await onRefresh();
+  }
+
   /// 画中画参数写入:有 rect 时改矩形(高不变);否则写单帧关键帧。
   /// 已有 ≥2 帧关键帧动画时不覆盖(交给关键帧编辑器)。
   async function applyPip() {
@@ -921,6 +944,135 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </div>
       </fieldset>
 
+      {clip.text && (
+        <fieldset style={{ borderColor: "var(--border)" }}>
+          <legend>文字</legend>
+          <textarea
+            key={`txt-${clip.id}`}
+            className="ti"
+            rows={2}
+            style={{ width: "100%", resize: "vertical" }}
+            defaultValue={clip.text.content}
+            onBlur={(e) => {
+              if (e.target.value !== clip.text?.content) applyTextClip({ content: e.target.value });
+            }}
+            placeholder="文字内容"
+          />
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+            <input
+              className="ti"
+              type="color"
+              style={{ width: 32, padding: 0 }}
+              defaultValue={clip.text.color}
+              title="文字颜色"
+              onChange={(e) => applyTextClip({ color: e.target.value })}
+            />
+            <input
+              className="ti"
+              type="number"
+              style={{ width: 56 }}
+              min={12}
+              max={400}
+              step={2}
+              defaultValue={clip.text.font_size}
+              title="字号(1080p 基准像素)"
+              onBlur={(e) => {
+                const v = Math.min(400, Math.max(12, parseFloat(e.target.value) || 64));
+                if (v !== clip.text?.font_size) applyTextClip({ font_size: v });
+              }}
+            />
+            <label style={{ fontSize: 11 }}>
+              <input type="checkbox" checked={clip.text.bold} onChange={(e) => applyTextClip({ bold: e.target.checked })} /> 粗体
+            </label>
+            <label style={{ fontSize: 11 }}>
+              <input type="checkbox" checked={clip.text.shadow} onChange={(e) => applyTextClip({ shadow: e.target.checked })} /> 阴影
+            </label>
+            <label style={{ fontSize: 11 }}>
+              描边
+              <input
+                className="ti"
+                type="color"
+                style={{ width: 28, padding: 0 }}
+                defaultValue={clip.text.outline ?? "#000000"}
+                title="描边颜色"
+                onChange={(e) => applyTextClip({ outline: e.target.value })}
+              />
+            </label>
+            <label style={{ fontSize: 11 }}>
+              背景
+              <input
+                className="ti"
+                type="color"
+                style={{ width: 28, padding: 0 }}
+                defaultValue={clip.text.bg_color ?? "#000000"}
+                title="背景框颜色"
+                onChange={(e) => applyTextClip({ bg_color: e.target.value })}
+              />
+            </label>
+          </div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+            {TEXT_CLIP_STYLES.map(([name, st]) => (
+              <button key={name} className="btn sm" title="套用花字样式" onClick={() => applyTextClip(st)}>
+                {name}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6 }}>
+            位置在预览窗口拖拽调整;时长在时间轴拖拽裁剪;出入场动画在下方"动画"区
+          </div>
+        </fieldset>
+      )}
+
+      <fieldset style={{ borderColor: "var(--border)" }}>
+        <legend>动画</legend>
+        {([
+          ["enter", "入场", ENTER_ANIMS],
+          ["exit", "出场", EXIT_ANIMS],
+        ] as const).map(([slot, label, anims]) => {
+          const cur = clip.fx?.[slot];
+          const kind = cur?.kind ?? "None";
+          const dur = cur?.dur_secs ?? 0.5;
+          return (
+            <div key={slot} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, color: "var(--text-dim)", width: 28, flexShrink: 0 }}>{label}</span>
+              <select
+                className="ti"
+                style={{ width: 100 }}
+                value={kind}
+                onChange={(e) => applyAnim(slot, e.target.value, dur)}
+                title={`${label}动画(作用于片段${slot === "enter" ? "开头" : "结尾"})`}
+              >
+                {anims.map(([k, name]) => (
+                  <option key={k} value={k}>{name}</option>
+                ))}
+              </select>
+              <input
+                key={`anim-${slot}-${clip.id}-${dur}`}
+                ref={fitNumberInput}
+                className="ti"
+                type="number"
+                min={0.1}
+                max={5}
+                step={0.1}
+                defaultValue={dur}
+                disabled={kind === "None"}
+                title={`${label}时长(秒,0.1~5)`}
+                onInput={(e) => fitNumberInput(e.currentTarget)}
+                onBlur={(e) => {
+                  if (kind === "None") return;
+                  const v = Math.min(5, Math.max(0.1, parseFloat(e.target.value) || 0.5));
+                  if (v !== dur) applyAnim(slot, kind, v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+              />
+              <span style={{ fontSize: 10, color: "var(--text-dim)" }}>s</span>
+            </div>
+          );
+        })}
+      </fieldset>
+
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>转场(与右侧片段)</legend>
         {rightNeighbor ? (
@@ -964,6 +1116,45 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     </div>
   );
 }
+
+/// 数字输入自适应内容宽度:按字符数估宽并预留步进按钮区,
+/// 避免 number 输入的上下调节按钮遮挡数值(ref 与 onInput 两处调用)。
+function fitNumberInput(el: HTMLInputElement | null) {
+  if (!el) return;
+  const len = Math.max(1, el.value.length);
+  el.style.width = `${Math.max(40, len * 8 + 26)}px`;
+}
+
+/// 文字片段花字样式(套用到选中的文字片段)。
+const TEXT_CLIP_STYLES: [string, Partial<NonNullable<import("./types").Clip["text"]>>][] = [
+  ["黄字黑边", { color: "#ffd75e", outline: "#000000", outline2: undefined, bg_color: undefined, bold: true }],
+  ["白字黑边", { color: "#ffffff", outline: "#000000", outline2: undefined, bg_color: undefined }],
+  ["白字红双层", { color: "#ffffff", outline: "#000000", outline2: "#e03131", bold: true }],
+  ["字幕条", { color: "#ffffff", outline: undefined, outline2: undefined, bg_color: "#000000", bold: false }],
+  ["综艺大标题", { color: "#ffd75e", outline: "#7a2e00", outline2: "#ffffff", bold: true, font_size: 96, shadow: true, bg_color: undefined }],
+];
+
+/// 入场/出场动画画廊(kind 与 Rust ClipAnimKind 一一对应)。
+const ENTER_ANIMS: [string, string][] = [
+  ["None", "无"],
+  ["Fade", "淡入"],
+  ["SlideLeft", "从右滑入"],
+  ["SlideRight", "从左滑入"],
+  ["SlideUp", "从下滑入"],
+  ["SlideDown", "从上滑入"],
+  ["ZoomIn", "放大进入"],
+  ["ZoomOut", "缩小进入"],
+];
+const EXIT_ANIMS: [string, string][] = [
+  ["None", "无"],
+  ["Fade", "淡出"],
+  ["SlideLeft", "向左滑出"],
+  ["SlideRight", "向右滑出"],
+  ["SlideUp", "向上滑出"],
+  ["SlideDown", "向下滑出"],
+  ["ZoomIn", "放大消失"],
+  ["ZoomOut", "缩小消失"],
+];
 
 /// 转场画廊(与导出 xfade 映射一一对应)。
 const TRANSITIONS: [string, string][] = [

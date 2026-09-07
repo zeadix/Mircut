@@ -150,3 +150,12 @@ pub(crate) fn set_render_mode(mode: String, state: State<'_, AppState>) -> bool 
     };
     true
 }
+
+/// 设置合成画布分辨率(预览舞台与导出画面的共同真源;立即生效)。
+#[tauri::command]
+pub(crate) fn set_comp_size(width: u32, height: u32, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.doc.width = width.clamp(16, 8192);
+    inner.doc.height = height.clamp(16, 8192);
+    true
+}

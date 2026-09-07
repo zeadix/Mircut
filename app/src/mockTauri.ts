@@ -7,6 +7,8 @@ import type { Document } from "./types";
 
 let mockDoc: Document = {
   timebase: { num: 30, den: 1 },
+  width: 1920,
+  height: 1080,
   tracks: [
     { id: "f1", kind: "File", name: "文件轨 1", locked: false, hidden: false, muted: false },
   ],
@@ -70,6 +72,18 @@ let mockDoc: Document = {
       name: null,
       tags: ["音乐"],
     },
+    {
+      id: "a3",
+      path: "/tmp/mock-sticker.png",
+      duration_secs: 0.04,
+      has_video: true,
+      has_audio: false,
+      width: 320,
+      height: 240,
+      fps: null,
+      name: null,
+      tags: [],
+    },
   ],
   transitions: [],
   subtitles: {
@@ -83,6 +97,18 @@ let mockDoc: Document = {
 
 let markerT = 0;
 let counter = 1;
+
+/// 性能测量/测试注入:页面端可读写当前文档(window.__veditorMock)。
+if (typeof window !== "undefined") {
+  (window as unknown as { __veditorMock: unknown }).__veditorMock = {
+    get doc() {
+      return mockDoc;
+    },
+    set doc(d: Document) {
+      mockDoc = d;
+    },
+  };
+}
 
 /// 1x1 透明 PNG(base64)供缩略图 mock。
 const PIXEL_PNG =
@@ -137,21 +163,67 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       const lanes: ("Video" | "Audio")[] = [];
       if (asset?.has_video !== false) lanes.push("Video");
       if (asset?.has_audio !== false) lanes.push("Audio");
+      // 视频块默认按素材自身分辨率落画布(与 Rust drop_asset 语义一致);
+      // 图片素材(单帧)→ 定格片段:3s、speed=0
+      const compW = mockDoc.width ?? 1920;
+      const compH = mockDoc.height ?? 1080;
+      const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2;
       const mk = (lane: "Video" | "Audio") => ({
         id: `c${++counter}`,
         track_id: tid,
         start: Number(args.start ?? 0),
-        duration: 90,
+        duration: isStill ? 90 : 90,
         asset: { asset_id: String(args.assetId), source_in: 0, source_out: 3 },
-        speed: 1,
+        speed: isStill ? 0 : 1,
         volume: 1,
         muted: false,
         lane,
-        fx: mockDoc.clips[0]?.fx ?? undefined,
+        fx: (() => {
+          const fx = structuredClone(mockDoc.clips[0]?.fx ?? undefined) as Document["clips"][number]["fx"];
+          if (lane === "Video" && fx && asset?.width && asset?.height) {
+            fx.rect = { x: 0.5, y: 0.5, w: asset.width / compW, h: asset.height / compH };
+          }
+          return fx;
+        })(),
       });
       for (const l of lanes) mockDoc.clips.push(mk(l) as Document["clips"][number]);
       return true;
     }
+    case "drop_text": {
+      // 文字片段:合成资产 text://… + 3s 定格片段
+      const aid = `atext${Date.now()}`;
+      mockDoc.assets.push({
+        id: aid,
+        path: `text://${aid}`,
+        duration_secs: 3600,
+        has_video: true,
+        has_audio: false,
+        width: null,
+        height: null,
+        fps: null,
+        name: "文字",
+        tags: [],
+      });
+      const cid = `c${++counter}`;
+      mockDoc.clips.push({
+        id: cid,
+        track_id: mockDoc.tracks[0]?.id ?? "f1",
+        start: Number(args.start ?? 0),
+        duration: 90,
+        asset: { asset_id: aid, source_in: 0, source_out: 3 },
+        speed: 0,
+        volume: 1,
+        muted: false,
+        lane: "Video",
+        fx: { ...(mockDoc.clips[0]?.fx ?? {}), rect: { x: 0.5, y: 0.5, w: 0.8, h: 64 / 1080 } },
+        text: { content: "双击编辑", font_size: 64, color: "#ffffff", bold: false, shadow: false },
+      } as Document["clips"][number]);
+      return cid;
+    }
+    case "set_comp_size":
+      mockDoc.width = Math.min(8192, Math.max(16, Math.round(Number(args.width) || 1920)));
+      mockDoc.height = Math.min(8192, Math.max(16, Math.round(Number(args.height) || 1080)));
+      return true;
     case "add_clip":
       mockDoc.clips.push({
         id: `c${++counter}`,
@@ -170,9 +242,45 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "trim_clip":
     case "set_clip_audio":
     case "set_clips_audio":
-    case "set_clip_fx":
-    case "set_keyframe":
-    case "remove_keyframe":
+    case "set_clip_fx": {
+      // 真实覆写 fx(画中画 rect/调色等依赖此命令;此前为 no-op 桩,拖拽提交无效)
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      if (c) c.fx = args.fx as typeof c.fx;
+      return true;
+    }
+    case "set_keyframe": {
+      // 真实 upsert(前端发小写 interp;存储用 TS 侧枚举大小写)
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      const prop = String(args.prop) as "opacity" | "scale" | "rotate" | "x_offset" | "y_offset" | "speed" | "volume";
+      const anim = c ? (c.fx?.[prop] as { keyframes: { t: number; value: number; interp: string; c1x?: number; c1y?: number; c2x?: number; c2y?: number }[] } | undefined) : undefined;
+      if (anim) {
+        const interpMap: Record<string, string> = { linear: "Linear", hold: "Hold", smooth: "Smooth", bezier: "Bezier" };
+        const bz = (args.bezier ?? null) as { c1x: number; c1y: number; c2x: number; c2y: number } | null;
+        const kf = {
+          t: Math.round(Number(args.t)),
+          value: Number(args.value),
+          interp: interpMap[String(args.interp)] ?? "Linear",
+          ...(bz ? { c1x: bz.c1x, c1y: bz.c1y, c2x: bz.c2x, c2y: bz.c2y } : {}),
+        };
+        const i = anim.keyframes.findIndex((k) => k.t === kf.t);
+        if (i >= 0) anim.keyframes[i] = kf;
+        else {
+          anim.keyframes.push(kf);
+          anim.keyframes.sort((a, b) => a.t - b.t);
+        }
+      }
+      return true;
+    }
+    case "remove_keyframe": {
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      const prop = String(args.prop) as "opacity" | "scale" | "rotate" | "x_offset" | "y_offset" | "speed" | "volume";
+      const anim = c ? (c.fx?.[prop] as { keyframes: { t: number }[] } | undefined) : undefined;
+      if (anim) {
+        const t = Math.round(Number(args.t));
+        anim.keyframes = anim.keyframes.filter((k) => k.t !== t);
+      }
+      return true;
+    }
     case "set_speed":
     case "set_transition":
     case "remove_transition":

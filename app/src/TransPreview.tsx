@@ -62,7 +62,7 @@ export default function TransPreview({
         display: "inline-block",
         width: size,
         height: Math.round(size / 2),
-        borderRadius: 3,
+        borderRadius: "var(--radius-ctl)",
         border: "1px solid var(--border)",
         background: transPreviewCss(kind),
         cursor: onClick || draggable ? "pointer" : undefined,

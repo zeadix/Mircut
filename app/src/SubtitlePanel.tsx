@@ -186,12 +186,12 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
             {m.downloaded ? (
               <>
                 <span style={{ color: "var(--ok)", fontSize: 10 }}>已下载</span>
-                <button className="btn" style={{ padding: "1px 6px" }} onClick={() => onDeleteModel(m.id)}>
+                <button className="btn sm" onClick={() => onDeleteModel(m.id)}>
                   删除
                 </button>
               </>
             ) : (
-              <button className="btn" style={{ padding: "1px 6px" }} disabled={dlId === m.id} onClick={() => onDownloadModel(m.id)}>
+              <button className="btn sm" disabled={dlId === m.id} onClick={() => onDownloadModel(m.id)}>
                 {dlId === m.id ? "下载中…" : "下载"}
               </button>
             )}

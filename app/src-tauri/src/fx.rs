@@ -433,40 +433,81 @@ pub(crate) fn remove_image_overlay(index: usize, state: State<'_, AppState>) -> 
 
 #[tauri::command]
 pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Result<usize, String> {
+    use crate::util::uuid_of;
     let sentences = split_sentences(&text);
     if sentences.is_empty() {
         return Err("文案为空".into());
     }
     let mut inner = state.inner.lock().unwrap();
-    let num = inner.doc.timebase.num as f64;
-    let den = inner.doc.timebase.den as f64;
+    let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "文字");
+    let tps = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
     let mut cursor = 0i64;
     let mut count = 0usize;
-    let mut overlays = inner.doc.text_overlays.clone();
+    let mut cmds: Vec<Box<dyn veditor_core::Command>> = Vec::new();
     for (i, s) in sentences.iter().enumerate() {
         let chars = s.chars().count().max(1);
         let dur_secs = (chars as f64 * 0.35).clamp(1.0, 8.0);
-        let dur = (dur_secs * num / den).round() as i64;
-        overlays.push(veditor_core::TextOverlay {
-            id: format!("art{}", i + 1),
-            start: cursor,
-            end: cursor + dur,
-            text: s.clone(),
-            font_size: 64,
-            color: "#ffffff".into(),
-            outline: Some("#000000".into()),
-            bold: true,
-            shadow: true,
-            bg_color: None,
-            outline2: None,
-            animation: veditor_core::TextAnimation::FadeIn,
+        let dur = (dur_secs * tps).round() as i64;
+        // 合成资产(每句一个,内容哈希定 id)
+        let aid = format!("atext{}", uuid_of(&format!("art-{i}-{cursor}")));
+        if inner.doc.asset(&aid).is_none() {
+            inner.doc.assets.push(veditor_core::Asset {
+                id: aid.clone(),
+                path: format!("text://{aid}"),
+                duration_secs: 3600.0,
+                has_video: true,
+                has_audio: false,
+                width: None,
+                height: None,
+                name: Some("文字".into()),
+                fps: None,
+                tags: vec![],
+            });
+        }
+        let mut fx = veditor_core::ClipFx::default();
+        fx.rect = Some(veditor_core::FxRect {
             x: 0.5,
             y: 0.5,
+            w: 0.8,
+            h: (64.0f64 / 1080.0).clamp(0.02, 0.9),
+            stretch: false,
         });
+        fx.enter = Some(veditor_core::ClipAnim {
+            kind: veditor_core::ClipAnimKind::Fade,
+            dur_secs: 0.5,
+        });
+        cmds.push(Box::new(veditor_core::AddClip {
+            clip: veditor_core::Clip {
+                id: format!("art{}", uuid_of(&format!("{}-{}", i, cursor))),
+                track_id: track_id.clone(),
+                start: cursor,
+                duration: dur,
+                asset: veditor_core::AssetRef {
+                    asset_id: aid,
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 0.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(veditor_core::Lane::Video),
+                fx,
+                text: Some(veditor_core::TextClipData {
+                    content: s.clone(),
+                    font_size: 64.0,
+                    color: "#ffffff".into(),
+                    outline: Some("#000000".into()),
+                    outline2: None,
+                    bold: true,
+                    shadow: true,
+                    bg_color: None,
+                }),
+            },
+        }));
         cursor += dur;
         count += 1;
     }
-    inner.exec(Box::new(veditor_core::SetTextOverlays::new(overlays)));
+    inner.exec(Box::new(veditor_core::Compound::new("图文成片", cmds)));
     Ok(count)
 }
 

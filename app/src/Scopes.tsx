@@ -100,7 +100,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
           ref={waveRef}
           width={128}
           height={72}
-          style={{ border: "1px solid var(--border)", borderRadius: 4, display: "block" }}
+          style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-pop)", display: "block" }}
         />
       </div>
       <div>
@@ -109,7 +109,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
           ref={vectRef}
           width={72}
           height={72}
-          style={{ border: "1px solid var(--border)", borderRadius: 4, display: "block" }}
+          style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-pop)", display: "block" }}
         />
       </div>
       {err && <div style={{ fontSize: 10, color: "var(--text-dim)", alignSelf: "center" }}>{err}</div>}

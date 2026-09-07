@@ -64,11 +64,14 @@ export interface LutApply {
 }
 
 /// 画面矩形(归一化):x/y 中心点,w/h 宽高(可越界,导出裁剪)。
+/// stretch=true 时强行拉伸到 rect 宽高不保比例("全屏平铺");
+/// 缺省 = rect 框内等比 contain。
 export interface FxRect {
   x: number;
   y: number;
   w: number;
   h: number;
+  stretch?: boolean;
 }
 
 export interface Mask {
@@ -79,6 +82,25 @@ export interface Mask {
   h: number;
   feather: number;
   invert: boolean;
+}
+
+/// 片段入场/出场动画种类。
+/// 入场方向语义:SlideLeft=从右滑入、SlideRight=从左滑入、SlideUp=从下滑入、
+/// SlideDown=从上滑入;ZoomIn=放大进入(0.3→1)、ZoomOut=缩小进入(2→1)。
+/// 出场对称(向左滑出/放大消失 1→2/缩小消失 1→0.3)。
+export type ClipAnimKind =
+  | "Fade"
+  | "SlideLeft"
+  | "SlideRight"
+  | "SlideUp"
+  | "SlideDown"
+  | "ZoomIn"
+  | "ZoomOut";
+
+/// 入场/出场动画预设(种类 + 时长秒)。
+export interface ClipAnim {
+  kind: ClipAnimKind;
+  dur_secs: number;
 }
 
 export interface ClipFx {
@@ -99,6 +121,22 @@ export interface ClipFx {
   rect?: FxRect;
   /// AI 人像抠像(RVM alpha 序列)。
   alpha_matting?: AlphaMatting;
+  /// 入场动画(片段开头 dur_secs 内)。
+  enter?: ClipAnim;
+  /// 出场动画(片段结尾 dur_secs 内)。
+  exit?: ClipAnim;
+}
+
+/// 文字片段内容与样式(字号为 1080p 画布基准像素)。
+export interface TextClipData {
+  content: string;
+  font_size: number;
+  color: string;
+  outline?: string;
+  outline2?: string;
+  bold: boolean;
+  shadow: boolean;
+  bg_color?: string;
 }
 
 export interface AlphaMatting {
@@ -119,6 +157,8 @@ export interface Clip {
   muted: boolean;
   lane?: Lane | null;
   fx?: ClipFx;
+  /// 文字片段(Some = 文字;asset 为合成资产 text://…)。
+  text?: TextClipData;
 }
 
 export interface Transition {
@@ -217,6 +257,9 @@ export interface Document {
   tracks: Track[];
   clips: Clip[];
   assets: Asset[];
+  /// 合成画布分辨率(预览舞台与导出画面的共同真源;旧工程缺省 1920x1080)。
+  width?: number;
+  height?: number;
   transitions?: Transition[];
   subtitles?: SubtitleTrack;
   text_overlays?: TextOverlay[];

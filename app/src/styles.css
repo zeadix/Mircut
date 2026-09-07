@@ -104,38 +104,66 @@ textarea::selection {
 }
 
 body { background: var(--bg); }
+
+/* ===== 控件尺寸/圆角 token(规范见 agent.md「UI 控件规范」) ===== */
+:root {
+  --ctl-h: 26px;      /* 控件标准高度 */
+  --ctl-h-sm: 22px;   /* 控件紧凑高度 */
+  --radius-ctl: 6px;  /* 控件圆角 */
+  --radius-pop: 8px;  /* 浮层/弹窗/卡片圆角 */
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  box-sizing: border-box;
+  height: var(--ctl-h);
+  padding: 0 10px;
   background: var(--btn-bg);
   color: var(--text);
   border: 1px solid var(--btn-border);
-  border-radius: 6px;
-  padding: 5px 10px;
+  border-radius: var(--radius-ctl);
   font-size: 12px;
   cursor: pointer;
+  flex-shrink: 0;
 }
+/* 紧凑档:时间轴轨道头/画布悬浮工具/卡片内行内编辑 */
+.btn.sm { height: var(--ctl-h-sm); padding: 0 6px; font-size: 11px; }
+/* 纯图标方按钮(宽=高;必须带 title) */
+.btn.icon { width: var(--ctl-h); padding: 0; }
+.btn.icon.sm { width: var(--ctl-h-sm); }
+/* 画布悬浮开关(磁吸/选取等叠在视频画面上):实底保证可读,.on 为激活态 */
+.btn.float { background: var(--card); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
+.btn.float.on { border-color: var(--accent); color: var(--accent); }
+.btn.float:not(.on) { opacity: 0.55; }
 .btn:hover:not(:disabled) { background: var(--btn-hover); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.primary { background: var(--progress); border-color: #4d6cb3; color: #fff; }
 .btn.primary:hover { background: #4668ad; }
+.btn.danger { color: #ff7b7b; border-color: #5a3a3a; }
+.btn.danger:hover:not(:disabled) { background: #3a2626; }
 .asset-card {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-pop);
   padding: 6px;
   margin-bottom: 8px;
 }
 .asset-card:hover { border-color: var(--progress); }
 .ti {
+  box-sizing: border-box;
+  height: var(--ctl-h);
+  padding: 0 8px;
   background: var(--card);
   border: 1px solid var(--btn-border);
   color: var(--text);
-  border-radius: 6px;
-  padding: 5px 8px;
+  border-radius: var(--radius-ctl);
   font-size: 12px;
 }
+/* 紧凑档输入(与 .btn.sm 同高对齐) */
+.ti.sm { height: var(--ctl-h-sm); font-size: 11px; padding: 0 6px; }
 .ti::placeholder { color: var(--text-dim); }
 /* 下拉框原生弹出层:option 跟随主题(WebkitGTK/Chromium 下
    option 会继承 select 背景,需显式声明否则暗色下文字浅底浅字 */

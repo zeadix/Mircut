@@ -87,14 +87,15 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const req: api.ExportRequest = useMemo(
     () => ({
       outPath: exportPath,
-      width: preset?.width ?? 1280,
-      height: preset?.height ?? 720,
+      // 合成分辨率 = 预览窗口设置的画布分辨率(导出与预览所见即所得)
+      width: doc.width ?? 1280,
+      height: doc.height ?? 720,
       fps: preset?.fps ?? Math.round(fps),
       crf: preset?.crf ?? 20,
       vcodec,
       loudnessNormalize: loudness,
     }),
-    [exportPath, preset, fps, loudness, vcodec]
+    [exportPath, doc.width, doc.height, preset, fps, loudness, vcodec]
   );
 
   // 队列顺序执行器:无活动且未暂停时取队首 pending
@@ -229,7 +230,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         style={{
           background: "var(--card)",
           border: "1px solid var(--border-strong)",
-          borderRadius: 10,
+          borderRadius: "var(--radius-pop)",
           padding: 18,
           width: 480,
           maxHeight: "84vh",
@@ -319,7 +320,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 marginTop: 6,
                 background: "var(--panel)",
                 border: "1px solid var(--border)",
-                borderRadius: 6,
+                borderRadius: "var(--radius-ctl)",
                 padding: 8,
                 color: "var(--code)",
                 whiteSpace: "pre-wrap",
@@ -370,7 +371,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                   gap: 6,
                   background: "var(--panel)",
                   border: "1px solid var(--border)",
-                  borderRadius: 6,
+                  borderRadius: "var(--radius-ctl)",
                   padding: "4px 8px",
                 }}
               >
@@ -390,7 +391,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                         width: 70,
                         height: 6,
                         background: "var(--surface)",
-                        borderRadius: 3,
+                        borderRadius: "var(--radius-ctl)",
                         overflow: "hidden",
                         flexShrink: 0,
                       }}
@@ -407,7 +408,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                     <span style={{ color: "var(--text-dim)", width: 34, textAlign: "right" }}>
                       {Math.round(task.pct)}%
                     </span>
-                    <button className="btn" style={{ padding: "1px 6px" }} onClick={onCancelRunning}>
+                    <button className="btn sm" onClick={onCancelRunning}>
                       {t("export.cancel")}
                     </button>
                   </>

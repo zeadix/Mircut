@@ -367,6 +367,21 @@ export async function setClipFx(clipId: string, fx: NonNullable<import("./types"
   return invoke("set_clip_fx", { clipId, fx });
 }
 
+/// 新建文字片段(合成资产;默认 3s,放到置顶"文字"轨),返回片段 id。
+export async function dropText(startTicks: number): Promise<string> {
+  return invoke("drop_text", { start: startTicks });
+}
+
+/// 更新文字片段内容/样式。
+export async function setClipText(clipId: string, text: import("./types").TextClipData): Promise<boolean> {
+  return invoke("set_clip_text", { clipId, text });
+}
+
+/// 设置合成画布分辨率(预览舞台与导出画面共同真源;立即生效)。
+export async function setCompSize(width: number, height: number): Promise<boolean> {
+  return invoke("set_comp_size", { width, height });
+}
+
 // ---------- 素材包 ----------
 export interface PackInfo {
   id: string;

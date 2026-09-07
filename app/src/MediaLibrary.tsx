@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import type { Document } from "./types";
 import MiniWaveform from "./MiniWaveform";
@@ -40,7 +40,7 @@ function mediaKind(a: { path: string }): "video" | "audio" | "image" | "other" {
  * 媒体库(左栏):导入/音乐库/分类浏览/搜索/网格视图/素材卡片
  * (重命名与标签内联编辑)。
  */
-export default function MediaLibrary({
+function MediaLibraryInner({
   doc,
   thumbs,
   waveforms,
@@ -55,13 +55,28 @@ export default function MediaLibrary({
   onApplyPackItem,
   onRefresh,
 }: Props) {
-  const [mediaGrid, setMediaGrid] = useState(false);
+const [mediaGrid, setMediaGrid] = useState(false);
   const [mediaCat, setMediaCat] = useState<
     "all" | "video" | "audio" | "image" | "templates"
   >("all");
   /// 素材包(模板分类用)。
   const [packs, setPacks] = useState<api.PackInfo[]>([]);
+  /// 切到模板分类时加载/刷新素材包(此前 setPacks 无人调用,列表恒为空)。
+  useEffect(() => {
+    if (mediaCat !== "templates") return;
+    let on = true;
+    api.listPacks().then((p) => { if (on) setPacks(p); }).catch(() => {});
+    return () => {
+      on = false;
+    };
+  }, [mediaCat]);
   const [mediaQuery, setMediaQuery] = useState("");
+  /// 搜索防抖:每敲一个字符全量过滤+重渲卡顿,150ms 合并。
+  const [mediaQueryDebounced, setMediaQueryDebounced] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setMediaQueryDebounced(mediaQuery), 150);
+    return () => clearTimeout(id);
+  }, [mediaQuery]);
   const [editingAsset, setEditingAsset] = useState<string | null>(null);
   const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
   /// 素材多选(Ctrl/Shift 点击;批量上轨用)。
@@ -75,6 +90,35 @@ export default function MediaLibrary({
     transitions: "转场",
   };
   const tps = doc ? doc.timebase.num / doc.timebase.den : 30;
+
+  /// 过滤后的素材列表(分类 + 防抖后的搜索词;useMemo 避免每次渲染全量过滤)。
+  const visibleAssets = useMemo(
+    () =>
+      doc.assets.filter((a) => {
+        if (mediaCat !== "all") {
+          const kind = mediaKind(a);
+          if (mediaCat === "audio" && !(kind === "audio" || (a.tags ?? []).includes("音乐"))) return false;
+          if (mediaCat === "video" && kind !== "video") return false;
+          if (mediaCat === "image" && kind !== "image") return false;
+        }
+        if (!mediaQueryDebounced.trim()) return true;
+        const q = mediaQueryDebounced.trim().toLowerCase();
+        return (
+          a.path.toLowerCase().includes(q) ||
+          (a.name ?? "").toLowerCase().includes(q) ||
+          (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
+        );
+      }),
+    [doc.assets, mediaCat, mediaQueryDebounced]
+  );
+
+  /// 渐进渲染:数百素材时先渲染前 120 张,「显示更多」按需追加(免虚拟滚动的依赖)。
+  const [renderLimit, setRenderLimit] = useState(120);
+  useEffect(() => {
+    // 过滤条件变化后回到初始页
+    setRenderLimit(120);
+  }, [mediaCat, mediaQueryDebounced]);
+  const shownAssets = visibleAssets.slice(0, renderLimit);
 
   function onCardClick(e: React.MouseEvent, assetId: string, path: string, secs: number) {
     if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -98,7 +142,7 @@ export default function MediaLibrary({
   }
 
   return (
-    <aside style={{ width: 220, background: "var(--panel)", borderRight: "1px solid var(--border)", padding: 8, overflowY: "auto" }}>
+    <aside style={{ width: "100%", height: "100%", background: "var(--panel)", padding: 8, overflowY: "auto" }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
         <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
         <span style={{ flex: 1 }} />
@@ -150,13 +194,8 @@ export default function MediaLibrary({
         ] as const).map(([k, label]) => (
           <button
             key={k}
-            className="btn"
-            style={{
-              padding: "1px 8px",
-              fontSize: 10,
-              borderColor: mediaCat === k ? "var(--accent)" : undefined,
-              color: mediaCat === k ? "var(--accent)" : undefined,
-            }}
+            className={`btn sm${mediaCat === k ? " on" : ""}`}
+            style={{ borderColor: mediaCat === k ? "var(--accent)" : undefined, color: mediaCat === k ? "var(--accent)" : undefined }}
             onClick={() => setMediaCat(k)}
           >
             {label}
@@ -166,7 +205,19 @@ export default function MediaLibrary({
       {/* 模板分类:素材包条目(拖拽到时间轴放置 / 单击应用) */}
       {mediaCat === "templates" ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <button className="btn" onClick={onImportPack}>导入素材包…</button>
+          <button
+            className="btn"
+            onClick={async () => {
+              await onImportPack();
+              try {
+                setPacks(await api.listPacks());
+              } catch {
+                /* 列表刷新失败不阻塞 */
+              }
+            }}
+          >
+            导入素材包…
+          </button>
           {packs.length === 0 && (
             <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
               暂无素材包:~/.veditor/packs 或点上方导入
@@ -209,7 +260,7 @@ export default function MediaLibrary({
                       title={`${String(item.name ?? "")} - 拖到时间轴放置(3s)/单击应用到播放头`}
                       style={{
                         cursor: "grab",
-                        borderRadius: 6,
+                        borderRadius: "var(--radius-ctl)",
                         border: "1px solid var(--border)",
                         height: 52,
                         display: "flex",
@@ -229,7 +280,7 @@ export default function MediaLibrary({
                           fontSize: 9,
                           color: "var(--text)",
                           background: "rgba(0,0,0,0.45)",
-                          borderRadius: 4,
+                          borderRadius: "var(--radius-ctl)",
                           padding: "0 4px",
                           maxWidth: "100%",
                           overflow: "hidden",
@@ -248,22 +299,7 @@ export default function MediaLibrary({
         </div>
       ) : (
       <div style={{ display: mediaGrid ? "grid" : "block", gridTemplateColumns: mediaGrid ? "1fr 1fr" : undefined, gap: 6 }}>
-        {doc.assets
-          .filter((a) => {
-            if (mediaCat !== "all") {
-              const kind = mediaKind(a);
-              if (mediaCat === "audio" && !(kind === "audio" || (a.tags ?? []).includes("音乐"))) return false;
-              if (mediaCat === "video" && kind !== "video") return false;
-              if (mediaCat === "image" && kind !== "image") return false;
-            }
-            if (!mediaQuery.trim()) return true;
-            const q = mediaQuery.trim().toLowerCase();
-            return (
-              a.path.toLowerCase().includes(q) ||
-              (a.name ?? "").toLowerCase().includes(q) ||
-              (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
-            );
-          })
+        {shownAssets
           .map((a) => (
             <div
               key={a.id}
@@ -309,9 +345,9 @@ export default function MediaLibrary({
               {!a.has_video && a.has_audio ? (
                 <MiniWaveform peaks={waveforms[a.id] ?? []} />
               ) : thumbs[a.id] ? (
-                <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: 4 }} />
+                <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: "var(--radius-ctl)" }} />
               ) : (
-                <div style={{ background: "var(--surface)", height: 70, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 11 }}>
+                <div style={{ background: "var(--surface)", height: 70, borderRadius: "var(--radius-ctl)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 11 }}>
                   {a.has_video ? "视频" : "音频"}
                 </div>
               )}
@@ -335,7 +371,7 @@ export default function MediaLibrary({
                 {(a.tags ?? []).length > 0 && (
                   <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap", width: "100%" }}>
                     {a.tags!.map((t) => (
-                      <span key={t} style={{ background: "var(--tag-bg)", borderRadius: 3, padding: "1px 4px", fontSize: 10, color: "var(--tag-text)" }}>
+                      <span key={t} style={{ background: "var(--tag-bg)", borderRadius: "var(--radius-ctl)", padding: "1px 4px", fontSize: 10, color: "var(--tag-text)" }}>
                         {t}
                       </span>
                     ))}
@@ -359,9 +395,12 @@ export default function MediaLibrary({
                       value={assetDraft.tags}
                       onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
                     />
-                    <div style={{ display: "flex", gap: 4 }}>
+                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                      <button className="btn" onClick={() => setEditingAsset(null)}>
+                        取消
+                      </button>
                       <button
-                        className="btn"
+                        className="btn primary"
                         onClick={async () => {
                           await api.setAssetMeta(
                             a.id,
@@ -374,15 +413,28 @@ export default function MediaLibrary({
                       >
                         保存
                       </button>
-                      <button className="btn" onClick={() => setEditingAsset(null)}>取消</button>
                     </div>
                   </div>
                 )}
               </div>
             </div>
           ))}
+        {visibleAssets.length > shownAssets.length && (
+          <button
+            className="btn"
+            style={{ gridColumn: mediaGrid ? "1 / -1" : undefined, justifySelf: "center", marginTop: 4 }}
+            onClick={() => setRenderLimit((v) => v + 120)}
+            title="渲染更多素材卡片"
+          >
+            显示更多(还有 {visibleAssets.length - shownAssets.length} 个)
+          </button>
+        )}
       </div>
       )}
     </aside>
   );
 }
+
+/// memo:播放期面板包装层随 Context 重渲染,props 不变则整体跳过。
+const MediaLibrary = memo(MediaLibraryInner);
+export default MediaLibrary;

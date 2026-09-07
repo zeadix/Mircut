@@ -3,7 +3,8 @@
 
 use crate::state::AppState;
 use tauri::State;
-use veditor_core::{ImageOverlay, SetSubtitleStyle, SetTextOverlays, SubtitleStyle, TextOverlay};
+use veditor_core::{AddClip, AssetRef, Clip, Lane, SetSubtitleStyle, SetTextOverlays, SubtitleStyle, TextOverlay};
+use crate::util::uuid_of;
 
 /// 素材包清单(veditor-pack.json 顶层)。
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -256,20 +257,37 @@ pub(crate) fn apply_pack_item(
             if !path.exists() {
                 return Err(format!("贴纸文件不存在: {}", path.to_string_lossy()));
             }
-            let id = format!("pk{}", inner.doc.image_overlays.len() + 1);
-            let mut next = inner.doc.image_overlays.clone();
-            next.push(ImageOverlay {
-                id,
-                start: t,
-                end: t + dur.max(1),
-                path: path.to_string_lossy().to_string(),
+            // 贴纸 = 图片片段(与视频同管道;此前写 ImageOverlay 已迁移弃用)
+            let path_str = path.to_string_lossy().to_string();
+            let (asset_id, dims) = crate::migrate::ensure_image_asset(&mut inner.doc, &path_str);
+            let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "贴纸");
+            let rect_h = dims.map(|(aw, ah)| 0.3 * ah as f64 / aw as f64).unwrap_or(0.3);
+            let mut fx = veditor_core::ClipFx::default();
+            fx.rect = Some(veditor_core::FxRect {
                 x: 0.5,
                 y: 0.5,
-                scale: 0.3,
-                rotate: 0.0,
-                opacity: 1.0,
+                w: 0.3,
+                h: rect_h,
+                stretch: false,
             });
-            inner.exec(Box::new(veditor_core::SetImageOverlays::new(next)));
+            let clip = Clip {
+                id: format!("stc{}", uuid_of(&format!("{}@{}", file, t))),
+                track_id,
+                start: t,
+                duration: dur.max(1),
+                asset: AssetRef {
+                    asset_id,
+                    source_in: 0.0,
+                    source_out: 0.04,
+                },
+                speed: 0.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(Lane::Video),
+                fx,
+                text: None,
+            };
+            inner.exec(Box::new(AddClip { clip }));
             let _ = name;
         }
         "text-styles" => {

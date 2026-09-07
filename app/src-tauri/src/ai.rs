@@ -156,6 +156,7 @@ pub(crate) fn separate_stems(
                 None
             },
             fx: fxc,
+            text: None,
         };
         cmds.push(Box::new(veditor_core::AddClip { clip: c }));
     }

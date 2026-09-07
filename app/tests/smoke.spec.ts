@@ -51,11 +51,11 @@ test("冒烟:右侧面板 Tab 切换与贴纸面板", async ({ page }) => {
   for (const label of ["属性", "字幕", "文字", "素材包", "贴纸"]) {
     await rightAside.getByRole("button", { name: label, exact: true }).click();
   }
-  // 贴纸面板可见(导入按钮 + 已放置区)
+  // 贴纸面板可见(导入按钮 + 图片素材入口;贴纸=图片片段,已无旧叠层"已放置"区)
   await expect(
     rightAside.getByRole("button", { name: /导入图片贴纸/ })
   ).toBeVisible();
-  await expect(rightAside.getByText(/已放置\(0\)/)).toBeVisible();
+  await expect(rightAside.getByText(/图片素材\(单击放到播放头/)).toBeVisible();
 });
 
 test("冒烟:标记打点与列表", async ({ page }) => {

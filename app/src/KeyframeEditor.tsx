@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Keyframe } from "./types";
 import type { KeyframeProp } from "./api";
 
@@ -15,9 +15,37 @@ interface Props {
   onRefresh: () => Promise<void>;
 }
 
+/// memo 比较器:keyframes 按内容签名比较(doc 刷新会换数组引用但内容常不变;
+/// 播放期属性面板 5Hz 重渲染时,7 个曲线编辑器不再重算 SVG/列表)。
+function propsEq(a: Props, b: Props): boolean {
+  return (
+    a.clipId === b.clipId &&
+    a.prop === b.prop &&
+    a.label === b.label &&
+    a.tps === b.tps &&
+    a.min === b.min &&
+    a.max === b.max &&
+    a.step === b.step &&
+    a.onRefresh === b.onRefresh &&
+    a.keyframes.length === b.keyframes.length &&
+    a.keyframes.every((k, i) => {
+      const o = b.keyframes[i];
+      return (
+        k.t === o.t &&
+        k.value === o.value &&
+        k.interp === o.interp &&
+        k.c1x === o.c1x &&
+        k.c1y === o.c1y &&
+        k.c2x === o.c2x &&
+        k.c2y === o.c2y
+      );
+    })
+  );
+}
+
 /// 关键帧曲线编辑器:SVG 曲线预览 + 关键帧列表(时间/值/插值/删除)。
 /// 贝塞尔插值用 cubic-bezier 采样绘制。
-export default function KeyframeEditor({
+function KeyframeEditorInner({
   clipId,
   prop,
   label,
@@ -29,6 +57,15 @@ export default function KeyframeEditor({
   onRefresh,
 }: Props) {
   const [draft, setDraft] = useState<Keyframe[]>(keyframes);
+  /// 竖线拖拽会话(draft 索引稳定;轴在拖拽期间冻结,避免 minT/maxT 随动重缩放)。
+  const dragRef = useRef<{
+    idx: number;
+    origT: number;
+    startX: number;
+    width: number;
+    minT: number;
+    span: number;
+  } | null>(null);
 
   useEffect(() => {
     setDraft(keyframes);
@@ -134,6 +171,63 @@ export default function KeyframeEditor({
   }
 
   const sorted = [...draft].sort((a, b) => a.t - b.t);
+  /// 竖线 x 轴映射:拖拽期间用冻结轴(拖动最外侧帧时曲线不整体重缩放)。
+  const axMin = dragRef.current ? dragRef.current.minT : (sorted[0]?.t ?? 0);
+  const axSpan = dragRef.current
+    ? dragRef.current.span
+    : Math.max(1, (sorted[sorted.length - 1]?.t ?? 1) - (sorted[0]?.t ?? 0));
+  const kfX = (t: number) => ((t - axMin) / axSpan) * 100;
+
+  /// 竖线拖拽:横向移动改变关键帧时间(提交 = 移除旧帧 + 在新时刻 upsert)。
+  function onKfLineDown(e: React.PointerEvent, idx: number) {
+    const svg = (e.currentTarget as SVGElement).ownerSVGElement;
+    const width = svg?.clientWidth || 200;
+    (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+    dragRef.current = {
+      idx,
+      origT: draft[idx].t,
+      startX: e.clientX,
+      width,
+      minT: axMin,
+      span: axSpan,
+    };
+    e.stopPropagation();
+  }
+
+  function onKfLineMove(e: React.PointerEvent) {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const newT = Math.max(0, Math.round(d.origT + (dx / d.width) * d.span));
+    setDraft((prev) => {
+      if (prev[d.idx]?.t === newT) return prev;
+      // 与其他帧同刻不落位(避免 key 冲突/覆盖)
+      if (prev.some((k, i) => i !== d.idx && k.t === newT)) return prev;
+      return prev.map((k, i) => (i === d.idx ? { ...k, t: newT } : k));
+    });
+  }
+
+  async function onKfLineUp(e: React.PointerEvent) {
+    const d = dragRef.current;
+    dragRef.current = null;
+    (e.currentTarget as SVGElement).releasePointerCapture?.(e.pointerId);
+    if (!d) return;
+    const cur = draft[d.idx];
+    if (!cur || cur.t === d.origT) return;
+    const { setKeyframe, removeKeyframe } = await import("./api");
+    await removeKeyframe(clipId, prop, d.origT);
+    await setKeyframe(
+      clipId,
+      prop,
+      cur.t,
+      cur.value,
+      cur.interp === "Bezier" ? "bezier" : (cur.interp.toLowerCase() as "linear" | "hold" | "smooth"),
+      cur.interp === "Bezier"
+        ? { c1x: cur.c1x ?? 0.42, c1y: cur.c1y ?? 0, c2x: cur.c2x ?? 0.58, c2y: cur.c2y ?? 1 }
+        : undefined
+    );
+    await onRefresh();
+  }
 
   return (
     <div style={{ marginBottom: 6 }}>
@@ -141,13 +235,49 @@ export default function KeyframeEditor({
         {label} ({draft.length} 帧)
       </div>
       {draft.length > 0 && (
-        <svg width="100%" height="56" style={{ background: "var(--panel)", borderRadius: 4, border: "1px solid var(--border)" }}>
+        <svg width="100%" height="56" style={{ background: "var(--panel)", borderRadius: "var(--radius-ctl)", border: "1px solid var(--border)" }}>
           <polyline
             points={curvePoints}
             fill="none"
             stroke="var(--accent)"
             strokeWidth="1.5"
           />
+          {draft.map((k, i) => {
+            const dragging = dragRef.current?.idx === i;
+            const x = kfX(k.t).toFixed(1);
+            return (
+              <g key={i}>
+                {/* 可见竖线(拖拽中高亮) */}
+                <line
+                  x1={`${x}%`}
+                  y1="0"
+                  x2={`${x}%`}
+                  y2="100%"
+                  stroke={dragging ? "var(--accent)" : "var(--border-strong)"}
+                  strokeWidth="1"
+                />
+                {/* 6px 触发区(透明粗线,横向拖拽改关键帧时间) */}
+                <line
+                  x1={`${x}%`}
+                  y1="0"
+                  x2={`${x}%`}
+                  y2="100%"
+                  stroke="transparent"
+                  strokeWidth="6"
+                  style={{ cursor: "ew-resize" }}
+                  pointerEvents="stroke"
+                  onPointerDown={(e) => onKfLineDown(e, i)}
+                  onPointerMove={onKfLineMove}
+                  onPointerUp={onKfLineUp}
+                  onPointerCancel={() => {
+                    dragRef.current = null;
+                  }}
+                >
+                  <title>{`拖拽调整时间(当前 ${(k.t / tps).toFixed(2)}s)`}</title>
+                </line>
+              </g>
+            );
+          })}
         </svg>
       )}
       {sorted.map((k, idx) => (
@@ -176,7 +306,7 @@ export default function KeyframeEditor({
             <option value="Smooth">平滑</option>
             <option value="Bezier">贝塞尔</option>
           </select>
-          <button className="btn" style={{ padding: "2px 6px" }} onClick={() => remove(idx)}>
+          <button className="btn sm" onClick={() => remove(idx)}>
             ×
           </button>
         </div>
@@ -184,3 +314,6 @@ export default function KeyframeEditor({
     </div>
   );
 }
+
+const KeyframeEditor = memo(KeyframeEditorInner, propsEq);
+export default KeyframeEditor;

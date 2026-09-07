@@ -5,6 +5,7 @@ mod diag;
 mod export;
 mod fx;
 mod media;
+mod migrate;
 mod models;
 mod packs;
 mod plugins;
@@ -111,6 +112,7 @@ fn main() {
                     muted: false,
                     lane: None,
                     fx: Default::default(),
+                    text: None,
                 });
                 let snapshot = inner.doc.clone();
                 if let Some(r) = inner.renderer.as_mut() {
@@ -251,6 +253,8 @@ fn main() {
             roll_edit,
             move_clips,
             drop_asset,
+            drop_text,
+            set_clip_text,
             duplicate_clip,
             create_file_track,
             reorder_track,
@@ -302,6 +306,7 @@ fn main() {
             analyze_scopes,
             realtime_frame,
             set_render_mode,
+            set_comp_size,
             set_audio_fx,
             set_lut,
             freeze_frame,
@@ -405,6 +410,7 @@ mod tests {
                     muted: false,
                     lane: None,
                     fx: Default::default(),
+                    text: None,
                 });
             }
             // c2 落到 30(与 c1 重叠):推挤后 c1 应被挤到 c2 之后
@@ -452,6 +458,7 @@ mod tests {
                     muted: false,
                     lane: None,
                     fx: Default::default(),
+                    text: None,
                 });
             }
             inner.schedule_all_tracks_silent();
@@ -515,6 +522,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             let tb = inner.doc.timebase;
             let tps = tb.num / tb.den.max(1);
@@ -612,6 +620,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             // 头修 1s(30 ticks):start=30, source_in=1.0
             let tb = inner.doc.timebase;
@@ -770,6 +779,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             // 模拟 drop_asset:新片段 B(60 ticks)落到 0 —— 复刻插入逻辑
             let duration = 60i64;
@@ -808,6 +818,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             // B 在前 [0,60),A 顺延 [60,120)
             let a = inner.doc.clip("A").unwrap();
@@ -863,6 +874,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             };
             // 1. 三个依次放入(模拟拖放插入,后两个触发右移让位)
             for (id, pos) in [("A", 0i64), ("B", 60), ("C", 120)] {
@@ -903,6 +915,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             };
             inner.exec(Box::new(AddClip { clip: dup }));
             inner.schedule_track("v1", Some("C-copy"));
@@ -977,6 +990,7 @@ mod tests {
                 muted: false,
                 lane: Some(lane),
                 fx: Default::default(),
+                text: None,
             };
             inner.exec(Box::new(AddClip {
                 clip: mk(Lane::Video, "cv"),
@@ -1094,6 +1108,7 @@ mod tests {
                 muted: false,
                 lane: Some(lane),
                 fx: Default::default(),
+                text: None,
             };
             for (id, asset, lane, start) in [
                 ("Av", "a1", Lane::Video, 0i64),
@@ -1215,6 +1230,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             inner.exec(Box::new(veditor_core::MoveClip::new(
                 "v1",
@@ -1238,6 +1254,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             });
             inner.exec(Box::new(veditor_core::MoveClip::new(
                 "v1",
@@ -1285,6 +1302,7 @@ mod tests {
                 muted: false,
                 lane: Some(lane),
                 fx: Default::default(),
+                text: None,
             };
             inner.doc.clips.push(mk("vA", veditor_core::Lane::Video, 0));
             inner.doc.clips.push(mk("aA", veditor_core::Lane::Audio, 0));
@@ -1395,6 +1413,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             }
         };
         {
@@ -1492,6 +1511,7 @@ mod tests {
                 muted: false,
                 lane: None,
                 fx: Default::default(),
+                text: None,
             };
             inner.exec(Box::new(AddClip { clip }));
             assert_eq!(inner.doc.clips.len(), 1);

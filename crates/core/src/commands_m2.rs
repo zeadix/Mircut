@@ -528,6 +528,7 @@ impl Command for DetachAudio {
             start: src.start,
             duration: src.duration,
             asset: src.asset.clone(),
+            text: None,
             speed: src.speed,
             volume: src.volume,
             muted: src.muted,
@@ -704,6 +705,7 @@ impl Command for FreezeFrame {
             muted: orig.muted,
             lane: orig.lane,
             fx: orig.fx.clone(),
+            text: None,
         };
         doc.clips.retain(|c| c.id != self.clip_id);
         doc.clips.push(mk(
@@ -901,6 +903,7 @@ mod tests {
             muted: false,
             lane: None,
             fx: Default::default(),
+            text: None,
         }
     }
 

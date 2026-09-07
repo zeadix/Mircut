@@ -59,7 +59,8 @@ pub(crate) fn get_project_path(state: State<'_, AppState>) -> Option<String> {
 pub(crate) fn open_project(path: String, state: State<'_, AppState>) -> Result<Document, String> {
     let mut inner = state.inner.lock().unwrap();
     let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let doc: Document = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let mut doc: Document = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    crate::migrate::migrate_legacy_overlays(&mut doc);
     inner.doc = doc.clone();
     inner.project_path = Some(PathBuf::from(&path));
     inner.stack = CommandStack::new();
@@ -75,8 +76,9 @@ pub(crate) fn import_jianying(
     draft_dir: String,
     state: State<'_, AppState>,
 ) -> Result<Document, String> {
-    let doc = veditor_media::import_jianying_draft(&PathBuf::from(&draft_dir))
+    let mut doc = veditor_media::import_jianying_draft(&PathBuf::from(&draft_dir))
         .map_err(|e| e.to_string())?;
+    crate::migrate::migrate_legacy_overlays(&mut doc);
     let mut inner = state.inner.lock().unwrap();
     inner.doc = doc.clone();
     if let Some(r) = inner.renderer.as_mut() {

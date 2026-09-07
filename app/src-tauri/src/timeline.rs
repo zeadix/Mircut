@@ -2,11 +2,12 @@
 use crate::state::{AppState, Inner, file_track_fixup_commands};
 use tauri::State;
 use veditor_core::{
-    AddClip, AddMarker, AddTrack, AssetRef, Clip, Command, Compound, DetachAudio, Document,
+    AddClip, AddMarker, AddTrack, Asset, AssetRef, Clip, Command, Compound, DetachAudio, Document,
     FreezeFrame, Marker, RemoveClip, RemoveMarker, RemoveTrack, ReorderTrack, RippleDelete,
-    SetClipAudio, SetSpeed, SetTrackFlags, SplitClip, Ticks, Track, TrackKind,
+    SetClipAudio, SetSpeed, SetTrackFlags, SplitClip, Ticks, TextClipData, Track, TrackKind,
 };
 use veditor_render::Renderer;
+use crate::util::uuid_of;
 
 #[tauri::command]
 pub(crate) fn get_document(state: State<'_, AppState>) -> Document {
@@ -96,6 +97,7 @@ pub(crate) fn add_clip(
         muted: false,
         lane: None,
         fx: Default::default(),
+        text: None,
     };
     inner.exec(Box::new(AddClip { clip: clip.clone() }));
     // 磁吸推挤:显式落点可能与已有片段重叠,新片段保位
@@ -454,6 +456,66 @@ fn block_insert_push(
     changes
 }
 
+/// 新建文字片段:合成资产 text://…(无源素材),默认 3s、定格语义,
+/// 放到置顶"文字"轨。与视频片段同管道(拖拽/裁剪/删除/出入场动画)。
+#[tauri::command]
+pub(crate) fn drop_text(start: Ticks, state: State<'_, AppState>) -> Result<String, String> {
+    let mut inner = state.inner.lock().unwrap();
+    inner.ensure();
+    let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "文字");
+    let aid = format!("atext{}", uuid_of(&format!("text-{start}")));
+    if inner.doc.asset(&aid).is_none() {
+        inner.doc.assets.push(Asset {
+            id: aid.clone(),
+            path: format!("text://{aid}"),
+            duration_secs: 3600.0,
+            has_video: true,
+            has_audio: false,
+            width: None,
+            height: None,
+            name: Some("文字".into()),
+            fps: None,
+            tags: vec![],
+        });
+    }
+    let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
+    let mut seq = inner.doc.clips.len();
+    let clip = Clip {
+        id: next_clip_id(&inner.doc, &mut seq),
+        track_id,
+        start: start.max(0),
+        duration: 3 * tps,
+        asset: AssetRef {
+            asset_id: aid,
+            source_in: 0.0,
+            source_out: 3.0,
+        },
+        speed: 0.0,
+        volume: 1.0,
+        muted: false,
+        lane: Some(veditor_core::Lane::Video),
+        fx: Default::default(),
+        text: Some(TextClipData::default()),
+    };
+    let id = clip.id.clone();
+    inner.exec(Box::new(AddClip { clip }));
+    Ok(id)
+}
+
+/// 更新文字片段内容/样式(直接覆写,不经撤销栈;位置/时长走通用片段命令)。
+#[tauri::command]
+pub(crate) fn set_clip_text(
+    clip_id: String,
+    text: TextClipData,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    if let Some(c) = inner.doc.clips.iter_mut().find(|c| c.id == clip_id) {
+        c.text = Some(text);
+    }
+    true
+}
+
 #[tauri::command]
 pub(crate) fn drop_asset(
     asset_id: String,
@@ -469,9 +531,15 @@ pub(crate) fn drop_asset(
         .asset(&asset_id)
         .cloned()
         .ok_or("素材不存在,请先导入")?;
-    let duration = (asset.duration_secs
-        * (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64)
-        .round() as i64;
+    // 图片素材(单帧:有视频无音频且时长可疑地短)→ 定格片段语义:
+    // 默认 3 秒、speed=0(复用定格 tpad 管线),否则 ffprobe 的 0.04s 会让片段不可用
+    let is_still = asset.has_video && !asset.has_audio && asset.duration_secs < 0.2;
+    let tps_f = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
+    let duration = if is_still {
+        (3.0 * tps_f).round() as i64
+    } else {
+        (asset.duration_secs * tps_f).round() as i64
+    };
 
     // ---- 文件轨道语义 ----
     // 目标轨道解析:
@@ -533,6 +601,12 @@ pub(crate) fn drop_asset(
     }
 
     let mut seq = inner.doc.clips.len();
+    // 合成画布尺寸 + 素材像素尺寸:视频块默认按"素材自身分辨率"落在画布上
+    // (相对画布居中;导出/预览共用 fx.rect 归一化语义,所见即所得)。
+    let comp_w = inner.doc.width.max(1) as f64;
+    let comp_h = inner.doc.height.max(1) as f64;
+    let asset_w = asset.width;
+    let asset_h = asset.height;
     let mk = |lane: veditor_core::Lane, id: String| Clip {
         id,
         track_id: target_track.clone(),
@@ -543,11 +617,28 @@ pub(crate) fn drop_asset(
             source_in: 0.0,
             source_out: asset.duration_secs,
         },
-        speed: 1.0,
+        speed: if is_still { 0.0 } else { 1.0 },
         volume: 1.0,
         muted: false,
         lane: Some(lane),
-        fx: Default::default(),
+        fx: {
+            let mut fx = veditor_core::ClipFx::default();
+            if lane == veditor_core::Lane::Video {
+                if let (Some(aw), Some(ah)) = (asset_w, asset_h) {
+                    if aw > 0 && ah > 0 {
+                        fx.rect = Some(veditor_core::FxRect {
+                            x: 0.5,
+                            y: 0.5,
+                            w: aw as f64 / comp_w,
+                            h: ah as f64 / comp_h,
+                            stretch: false,
+                        });
+                    }
+                }
+            }
+            fx
+        },
+           text: None,
     };
     let mut clips_to_add: Vec<Clip> = Vec::new();
     for l in &lanes_needed {
@@ -621,6 +712,7 @@ pub(crate) fn duplicate_clip(
         muted: src.muted,
         lane: src.lane,
         fx: src.fx.clone(),
+        text: src.text.clone(),
     };
     dup.asset.source_in = src.asset.source_in;
     dup.asset.source_out = src.asset.source_out;
@@ -638,6 +730,7 @@ pub(crate) fn duplicate_clip(
             muted: s.muted,
             lane: s.lane,
             fx: s.fx.clone(),
+            text: s.text.clone(),
         };
         sib_dup.asset.source_in = s.asset.source_in;
         sib_dup.asset.source_out = s.asset.source_out;
@@ -1084,6 +1177,7 @@ mod block_arrange_tests {
                 muted: false,
                 lane: Some(lane),
                 fx: Default::default(),
+                text: None,
             });
         }
     }

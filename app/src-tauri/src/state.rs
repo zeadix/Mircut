@@ -348,7 +348,8 @@ impl Inner {
             .ok()
             .and_then(|s| serde_json::from_str::<Document>(&s).ok())
         {
-            Some(doc) => {
+            Some(mut doc) => {
+                crate::migrate::migrate_legacy_overlays(&mut doc);
                 self.doc = doc;
                 true
             }
