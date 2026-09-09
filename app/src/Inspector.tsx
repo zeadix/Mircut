@@ -84,6 +84,12 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   const [pluginPresets, setPluginPresets] = useState<{ name: string; grade: { brightness: number; contrast: number; saturation: number; temperature: number } }[]>([]);
   /// 批量音量输入。
   const [batchVol, setBatchVol] = useState("1.0");
+  /// 系统字体清单(文字面板字体下拉)。
+  const [fonts, setFonts] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.listFonts().then(setFonts).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (clip) {
@@ -1187,8 +1193,23 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               }}
               title="字号(1080p 基准像素;键入即时生效;按住左右拖拽调值)"
             />
+            <select
+              className="ti"
+              style={{ width: 118 }}
+              value={clip.text.font ?? ""}
+              title="字体(系统字体;导出经 fontconfig 同名解析)"
+              onChange={(e) => applyTextClip({ font: e.target.value })}
+            >
+              <option value="">默认字体</option>
+              {fonts.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
             <label style={{ fontSize: 11 }}>
               <input type="checkbox" checked={clip.text.bold} onChange={(e) => applyTextClip({ bold: e.target.checked })} /> 粗体
+            </label>
+            <label style={{ fontSize: 11 }}>
+              <input type="checkbox" checked={!!clip.text.italic} onChange={(e) => applyTextClip({ italic: e.target.checked })} /> 斜体
             </label>
             <label style={{ fontSize: 11 }}>
               <input type="checkbox" checked={clip.text.shadow} onChange={(e) => applyTextClip({ shadow: e.target.checked })} /> 阴影

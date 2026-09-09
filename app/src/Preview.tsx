@@ -11,6 +11,10 @@ interface Props {
   playheadTicks: number;
   fps: number;
   playing: boolean;
+  /// 自动选取/变换框/磁吸(受控;开关按钮在预览顶栏)。
+  autoSelect?: boolean;
+  editMode?: boolean;
+  snapOn?: boolean;
   renderMode: "proxy" | "realtime";
   /// 素材直读预览(媒体库单击):非空时优先于时间轴取帧。
   assetPreview: { path: string; secs: number } | null;
@@ -243,6 +247,9 @@ function snapVal(v: number, candidates: number[], tol = SNAP_TOL): { v: number; 
  * - 预览高度可拖拽调整
  */
 function PreviewInner({
+  autoSelect: autoSelectProp,
+  editMode: editModeProp,
+  snapOn: snapOnProp,
   playheadTicks,
   fps,
   playing,
@@ -266,11 +273,14 @@ const [url, setUrl] = useState<string | null>(null);
   /// 变换框实时 rect(拖拽中,松手提交)。ref 镜像:pointerup 闭包读最新值。
   const [liveRect, setLiveRect] = useState<FxRect | null>(null);
   const liveRectRef = useRef<FxRect | null>(null);
-  const [snapOn, setSnapOn] = useState(true);
+  const [snapOnState, setSnapOn] = useState(true);
+  const snapOn = snapOnProp ?? snapOnState;
   /// 自动选取(快捷工具栏开关)。
-  const [autoSelect, setAutoSelect] = useState(true);
+  const [autoSelectState, setAutoSelect] = useState(true);
+  const autoSelect = autoSelectProp ?? autoSelectState;
   /// 变换编辑模式(显示调整框;默认开)。
-  const [editMode, setEditMode] = useState(true);
+  const [editModeState, setEditMode] = useState(true);
+  const editMode = editModeProp ?? editModeState;
   /// 旋转实时值(拖拽中;度)。null = 未在旋转。
   const [liveRotate, setLiveRotate] = useState<number | null>(null);
   /// 贴纸拖拽实时状态。
@@ -1085,6 +1095,8 @@ const [url, setUrl] = useState<string | null>(null);
                       fontSize: Math.max(8, (l.text.font_size * (framePx?.h ?? 300)) / 1080),
                       lineHeight: 1.2,
                       fontWeight: l.text.bold ? 700 : 500,
+                      fontFamily: l.text.font ? l.text.font : undefined,
+                      fontStyle: l.text.italic ? "italic" : undefined,
                       whiteSpace: "pre-wrap",
                       textAlign: (l.text.align_h as "left" | "center" | "right") ?? "center",
                       WebkitTextStroke: l.text.outline ? `1.5px ${l.text.outline}` : undefined,
@@ -1345,35 +1357,6 @@ const [url, setUrl] = useState<string | null>(null);
             </>
           )}
 
-          {/* 自动选取开关 */}
-          <button
-            className={`btn icon sm float${autoSelect ? " on" : ""}`}
-            style={{ position: "absolute", left: 36, top: 8, zIndex: 10 }}
-            onClick={() => setAutoSelect((v) => !v)}
-            title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
-          >
-            <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
-          </button>
-
-          {/* 变换编辑开关:激活后选中层显示调整框(移动/缩放/旋转) */}
-          <button
-            className={`btn icon sm float${editMode ? " on" : ""}`}
-            style={{ position: "absolute", left: 64, top: 8, zIndex: 10 }}
-            onClick={() => setEditMode((v) => !v)}
-            title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
-          >
-            <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
-          </button>
-
-          {/* 吸附开关 */}
-          <button
-            className={`btn icon sm float${snapOn ? " on" : ""}`}
-            style={{ position: "absolute", left: 8, top: 8, zIndex: 10 }}
-            onClick={() => setSnapOn((v) => !v)}
-            title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
-          >
-            <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
-          </button>
           </div>
         </div>
       )}

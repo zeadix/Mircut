@@ -48,6 +48,31 @@ impl Default for ExportParams {
     }
 }
 
+/// drawtext 字体选项:font='族名[\:style=粗斜组合]'。
+/// ffmpeg 4.x 的 drawtext 选项解析对 ':' 敏感(值内冒号必须 \: 转义,
+/// 实测 font='Family:style=Italic' 报 Option 'style' not found)。
+/// 空族名且无粗斜 = 不加选项(drawtext 默认字体);
+/// 仅有粗斜无族名时用 fontconfig 默认 "Sans"。
+pub fn drawtext_font_opt(font: &str, bold: bool, italic: bool) -> String {
+    let style = match (bold, italic) {
+        (true, true) => "Bold Italic",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (false, false) => "",
+    };
+    if font.is_empty() && style.is_empty() {
+        return String::new();
+    }
+    let fam = if font.is_empty() { "Sans".to_string() } else { font.to_string() };
+    // 值内特殊字符转义(反斜杠/单引号/冒号)
+    let fam = fam.replace('\\', "\\\\").replace('\'', "\\'").replace(':', "\\:");
+    if style.is_empty() {
+        format!(":font='{fam}'")
+    } else {
+        format!(":font='{fam}\\:style={style}'")
+    }
+}
+
 /// 编码器家族(决定质量参数与容器兼容性)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncoderFamily {
@@ -1677,8 +1702,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             "bottom" => "h-text_h-4",
             _ => "(h-text_h)/2",
         };
+        let font_opt_rot = drawtext_font_opt(&tc.font, tc.bold, tc.italic);
         let mut src = format!(
-            "color=c=black@0.0:s={rw_px}x{rh_px}:d={dur:.3}:r={},format=rgba,drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}:x={x_expr}:y={y_expr}",
+            "color=c=black@0.0:s={rw_px}x{rh_px}:d={dur:.3}:r={},format=rgba,drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}{font_opt_rot}:x={x_expr}:y={y_expr}",
             params.fps
         );
         if let Some(oc) = &tc.outline {
@@ -1804,6 +1830,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             h: f64,
             align_h: &'a str,
             align_v: &'a str,
+            font: &'a str,
+            italic: bool,
             anim_in: Option<veditor_core::ClipAnim>,
             anim_out: Option<veditor_core::ClipAnim>,
         }
@@ -1841,6 +1869,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 h: rh,
                 align_h: tc.align_h.as_str(),
                 align_v: tc.align_v.as_str(),
+                font: tc.font.as_str(),
+                italic: tc.italic,
                 anim_in: c.fx.enter.clone(),
                 anim_out: c.fx.exit.clone(),
             });
@@ -1863,6 +1893,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 h: 0.2,
                 align_h: "center",
                 align_v: "middle",
+                font: "",
+                italic: false,
                 // 旧叠层动画(仅入场,固定 0.5s)映射到新系统
                 anim_in: match t.animation {
                     veditor_core::TextAnimation::None => None,
@@ -1897,8 +1929,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let oc2 = oc2.trim_start_matches('#');
                 let sep2 = if first { "" } else { "," };
                 first = false;
+                let font_opt2 = drawtext_font_opt(td.font, td.bold, td.italic);
                 chain.push_str(&format!(
-                    "{sep2}drawtext=text='{text}':fontcolor=0x{color}:bordercolor=0x{oc2}:borderw=8:fontsize={font_px}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2:enable='between(t,{start:.3},{end:.3})'",
+                    "{sep2}drawtext=text='{text}':fontcolor=0x{color}:bordercolor=0x{oc2}:borderw=8:fontsize={font_px}{font_opt2}:x=w*{:.3}-text_w/2:y=h*{:.3}-text_h/2:enable='between(t,{start:.3},{end:.3})'",
                     td.x, td.y
                 ));
             }
@@ -1912,7 +1945,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 params.width as f64,
                 params.height as f64,
             );
-            let mut dt = format!("{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}");
+            let font_opt = drawtext_font_opt(td.font, td.bold, td.italic);
+            let mut dt = format!("{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}{font_opt}");
             // 位置:x/y 按 align_h/align_v 锚定到框;有位移动画的轴输出表达式(含对齐)
             let canvas_w = params.width as f64;
             let canvas_h = params.height as f64;
@@ -1948,8 +1982,6 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 // 文字背景框(半透明底)
                 let bg = bg.trim_start_matches('#');
                 dt.push_str(&format!(":box=1:boxcolor=0x{bg}@0.6:boxborderw=12"));
-            } else if td.bold {
-                dt.push_str(":box=0");
             }
             if td.shadow {
                 dt.push_str(":shadowcolor=black:shadowx=3:shadowy=3");
@@ -2515,6 +2547,8 @@ mod tests {
                 bg_color: None,
                 align_h: "center".into(),
                 align_v: "middle".into(),
+                font: String::new(),
+                italic: false,
             }),
         });
         // 底部两条空文件轨(用户工程的真实形态)
@@ -2629,6 +2663,8 @@ mod tests {
                 bg_color: None,
                 align_h: "center".into(),
                 align_v: "middle".into(),
+                font: String::new(),
+                italic: false,
             }),
         };
         let text_asset = || Asset {
@@ -3068,6 +3104,93 @@ mod tests {
         for f in ["gif", "wav", "flac", "ogg", "mp3", "m4a"] {
             assert!(validate_format("libx264", f).is_ok(), "f = {f}");
         }
+    }
+
+    #[test]
+    fn drawtext_font_opt_styles() {
+        // 无字体无粗斜 = 不加选项
+        assert_eq!(drawtext_font_opt("", false, false), "");
+        // 仅族名
+        assert_eq!(drawtext_font_opt("Noto Sans CJK SC", false, false), ":font='Noto Sans CJK SC'");
+        // 粗/斜/粗斜组合(值内冒号必须 \: 转义,否则 drawtext 报 Option 'style' not found)
+        assert_eq!(
+            drawtext_font_opt("Noto Sans CJK SC", true, false),
+            ":font='Noto Sans CJK SC\\:style=Bold'"
+        );
+        assert_eq!(
+            drawtext_font_opt("Noto Sans CJK SC", false, true),
+            ":font='Noto Sans CJK SC\\:style=Italic'"
+        );
+        assert_eq!(
+            drawtext_font_opt("Noto Sans CJK SC", true, true),
+            ":font='Noto Sans CJK SC\\:style=Bold Italic'"
+        );
+        // 仅有粗斜无族名:用 fontconfig 默认 Sans
+        assert_eq!(drawtext_font_opt("", true, true), ":font='Sans\\:style=Bold Italic'");
+        // 族名内特殊字符转义
+        assert_eq!(drawtext_font_opt("Fo'nt:x", false, false), ":font='Fo\\'nt\\:x'");
+    }
+
+    #[test]
+    fn compile_text_uses_font_and_italic() {
+        let mut d = doc();
+        d.tracks.insert(
+            0,
+            veditor_core::Track {
+                id: "tovl".into(),
+                kind: TrackKind::File,
+                name: "文字".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            },
+        );
+        d.assets.push(Asset {
+            id: "atext".into(),
+            path: "text://atext".into(),
+            duration_secs: 3600.0,
+            has_video: true,
+            has_audio: false,
+            width: None,
+            height: None,
+            name: Some("文字".into()),
+            fps: None,
+            tags: vec![],
+        });
+        d.clips[0] = Clip {
+            id: "c1".into(),
+            track_id: "tovl".into(),
+            start: 0,
+            duration: 30,
+            asset: AssetRef {
+                asset_id: "atext".into(),
+                source_in: 0.0,
+                source_out: 1.0,
+            },
+            speed: 0.0,
+            volume: 1.0,
+            muted: false,
+            lane: Some(veditor_core::Lane::Video),
+            fx: Default::default(),
+            text: Some(veditor_core::TextClipData {
+                font: "Noto Sans CJK SC".into(),
+                italic: true,
+                ..Default::default()
+            }),
+        };
+        let args = compile_ffmpeg_cmd(&d, &ExportParams::default());
+        let fc = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap();
+        assert!(
+            fc.contains("font='Noto Sans CJK SC\\:style=Italic'"),
+            "fc = {fc}"
+        );
     }
 
     #[test]

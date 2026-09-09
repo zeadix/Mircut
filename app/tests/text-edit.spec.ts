@@ -109,3 +109,29 @@ test("退格键不删除元素:清空文字内容后连按退格,文字块仍在
   await expect(ta).toBeVisible();
   await expect(rightAside.getByRole("button", { name: "完成编辑" })).toBeVisible();
 });
+
+test("字体与斜体设置写入文字片段", async ({ page }) => {
+  const rightAside = await addTextClip(page);
+
+  // 双击进入编辑(文字区块可见)
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const cb = await canvas.boundingBox();
+  await page.mouse.dblclick(cb!.x + 20, cb!.y + 12);
+  await expect(rightAside.getByRole("button", { name: "完成编辑" })).toBeVisible({ timeout: 5000 });
+
+  // 选字体(系统字体下拉,取 mock 清单中的 Noto Sans CJK SC)
+  const fontSel = rightAside.locator("select[title^='字体']");
+  await expect(fontSel).toBeVisible();
+  await fontSel.selectOption("Noto Sans CJK SC");
+  await expect
+    .poll(async () => page.evaluate(() => window.__veditorMock.doc.clips.find((c) => c.text)?.text?.font ?? ""))
+    .toBe("Noto Sans CJK SC");
+
+  // 勾选斜体
+  // 受控勾选经 refresh(150ms 节流)回显,用 click + 文档断言(check 会因回显延迟重试点击导致双切换)
+  const italic = rightAside.locator("label").filter({ hasText: "斜体" }).locator("input");
+  await italic.click();
+  await expect
+    .poll(async () => page.evaluate(() => window.__veditorMock.doc.clips.find((c) => c.text)?.text?.italic ?? false))
+    .toBe(true);
+});

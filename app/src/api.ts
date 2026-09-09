@@ -384,6 +384,11 @@ export async function setClipFx(clipId: string, fx: NonNullable<import("./types"
   return invoke("set_clip_fx", { clipId, fx });
 }
 
+/// 系统字体清单(fc-list;文字属性面板字体下拉)。
+export async function listFonts(): Promise<string[]> {
+  return invoke("list_fonts");
+}
+
 /// 新建文字片段(合成资产;默认 3s,放到置顶"文字"轨),返回片段 id。
 export async function dropText(startTicks: number): Promise<string> {
   return invoke("drop_text", { start: startTicks });

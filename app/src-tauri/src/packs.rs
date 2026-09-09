@@ -360,6 +360,8 @@ pub(crate) fn apply_pack_item(
                     bg_color: None,
                     align_h: "center".into(),
                     align_v: "middle".into(),
+                font: String::new(),
+                italic: false,
                 }),
             };
             inner.exec(Box::new(AddClip { clip }));

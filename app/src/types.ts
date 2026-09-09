@@ -141,6 +141,10 @@ export interface TextClipData {
   align_h?: "left" | "center" | "right";
   /// 框内垂直对齐(top/middle/bottom;默认 middle)。
   align_v?: "top" | "middle" | "bottom";
+  /** 字体族名(空 = 默认字体)。 */
+  font?: string;
+  /** 斜体。 */
+  italic?: boolean;
 }
 
 export interface AlphaMatting {

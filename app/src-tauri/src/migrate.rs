@@ -89,6 +89,8 @@ fn migrate_text_overlays(doc: &mut Document) {
                 bg_color: o.bg_color,
                 align_h: "center".into(),
                 align_v: "middle".into(),
+                font: String::new(),
+                italic: false,
             }),
         });
     }

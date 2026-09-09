@@ -199,7 +199,7 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   const exitSel = rightAside.locator("select[title*='出场动画']");
   await exitSel.selectOption("SlideLeft");
   await expect.poll(async () => (await fxCheck()).exit).toEqual({ kind: "SlideLeft", dur_secs: 0.5 });
-  const tc = page.locator("input[title*='时间码跳转']");
+  const tc = page.locator("input[title^='时间码']");
   await tc.fill("2.9");
   await tc.press("Enter");
   await page.waitForTimeout(400);
@@ -211,22 +211,22 @@ test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) 
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  // 默认只有播放按钮
-  const playBtn = page.locator("button[title='播放 (空格)']");
-  const stopBtn = page.locator("button[title='停止(回到第一帧)']");
+  // 默认只有播放按钮(播放控制已移到时间轴面板顶部的传输栏)
+  const playBtn = page.locator("button[title^='播放']");
+  const stopBtn = page.locator("button[title^='停止']");
+  const pauseBtn = page.locator("button[title^='暂停']");
   await expect(playBtn).toBeVisible();
   await expect(stopBtn).toHaveCount(0);
 
   // 播放 → 暂停 + 停止
   await playBtn.click();
-  const pauseBtn = page.locator("button[title='暂停(停留当前帧)']");
   await expect(pauseBtn).toBeVisible();
   await expect(playBtn).toHaveCount(0);
 
   // 停止 → 回到第一帧,恢复仅播放按钮
   await stopBtn.click();
   await expect(playBtn).toBeVisible();
-  const tc = page.locator("input[title*='时间码跳转']");
+  const tc = page.locator("input[title^='时间码']");
   await expect(tc).toHaveValue("00:00.00");
 
   // 暂停:停留在当前帧(非 0)
@@ -236,4 +236,24 @@ test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) 
   await expect(playBtn).toBeVisible();
   const v = await tc.inputValue();
   expect(v).not.toBe("00:00.00");
+});
+
+test("时间码框:按住拖拽逐帧调整,预览状态实时同步", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+
+  const tc = page.locator("input[title^='时间码']");
+  await expect(tc).toBeVisible();
+  const box = await tc.boundingBox();
+  expect(box).toBeTruthy();
+
+  // 按住向右拖 30px(1 帧/px,fps 30 → +1 秒)
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 30, box!.y + box!.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect(tc).toHaveValue("00:01.00", { timeout: 5000 });
+
+  // 下方状态区(预览底栏)实时同步到 1.00s
+  await expect(page.getByText(/^1\.00s \[proxy\]/)).toBeVisible({ timeout: 5000 });
 });

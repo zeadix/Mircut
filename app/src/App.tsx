@@ -8,7 +8,8 @@ import Preview, { fitRect, nativeRect, rectsEq } from "./Preview";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
-import { FilmSlate, Export, Play, Pause, Stop } from "@phosphor-icons/react";
+import { FilmSlate, Export, Crosshair, FrameCorners, Magnet } from "@phosphor-icons/react";
+import TransportBar from "./TransportBar";
 import {
   DockviewReact,
   DockviewDefaultTab,
@@ -111,34 +112,6 @@ const panelComponents = {
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "var(--panel)" }}>
-          {c.playing ? (
-            <>
-              <button
-                className="btn"
-                onClick={() => {
-                  c.setPlayhead(c.playheadRef.current);
-                  c.setPlaying(false);
-                }}
-                title="暂停(停留当前帧)"
-              >
-                <Pause size={14} weight="fill" />
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  c.setPlaying(false);
-                  c.setPlayhead(0);
-                }}
-                title="停止(回到第一帧)"
-              >
-                <Stop size={14} weight="fill" />
-              </button>
-            </>
-          ) : (
-            <button className="btn" onClick={() => c.setPlaying(true)} title="播放 (空格)">
-              <Play size={14} weight="fill" />
-            </button>
-          )}
           <select
             className="ti"
             value={String(Math.abs(c.playSpeed))}
@@ -164,27 +137,29 @@ const panelComponents = {
             <option value="proxy">{t("play.proxy")}</option>
             <option value="realtime">{t("play.realtime")}</option>
           </select>
-          <input
-            className="ti"
-            style={{ width: 78, fontSize: 11 }}
-            value={c.tcDraft ?? c.fmtTimecode(c.playhead / c.fps)}
-            onChange={(e) => c.setTcDraft(e.target.value)}
-            onFocus={() => c.setTcDraft(c.fmtTimecode(c.playhead / c.fps))}
-            onBlur={() => c.setTcDraft(null)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const secs = c.parseTimecode(c.tcDraft ?? "");
-                if (Number.isFinite(secs)) {
-                  c.playheadRef.current = Math.max(0, Math.round(secs * c.fps));
-                  c.setPlayhead(c.playheadRef.current);
-                }
-                c.setTcDraft(null);
-                (e.target as HTMLInputElement).blur();
-              }
-              if (e.key === "Escape") c.setTcDraft(null);
-            }}
-            title="时间码跳转:回车确认(格式 12.5 / 1:05 / 1:02.5)"
-          />
+          {/* 预览交互三开关(原为舞台内浮动按钮,移到顶栏) */}
+          <span style={{ flex: 1 }} />
+          <button
+            className={`btn icon sm float${c.autoSelect ? " on" : ""}`}
+            onClick={() => c.setAutoSelect(!c.autoSelect)}
+            title={c.autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
+          >
+            <Crosshair size={14} weight={c.autoSelect ? "fill" : "regular"} />
+          </button>
+          <button
+            className={`btn icon sm float${c.editMode ? " on" : ""}`}
+            onClick={() => c.setEditMode(!c.editMode)}
+            title={c.editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
+          >
+            <FrameCorners size={14} weight={c.editMode ? "fill" : "regular"} />
+          </button>
+          <button
+            className={`btn icon sm float${c.snapOn ? " on" : ""}`}
+            onClick={() => c.setSnapOn(!c.snapOn)}
+            title={c.snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
+          >
+            <Magnet size={14} weight={c.snapOn ? "fill" : "regular"} />
+          </button>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <Preview
@@ -201,6 +176,9 @@ const panelComponents = {
             onSelectClip={c.onSelectClipPlain}
             onEditTextClip={(id) => c.beginTextEdit(id)}
             onSetRotate={c.onSetRotate}
+            autoSelect={c.autoSelect}
+            editMode={c.editMode}
+            snapOn={c.snapOn}
           />
         </div>
         <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
@@ -211,6 +189,31 @@ const panelComponents = {
     const c = usePanel();
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* 播放控制传输栏(原在预览面板顶栏;位于时间轴左上、轨道操作区上方) */}
+        <TransportBar
+          playing={c.playing}
+          playhead={c.playhead}
+          tps={c.tps}
+          fps={c.fps}
+          onTogglePlay={() => {
+            if (c.playing) {
+              // 暂停先回写播放头真值(rAF 直写领先 store,否则回跳)
+              c.setPlayhead(c.playheadRef.current);
+            }
+            c.setPlaying(!c.playing);
+          }}
+          onStop={() => {
+            c.setPlaying(false);
+            c.playheadRef.current = 0;
+            c.setPlayhead(0);
+          }}
+          onSeek={(t) => {
+            c.playheadRef.current = t;
+            c.setPlayhead(t);
+          }}
+          fmtTimecode={c.fmtTimecode}
+          parseTimecode={c.parseTimecode}
+        />
         <ErrorBoundary label="时间轴">
           <Timeline
             doc={c.doc}
@@ -333,6 +336,10 @@ const buildDefaultLayout = (api: DockviewApi) => {
     const panel = api.getPanel(id);
     panel?.group.api.setSize({ width: 280 });
   }
+  // 时间轴默认高度翻倍(约 2/3 列高,预览 1/3):
+  // 传输栏(播放控制+时间码)移入时间轴面板顶部,配合更高的轨道区
+  const tl = api.getPanel("timeline");
+  tl?.group.api.setSize({ height: Math.round(api.height * 0.66) });
 };
 
 /// dockview 8:组级显隐 API 在内部 DockviewComponent 上(公开 DockviewApi 未转发,
@@ -409,6 +416,10 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
   /// 时间码草稿(非 null = 正在编辑,否则显示当前时间)。
   const [tcDraft, setTcDraft] = useState<string | null>(null);
+  /// 预览交互三开关(提升到 App:按钮在预览顶栏,舞台不再浮动)。
+  const [autoSelect, setAutoSelect] = useState(true);
+  const [editMode, setEditMode] = useState(true);
+  const [snapOn, setSnapOn] = useState(true);
   /// 主题(仅用于触发重渲染;真值在 documentElement.dataset.theme)。
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   /// 语言(zh/en)。
@@ -1418,10 +1429,13 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
       tcDraft, onDetectBeats, onRemoveSilence, onSelectClipPlain,
       editingTextClipId, beginTextEdit, onSetRotate,
+      tps: doc ? doc.timebase.num / Math.max(1, doc.timebase.den) : 30,
+      autoSelect, setAutoSelect, editMode, setEditMode, snapOn, setSnapOn,
     }),
     [
       doc, thumbs, waveforms, playhead, selected, playing, playSpeed, renderMode,
       assetPreview, status, fps, dragKind, dragAssetId, alignEdges, tcDraft,
+      autoSelect, editMode, snapOn, doc?.timebase,
       setPlayhead, clearAssetPreview, onImportFiles, onPickFolder, addToTimeline,
       onSplit, onRemove, onBatchRemove, onBatchAudio, onClipAction, onClipMove,
       onClipClick, onRemoveMarker, onImportPack, onApplyPackItem, onDropPackItem,

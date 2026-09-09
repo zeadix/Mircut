@@ -189,6 +189,9 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       for (const l of lanes) mockDoc.clips.push(mk(l) as Document["clips"][number]);
       return true;
     }
+    case "list_fonts":
+      // mock:内置 + 两个常见族,覆盖下拉渲染
+      return ["sans-serif", "serif", "monospace", "Noto Sans CJK SC", "DejaVu Sans"];
     case "set_clip_text": {
       const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
       if (c) c.text = args.text as typeof c.text;

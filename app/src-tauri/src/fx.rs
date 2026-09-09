@@ -503,6 +503,8 @@ pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Resu
                     bg_color: None,
                     align_h: "center".into(),
                     align_v: "middle".into(),
+                font: String::new(),
+                italic: false,
                 }),
             },
         }));
@@ -531,4 +533,37 @@ pub(crate) fn split_sentences(text: &str) -> Vec<String> {
         out.push(s);
     }
     out
+}
+
+/// 系统字体清单(fc-list 解析;内置兜底常驻)。
+/// 供文字属性面板的字体下拉;导出端 drawtext 经 fontconfig 用同名解析。
+#[tauri::command]
+pub(crate) fn list_fonts() -> Vec<String> {
+    let mut fonts: Vec<String> = veditor_core::BUILTIN_FONTS
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let builtin: Vec<String> = fonts.clone();
+    if let Ok(out) = std::process::Command::new("fc-list")
+        .args([":", "family"])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                // fc-list 每行可能是逗号连接的多个族名(各字重一条)
+                for fam in line.split(',') {
+                    let f = fam.trim();
+                    if !f.is_empty() && !fonts.iter().any(|x| x == f) {
+                        fonts.push(f.to_string());
+                    }
+                }
+            }
+        }
+    }
+    // 内置项置顶,其余按名称排序(便于下拉查找)
+    let mut rest: Vec<String> = fonts.into_iter().filter(|f| !builtin.contains(f)).collect();
+    rest.sort();
+    rest.dedup();
+    builtin.into_iter().chain(rest).collect()
 }

@@ -50,7 +50,7 @@ test("点击定位:开关开启时空白单击 seek,关闭时不 seek", async ({
 
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
-  const tc = page.locator("input[title*='时间码跳转']");
+  const tc = page.locator("input[title^='时间码']"); // 传输栏时间码(原预览顶栏)
   // 注意:右侧 inspector 停靠列会盖住画布右段,点击点须在其左侧
   const clickX = cb!.x + 200;
 

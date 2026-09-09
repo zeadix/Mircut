@@ -122,6 +122,12 @@ pub struct TextClipData {
     /// 垂直对齐(top/middle/bottom;默认 middle)。
     #[serde(default = "default_align_v")]
     pub align_v: String,
+    /// 字体族名(预览 CSS fontFamily;导出经 fontconfig 解析;空 = 默认字体)。
+    #[serde(default)]
+    pub font: String,
+    /// 斜体(预览 CSS italic;导出 fontconfig style=Italic 近似)。
+    #[serde(default)]
+    pub italic: bool,
 }
 
 fn default_align_h() -> String {
@@ -130,6 +136,8 @@ fn default_align_h() -> String {
 fn default_align_v() -> String {
     "middle".into()
 }
+/// 字体下拉用:fc-list 解析出的系统字体族,兜底保证基础选项可用。
+pub const BUILTIN_FONTS: &[&str] = &["sans-serif", "serif", "monospace", "Noto Sans CJK SC"];
 
 fn default_text_font_size() -> f64 {
     64.0
@@ -151,6 +159,8 @@ impl Default for TextClipData {
             bg_color: None,
             align_h: default_align_h(),
             align_v: default_align_v(),
+            font: String::new(),
+            italic: false,
         }
     }
 }

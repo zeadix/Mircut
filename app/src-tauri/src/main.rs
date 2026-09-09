@@ -255,6 +255,7 @@ fn main() {
             drop_asset,
             drop_text,
             set_clip_text,
+            list_fonts,
             duplicate_clip,
             create_file_track,
             reorder_track,
