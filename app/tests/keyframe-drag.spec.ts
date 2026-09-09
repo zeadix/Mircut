@@ -16,7 +16,6 @@ async function setupKeyframes(page: import("@playwright/test").Page) {
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
 
   const rightAside = page.locator("aside").last();
-  await rightAside.getByRole("button", { name: "属性", exact: true }).click();
   // 两帧:播放头 0 与片段末尾(End = 3s)
   await rightAside.getByRole("button", { name: "+ 缩放帧" }).click();
   await page.keyboard.press("End");

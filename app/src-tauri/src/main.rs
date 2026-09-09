@@ -298,7 +298,7 @@ fn main() {
             cancel_export,
             open_browser,
             list_export_presets,
-            detect_hw_encoders,
+            detect_encoders,
             set_asset_meta,
             list_plugins,
             set_chroma_key,
@@ -525,7 +525,6 @@ mod tests {
                 text: None,
             });
             let tb = inner.doc.timebase;
-            let tps = tb.num / tb.den.max(1);
 
             // 1) 左缘向左扩展:start 300 → 150(源入点 10s → 5s)
             {
@@ -1185,6 +1184,102 @@ mod tests {
         }
     }
 
+    /// 纯音频块(音乐/分离音频)同样参与级联让位:
+    /// 此前只按视频块代表级联,音频块被移动块压住时永远不让位 -> 相互覆盖。
+    #[test]
+    fn move_clips_cascade_pushes_pure_audio_block() {
+        use crate::state::file_track_fixup_commands;
+        use veditor_core::Lane;
+        let st = AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            });
+            for a in ["a1", "amus"] {
+                inner.doc.assets.push(Asset {
+                    id: a.into(),
+                    path: format!("/tmp/{a}.mp4"),
+                    duration_secs: 30.0,
+                    has_video: a == "a1",
+                    has_audio: true,
+                    width: None,
+                    height: None,
+                    name: None,
+                    fps: None,
+                    tags: vec![],
+                });
+            }
+            let mk = |id: &str, asset: &str, lane: Lane, start: i64| Clip {
+                id: id.into(),
+                track_id: "f1".into(),
+                start,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: asset.into(),
+                    source_in: 0.0,
+                    source_out: 30.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+                text: None,
+            };
+            // 视频块 A(0-90)+ 音乐纯音频块 M(90-180,无视频代表)
+            for (id, asset, lane, start) in [
+                ("Av", "a1", Lane::Video, 0i64),
+                ("Aa", "a1", Lane::Audio, 0),
+                ("M", "amus", Lane::Audio, 90),
+            ] {
+                inner.doc.clips.push(mk(id, asset, lane, start));
+            }
+            // A 双块移动到 90(压住音乐块 M)
+            let mut sim = inner.doc.clone();
+            for id in ["Av", "Aa"] {
+                if let Some(c) = sim.clips.iter_mut().find(|c| c.id == id) {
+                    c.start = 90;
+                }
+            }
+            let moved_ids: Vec<String> = vec!["Av".into(), "Aa".into()];
+            inner.exec(Box::new(veditor_core::Compound::new(
+                "批量移动片段",
+                vec![
+                    Box::new(veditor_core::MoveClip::new("Av", 90, "f1")),
+                    Box::new(veditor_core::MoveClip::new("Aa", 90, "f1")),
+                ],
+            )));
+            for cmd in file_track_fixup_commands(&inner.doc, "f1", &moved_ids) {
+                inner.exec(cmd);
+            }
+            // A 锚位保 90;音乐块让位到 A 末端 180(不再重叠)
+            assert_eq!(inner.doc.clip("Av").unwrap().start, 90);
+            assert_eq!(inner.doc.clip("M").unwrap().start, 180, "纯音频块应被级联推挤");
+            // 音频 lane 全局无重叠
+            let mut as_: Vec<(i64, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Audio))
+                .map(|c| (c.start, c.start + c.duration))
+                .collect();
+            as_.sort();
+            for w in as_.windows(2) {
+                assert!(w[0].1 <= w[1].0, "音频 lane 重叠: {as_:?}");
+            }
+        }
+    }
+
     /// Move 落点 = 鼠标位置(抓取点跟手),不会被任何逻辑推到后面。
     #[test]
     fn move_drops_at_exact_position() {
@@ -1456,7 +1551,7 @@ mod tests {
         }
 
         // 6. 素材直读预览
-        let r = preview_asset_frame(fixture.to_string_lossy().to_string(), 1.0);
+        let r = preview_asset_frame(fixture.to_string_lossy().to_string(), 1.0, None);
         assert!(r.jpeg_path.is_some(), "asset preview 失败: {:?}", r.error);
     }
 

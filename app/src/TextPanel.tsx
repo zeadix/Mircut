@@ -95,14 +95,18 @@ function TextPanelInner({ doc, playheadTicks, onSeek, onRefresh }: Props) {
     }
     setStatus("合成中...");
     try {
-      const wav = await invoke<string>("tts_synthesize", {
+      const r = await invoke<{ path: string; engine: string }>("tts_synthesize", {
         text: ttsText,
         id: `tts_${Date.now()}`,
         voice: voice || null,
       });
-      await invoke("import_media", { path: wav });
+      await invoke("import_media", { path: r.path });
       await onRefresh();
-      setStatus(`配音已生成并导入: ${wav}(双击媒体库加入音频轨)`);
+      setStatus(
+        r.engine === "piper"
+          ? `配音已生成并导入: ${r.path}(双击媒体库加入音频轨)`
+          : `配音已生成(espeak-ng 机械音;安装 piper-tts 并在字幕面板下载音色可获得自然语音)`
+      );
     } catch (e) {
       setStatus(`TTS 失败: ${e}`);
     }

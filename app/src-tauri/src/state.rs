@@ -132,11 +132,12 @@ pub(crate) fn file_track_fixup(
             });
         }
     }
-    // 2) 块级重叠级联(视频块为块代表)。
+    // 2) 块级重叠级联(视频块为块代表;纯音频块(音乐/分离音频)同样参与,
+    //    否则被移动块压住时永远不让位 -> 相互覆盖)。
     // 锚块(被移动/新插入)保位;末端越过锚起点的其他块从锚末端开始
     // 级联贴齐(收尾相接);完全在锚之前的块原样保留;
     // 无锚时全部块做前向消重叠(通用整理)。
-    let mut blocks: Vec<(String, Option<String>, i64, i64)> = Vec::new();
+    let mut blocks: Vec<(Option<String>, Option<String>, i64, i64)> = Vec::new();
     for vid in &vid_ids {
         let (v_start, v_dur, v_asset) = {
             let v = doc.clip(vid).unwrap();
@@ -153,16 +154,31 @@ pub(crate) fn file_track_fixup(
                     && used_audio.contains(&a.id)
             })
             .map(|a| a.id.clone());
-        blocks.push((vid.clone(), aid, v_start, v_dur));
+        blocks.push((Some(vid.clone()), aid, v_start, v_dur));
+    }
+    // 纯音频块:未被任何视频配对占用的音频 clip(视频块列表之外的独立块)
+    for a in doc.clips.iter().filter(|c| {
+        c.track_id == track_id && c.lane == Some(veditor_core::Lane::Audio)
+    }) {
+        if !used_audio.contains(&a.id) {
+            blocks.push((None, Some(a.id.clone()), a.start, a.duration));
+        }
     }
     blocks.sort_by_key(|(_, _, st, _)| *st);
-    let is_anchor =
-        |vid: &str, aid: &Option<String>| anchor_ids.iter().any(|a| a == vid || aid.as_deref() == Some(a));
+    let is_anchor = |ids: &(Option<String>, Option<String>)| {
+        ids.0
+            .as_deref()
+            .is_some_and(|v| anchor_ids.iter().any(|a| a == v))
+            || ids
+                .1
+                .as_deref()
+                .is_some_and(|v| anchor_ids.iter().any(|a| a == v))
+    };
     let (anchor_start, anchor_end) = {
         let anchored: Vec<(i64, i64)> = blocks
             .iter()
-            .filter(|(vid, aid, _, _)| is_anchor(vid, aid))
-            .map(|(_, _, st, dur)| (*st, st + dur))
+            .filter(|(vid, aid, _, _)| is_anchor(&(vid.clone(), aid.clone())))
+            .map(|(_, _, st, dur)| (*st, st + *dur))
             .collect();
         if anchored.is_empty() {
             (0i64, 0i64)
@@ -175,7 +191,7 @@ pub(crate) fn file_track_fixup(
     };
     let mut placed_end: i64 = anchor_end;
     for (vid, aid, st, dur) in &blocks {
-        if is_anchor(vid, aid) {
+        if is_anchor(&(vid.clone(), aid.clone())) {
             continue; // 锚块保位(其末端已计入 placed_end)
         }
         if *st + *dur <= anchor_start && anchor_end > 0 {
@@ -183,15 +199,21 @@ pub(crate) fn file_track_fixup(
         }
         let ns = (*st).max(placed_end);
         if ns != *st {
-            if let Some(v) = doc.clips.iter_mut().find(|c| c.id == *vid) {
+            if let Some(v) = vid.as_deref().and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
+            {
                 v.start = ns;
+                fixups.push(FileFixup::Move {
+                    id: vid.clone().unwrap(),
+                    start: ns,
+                });
             }
-            fixups.push(FileFixup::Move { id: vid.clone(), start: ns });
-            if let Some(aid) = aid {
-                if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
-                    a.start = ns;
-                }
-                fixups.push(FileFixup::Move { id: aid.clone(), start: ns });
+            if let Some(a) = aid.as_deref().and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
+            {
+                a.start = ns;
+                fixups.push(FileFixup::Move {
+                    id: aid.clone().unwrap(),
+                    start: ns,
+                });
             }
         }
         placed_end = ns + dur;

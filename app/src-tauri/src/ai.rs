@@ -1,6 +1,7 @@
 //! AI:TTS 配音 + 人声分离 + 模型管理(自动拆分自 main.rs)。
 use crate::state::AppState;
 use crate::util::env_has;
+use serde::Serialize;
 use tauri::State;
 use veditor_core::{Asset, AssetRef, Clip, Command, Compound, SetFx};
 
@@ -16,43 +17,62 @@ pub(crate) fn list_tts_voices() -> Vec<serde_json::Value> {
         .collect()
 }
 
+#[derive(Serialize)]
+pub(crate) struct TtsResult {
+    path: String,
+    engine: String,
+}
+
 #[tauri::command(async)]
 pub(crate) fn tts_synthesize(
     text: String,
     id: String,
     voice: Option<String>,
-) -> Result<String, String> {
+    state: State<'_, AppState>,
+) -> Result<TtsResult, String> {
+    let _ = state;
     let engine = if env_has("piper") {
         "piper"
     } else {
+        // 降级不静默:前端按 engine 提示机械音
         "espeak-ng"
     };
-    // D3:指定音色缺失时报错(此前静默回退默认音色,用户选 A 得到 B)
-    let voice_path = match voice {
+    // D3:指定音色缺失时报错(此前静默回退默认音色,用户选 A 得到 B);
+    // 音色来源:voices/(手动放置)或 models/(模型面板下载)
+    let voice_path = match voice.as_deref() {
         Some(v) => {
-            let p = std::env::var("HOME").ok().map(|h| {
-                std::path::PathBuf::from(h)
-                    .join(".veditor/voices")
-                    .join(format!("{v}.onnx"))
-            });
-            match p {
-                Some(p) if p.exists() => Some(p),
-                _ => {
-                    return Err(format!(
-                        "音色模型不存在: ~/.veditor/voices/{v}.onnx(请放入音色文件或选择'默认')"
-                    ));
-                }
-            }
+            let home = std::env::var("HOME").ok();
+            let candidates = home
+                .iter()
+                .flat_map(|h| {
+                    [
+                        std::path::PathBuf::from(h).join(".veditor/voices").join(format!("{v}.onnx")),
+                        std::path::PathBuf::from(h).join(".veditor/models").join(format!("{v}.onnx")),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            candidates.into_iter().find(|p| p.exists()).map(Some).unwrap_or_else(|| {
+                Some(std::path::PathBuf::from(format!("~/.veditor/voices/{v}.onnx")))
+            })
         }
         None => None,
     };
+    let resolved = voice_path.clone().filter(|p| p.exists());
+    if let (Some(v), None) = (voice.as_deref(), &resolved) {
+        return Err(format!(
+            "音色模型不存在: {v}.onnx(可在字幕面板下载 Piper 音色,或放入 ~/.veditor/voices/)"
+        ));
+    }
     let tts = veditor_ai::Tts {
         engine: engine.into(),
         out_dir: std::env::temp_dir().join("veditor-tts"),
-        voice: voice_path,
+        voice: resolved,
     };
     let wav = tts.synthesize(&text, &id).map_err(|e| e.to_string())?;
-    Ok(wav.to_string_lossy().to_string())
+    Ok(TtsResult {
+        path: wav.to_string_lossy().to_string(),
+        engine: engine.into(),
+    })
 }
 
 /// 人声分离引擎状态(引擎名;None = 不可用,前端降级提示用)。

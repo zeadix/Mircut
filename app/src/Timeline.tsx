@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Clip, Document, Track } from "./types";
-import { snapToEdges, computeMagneticStart, cascadePushBlocks, buildFileBlocks } from "./snap";
+import { snapToEdges, cascadePushBlocks, buildFileBlocks } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
@@ -55,6 +55,8 @@ interface Props {
   onRenameTrack?: (trackId: string, name: string) => void;
   onRemoveTrack?: (trackId: string) => void;
   onDuplicateClip?: (clipId: string, trackId: string, start: number) => void;
+  /// 双击文字片段进入编辑(属性面板聚焦文字区)。
+  onEditTextClip?: (clipId: string) => void;
 }
 
 /// Canvas 主题色:CSS 变量经一次性读取缓存(canvas 不接 var(),
@@ -191,20 +193,19 @@ function computeClipRow(
     const track = tracks[ti];
     if (track.id === clip.track_id) {
       if (track.kind === "File") {
-        // File 轨:三行(时间+视频+音频)
+        // File 轨:两行(时间 + 单一内容区)—— 音视频不再分半区
         const tH = collapsed[track.id]?.time ? 0 : timeRowH;
-        const vH = collapsed[track.id]?.video ? 0 : videoRowH;
-        const aH = collapsed[track.id]?.audio ? 0 : audioRowH;
-        const blockTop = tops[canvasRow] ?? canvasRow * (timeRowH + videoRowH + audioRowH);
+        const cH = videoRowH + audioRowH;
+        const blockTop = tops[canvasRow] ?? canvasRow * (timeRowH + cH);
         return {
           top: blockTop,
-          totalH: tH + vH + aH,
+          totalH: tH + cH,
           timeTop: blockTop,
           videoTop: blockTop + tH,
-          audioTop: blockTop + tH + vH,
+          audioTop: blockTop + tH,
           timeH: tH,
-          videoH: vH,
-          audioH: aH,
+          videoH: cH,
+          audioH: cH,
         };
       } else {
         // 普通轨:单行
@@ -223,10 +224,7 @@ function computeClipRow(
     }
     // 未命中目标:累计当前轨道占用的 canvas 行数
     if (track.kind === "File") {
-      const tH = collapsed[track.id]?.time ? 0 : 1;
-      const vH = collapsed[track.id]?.video ? 0 : 1;
-      const aH = collapsed[track.id]?.audio ? 0 : 1;
-      canvasRow += tH + vH + aH;
+      canvasRow += (collapsed[track.id]?.time ? 0 : 1) + 1; // 时间行 + 单一内容行
     } else {
       canvasRow += 1;
     }
@@ -265,6 +263,7 @@ function TimelineInner({
   onRenameTrack,
   onRemoveTrack,
   onDuplicateClip,
+  onEditTextClip,
 }: Props) {
 const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -288,7 +287,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   /// 轨道头列纵向同步(画布滚动时 translate,不经 React)。
   const [pxPerTick, setPxPerTick] = useState(0.5);
   const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number; laneOff: number; h: number } | null>(null);
-  const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; x: number; y: number } | null>(null);
+  const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; srcIn: number; srcOut: number; x: number; y: number } | null>(null);
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
   const [dropHint, setDropHint] = useState<{ x: number; y: number; w: number; h: number; newLayer: boolean; kind: "video" | "audio" } | null>(null);
   const reorderFrom = useRef<number | null>(null);
@@ -361,7 +360,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     setCollapsed(v);
   };
 
-  /// canvas 行几何:File 轨占 3 行(时间+视频+音频),折叠行高 0。
+  /// canvas 行几何:File 轨占 2 行(时间+单一内容区),折叠行高 0。
   /// geo.rowH/geo.tops 长度 = canvas 行数(不是轨道数),一一对应。
   const geo = useMemo(() => {
     const rowH: number[] = [];
@@ -369,17 +368,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     for (const track of doc.tracks) {
       if (track.kind === "File") {
         const tH = collapsed[track.id]?.time ? 0 : timeRowH;
-        const vH = collapsed[track.id]?.video ? 0 : videoRowH;
-        const aH = collapsed[track.id]?.audio ? 0 : audioRowH;
-        // 时间行
+        // 时间行 + 单一内容行(视频+音频合并,总高不变)
         rowH.push(tH);
         acc += tH;
-        // 视频行
-        rowH.push(vH);
-        acc += vH;
-        // 音频行(紧随视频行)
-        rowH.push(aH);
-        acc += aH;
+        rowH.push(videoRowH + audioRowH);
+        acc += videoRowH + audioRowH;
       } else {
         rowH.push(trackH);
         acc += trackH;
@@ -441,13 +434,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       // 普通轨
       return { laneTop: row.top + 5, h: row.totalH - 10 };
     }
-    // File 轨
-    const isAudio = clip.lane === "Audio";
-    if (isAudio) {
-      return { laneTop: row.audioTop + 2, h: row.audioH > 0 ? row.audioH - 4 : 0 };
-    } else {
-      return { laneTop: row.videoTop + 2, h: row.videoH > 0 ? row.videoH - 4 : 0 };
-    }
+    // File 轨:单一内容区(音视频同几何)
+    return { laneTop: row.videoTop + 2, h: row.videoH > 0 ? row.videoH - 4 : 0 };
   }
 
   /// 渲染 File 轨道文件块（统一整体渲染，跨三行）
@@ -466,6 +454,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   ) {
     const { timeTop, videoTop, audioTop, timeH, videoH, audioH, totalH } = row;
     const clipTrack = track;
+    // 单一内容区:缩略图铺满整行,波形/淡入淡出叠加在下部波带;
+    // 纯音频块(无视频部分)波形铺满整行
+    const hasVideoPart = blockClips.some((c) => c.lane === "Video");
+    const waveTop = hasVideoPart ? videoTop + Math.round(videoH * 0.55) : videoTop;
+    const waveH = videoTop + videoH - waveTop;
 
     // 文字片段:整块紫底 + 内容文本(与视频块同几何,拖拽/裁剪/命中通用)
     if (clip.text) {
@@ -516,16 +509,18 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       ctx.fillStyle = "#f5f5f7";
       ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), timeH - 2);
 
-      // 时间文字:显示时间轴入出点(与标尺一致) —— 拖拽两端修剪时双向可见
-      // (此前显示素材内 source_in/out,与时间轴语义混淆)
+      // 时间文字:始/终 = 素材内截取区间(与属性面板"截取范围"同语义),
+      // 总时长 = 终 - 始(只随修剪变化;移动块/变速都不影响,块宽本身 = 时间轴时长)
       const videoClip = blockClips.find(c => c.lane === "Video")?.clip ?? blockClips[0].clip;
-      const inStr = fmtTicks(videoClip.start, tps);
-      const outStr = fmtTicks(videoClip.start + videoClip.duration, tps);
-      const durSecs = videoClip.duration / tps;
+      const srcIn = videoClip.asset.source_in ?? 0;
+      const srcOut = videoClip.asset.source_out ?? 0;
+      const inStr = srcIn.toFixed(2);
+      const outStr = srcOut.toFixed(2);
+      const durSecs = Math.max(0, srcOut - srcIn);
 
       ctx.fillStyle = "#666";
       ctx.font = "10px sans-serif";
-      const inText = `入 ${inStr} → 出 ${outStr}`;
+      const inText = `始 ${inStr} → 终 ${outStr}`;
       const durText = `| ${durSecs.toFixed(1)}s`;
       if (cw > 110) {
         ctx.fillText(inText, x + 4, timeTop + timeH - 4);
@@ -593,20 +588,27 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     if (audioH > 0) {
       const audioClip = blockClips.find(c => c.lane === "Audio")?.clip;
 
-      // 检查 audio_on 开关
+      // 检查 audio_on 开关(灰罩/渐变只覆盖波带,不遮缩略图)
       if (clipTrack.audio_on === false) {
         ctx.fillStyle = "rgba(128, 128, 128, 0.3)";
-        ctx.fillRect(x + 1, audioTop + 1, Math.max(cw - 2, 0), audioH - 2);
+        ctx.fillRect(x + 1, waveTop + 1, Math.max(cw - 2, 0), waveH - 2);
       } else {
-        const grad = ctx.createLinearGradient(0, audioTop, 0, audioTop + audioH);
-        grad.addColorStop(0, "rgba(52, 199, 89, 0.1)");
-        grad.addColorStop(1, "rgba(52, 199, 89, 0.2)");
-        ctx.fillStyle = grad;
-        ctx.fillRect(x + 1, audioTop + 1, Math.max(cw - 2, 0), audioH - 2);
+        if (waveH > 2) {
+          // 波带压在缩略图上:先铺暗底,保证波形对比度
+          if (hasVideoPart) {
+            ctx.fillStyle = "rgba(22, 30, 40, 0.55)";
+            ctx.fillRect(x + 1, waveTop + 1, Math.max(cw - 2, 0), waveH - 2);
+          }
+          const grad = ctx.createLinearGradient(0, waveTop, 0, waveTop + waveH);
+          grad.addColorStop(0, "rgba(52, 199, 89, 0.1)");
+          grad.addColorStop(1, "rgba(52, 199, 89, 0.2)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(x + 1, waveTop + 1, Math.max(cw - 2, 0), waveH - 2);
+        }
 
         if (audioClip) {
           // ===== 淡入淡出效果（楔形） =====
-          if (audioH >= 18 && cw > 24) {
+          if (waveH >= 12 && cw > 24) {
             const afx = audioClip.fx?.audio_fx;
             const finLive = fadeLive?.clipId === audioClip.id && fadeLive.edge === "in" ? fadeLive.secs : null;
             const foutLive = fadeLive?.clipId === audioClip.id && fadeLive.edge === "out" ? fadeLive.secs : null;
@@ -618,25 +620,25 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             if (finX > 8.5) {
               ctx.fillStyle = "rgba(126, 217, 87, 0.30)";
               ctx.beginPath();
-              ctx.moveTo(x, audioTop);
-              ctx.lineTo(x + finX, audioTop);
-              ctx.lineTo(x, audioTop + audioH);
+              ctx.moveTo(x, waveTop);
+              ctx.lineTo(x + finX, waveTop);
+              ctx.lineTo(x, waveTop + waveH);
               ctx.closePath();
               ctx.fill();
             }
             if (foutX > 8.5) {
               ctx.fillStyle = "rgba(126, 217, 87, 0.30)";
               ctx.beginPath();
-              ctx.moveTo(x + cw, audioTop);
-              ctx.lineTo(x + cw - foutX, audioTop);
-              ctx.lineTo(x + cw, audioTop + audioH);
+              ctx.moveTo(x + cw, waveTop);
+              ctx.lineTo(x + cw - foutX, waveTop);
+              ctx.lineTo(x + cw, waveTop + waveH);
               ctx.closePath();
               ctx.fill();
             }
             ctx.fillStyle = finLive !== null || (afx?.fade_in ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
-            ctx.fillRect(x + finX - 3, audioTop + 1, 6, 5);
+            ctx.fillRect(x + finX - 3, waveTop + 1, 6, 5);
             ctx.fillStyle = foutLive !== null || (afx?.fade_out ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
-            ctx.fillRect(x + cw - foutX - 3, audioTop + 1, 6, 5);
+            ctx.fillRect(x + cw - foutX - 3, waveTop + 1, 6, 5);
           }
 
           // ===== 波形图(常显;数据缺失/空数组/全零时用确定性占位波形) =====
@@ -656,8 +658,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                 sourceSecsAt(audioClip.speed, audioClip.fx?.speed?.keyframes, tps, 1, tickAt);
               const peak = wf[Math.floor(srcSecs * 10)] ?? 0;
               if (peak > 0.01) {
-                const ph = peak * (audioH - 4) * 0.8;
-                const cy = audioTop + audioH / 2;
+                const ph = peak * (waveH - 4) * 0.8;
+                const cy = waveTop + waveH / 2;
                 ctx.moveTo(px, cy - ph / 2);
                 ctx.lineTo(px, cy + ph / 2);
               }
@@ -666,9 +668,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           }
 
           // ===== 音量包络曲线(仅"编辑音频"模式显示) =====
-          if (audioEditMode && audioH > 0 && cw > 2) {
-            const envLaneTop = audioTop + 2;
-            const envLaneH = audioH - 4;
+          if (audioEditMode && videoH > 0 && cw > 2) {
+            const envLaneTop = videoTop + 2;
+            const envLaneH = videoH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
             ctx.strokeStyle = "rgba(255,255,255,0.95)";
@@ -706,13 +708,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           if (cw > 60) {
             ctx.fillStyle = "#34c759";
             ctx.font = "9px sans-serif";
-            ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, audioTop + 12);
+            ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, waveTop + 12);
           }
         } else {
           // 无配对音频 clip:明确提示(而非静默空白)
           ctx.fillStyle = "rgba(90, 100, 115, 0.9)";
           ctx.font = "10px sans-serif";
-          ctx.fillText("无音频", x + 6, audioTop + audioH / 2 + 3);
+          ctx.fillText("无音频", x + 6, waveTop + waveH / 2 + 3);
         }
       }
     }
@@ -798,10 +800,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       let acc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        // File 轨 3 行(时间+视频+音频),普通轨 1 行
-        const rows = tr.kind === "File"
-          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
-          : 1;
+        // File 轨 2 行(时间+单一内容区),普通轨 1 行
+        const rows = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
         if (acc + rows > canvasRow) {
           trackIdx = ti;
           rowInFile = canvasRow - acc;
@@ -812,13 +812,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       if (trackIdx < 0) continue;
       const track = doc.tracks[trackIdx];
       if (track.kind === "File") {
-        // File 轨:时间行(灰) + 视频行(绿) + 音频行(蓝)
+        // File 轨:时间行(灰) + 单一内容行(中性色)
         if (rowInFile === 0) {
           ctx.fillStyle = "rgba(120, 120, 120, 0.10)"; // 时间行灰色
-        } else if (rowInFile === 1) {
-          ctx.fillStyle = "rgba(90, 160, 90, 0.10)"; // 视频行绿色
         } else {
-          ctx.fillStyle = "rgba(80, 120, 180, 0.10)"; // 音频行蓝色
+          ctx.fillStyle = "rgba(110, 140, 120, 0.08)"; // 内容行
         }
         ctx.fillRect(0, y, w, rh);
         // 行分隔线
@@ -1093,10 +1091,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       {
         let rowAcc = 0;
         for (const tr of doc.tracks) {
-          const tH = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) : 0;
-          const vH = tr.kind === "File" ? (collapsed[tr.id]?.video ? 0 : 1) : 1;
-          const aH = tr.kind === "File" ? (collapsed[tr.id]?.audio ? 0 : 1) : 0;
-          const rows = tH + vH + aH;
+          const rows = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
           if (ghost.trackIdx >= rowAcc && ghost.trackIdx < rowAcc + rows) {
             trackAtRow = tr;
             trackFirstRow = rowAcc;
@@ -1110,8 +1105,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         gy = geo.tops[trackFirstRow] ?? trackFirstRow * (timeRowH + videoRowH + audioRowH);
         gh = geo.rowH.slice(trackFirstRow, trackFirstRow + 3).reduce((a, b) => a + b, 0);
       } else {
-        // Video/Audio 轨道：保持原有逻辑
-        gy = ghost.trackIdx * trackH + ghost.laneOff + 2;
+        // 普通/音频轨:trackIdx 是 canvas 行号,上方 File 轨是 3 行不等高,
+        // 不能按统一 trackH 相乘(行多时虚影 Y 累积漂移到很远的位置)
+        gy = (geo.tops[ghost.trackIdx] ?? ghost.trackIdx * trackH) + ghost.laneOff + 2;
         gh = ghost.h;
       }
 
@@ -1135,10 +1131,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       ctx.lineTo(hx, trimHint.y + trackH);
       ctx.stroke();
       ctx.lineWidth = 1;
-      const label = trimHint.edge === "left"
-        ? `入 ${fmtTicks(trimHint.newStart, tps)}`
-        : `出 ${fmtTicks(trimHint.newStart + trimHint.newDuration, tps)}`;
-      const txt = `${label}  时长 ${fmtTicks(trimHint.newDuration, tps)}`;
+      // 修剪/滑移预览:素材内始/终(与块标签、属性面板"截取范围"同语义)
+      const label = `始 ${trimHint.srcIn.toFixed(2)} → 终 ${trimHint.srcOut.toFixed(2)}`;
+      const txt = `${label}  时长 ${(Math.max(0, trimHint.srcOut - trimHint.srcIn)).toFixed(2)}s`;
       ctx.font = "11px sans-serif";
       const tw = ctx.measureText(txt).width + 10;
       const bx = Math.min(Math.max(sx + 4, hx - tw / 2), sx + viewW - tw - 4);
@@ -1399,10 +1394,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       let rowAcc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        // File 轨 3 行(时间+视频+音频),普通轨 1 行
-        const rows = tr.kind === "File"
-          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
-          : 1;
+        // File 轨 2 行(时间+单一内容区),普通轨 1 行
+        const rows = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
         if (rowAcc + rows > canvasRow) {
           trackIdx = ti;
           rowInFile = canvasRow - rowAcc;
@@ -1419,7 +1412,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         const blocks = (docIndex.fileBlocks.get(track.id) ?? []);
         const b = blocks.find((blk) => t >= blk.start && t < blk.start + blk.duration);
         if (b) {
-          const clipId = rowInFile === 2 ? (b.audioId ?? b.videoId) : (b.videoId ?? b.audioId);
+          const clipId = b.videoId ?? b.audioId;
           if (!clipId) return null;
           const bx0 = b.start * pxPerTick;
           const bx1 = (b.start + b.duration) * pxPerTick;
@@ -1505,15 +1498,20 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const track = docIndex.trackById.get(clip.track_id);
       if (track?.locked) return;
       // 音频块交互分区:
-      // 编辑模式 → 音频行专司曲线编辑(拖节点/点线上创建节点);
-      // 普通模式 → 音频行整体选中/移动块(仅顶边小手柄调淡入淡出)。
-      const isAudioBlock = clip.lane === "Audio" || track?.kind === "Audio";
-      const row = clipRow(clip);
-      const laneGeo = row ? clipLaneGeo(row, clip) : null;
+      // 编辑模式 → 音频区专司曲线编辑(拖节点/点线上创建节点);
+      // 普通模式 → 内容区整体选中/移动块(仅顶边小手柄调淡入淡出)。
+      // 单一内容区:块命中返回视频代表,曲线/淡入淡出的编辑目标是音频兄弟块
+      let envClip = clip;
+      if (track?.kind === "File" && clip.lane !== "Audio") {
+        envClip = siblingClip(clip) ?? clip;
+      }
+      const isAudioBlock = envClip.lane === "Audio" || track?.kind === "Audio";
+      const row = clipRow(envClip);
+      const laneGeo = row ? clipLaneGeo(row, envClip) : null;
       const inAudioRow = row ? yIn >= row.audioTop && yIn < row.audioTop + row.audioH : false;
       if (audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow) {
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
-        const kfs = clip.fx?.volume?.keyframes ?? [];
+        const kfs = envClip.fx?.volume?.keyframes ?? [];
         // 1) 节点命中(±6px):拖拽既有节点(仅调值)
         let hitKf: (typeof kfs)[number] | null = null;
         for (const k of kfs) {
@@ -1525,39 +1523,39 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           }
         }
         if (hitKf) {
-          onClipClick(clip.id, false);
-          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: hitKf.t };
-          setEnvLive({ clipId: clip.id, tLocal: hitKf.t, v: hitKf.value });
+          onClipClick(envClip.id, false);
+          dragRef.current = { kind: "envelope", clipId: envClip.id, fixedT: hitKf.t };
+          setEnvLive({ clipId: envClip.id, tLocal: hitKf.t, v: hitKf.value });
           return;
         }
         // 2) 音量线上点击(±8px):创建新节点并进入拖拽(提交在 pointerup)
-        const vAt = valueAt(kfs, t - clip.start) ?? clip.volume;
+        const vAt = valueAt(kfs, t - envClip.start) ?? envClip.volume;
         if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 8) {
-          onClipClick(clip.id, false);
-          const tLocal = Math.max(0, Math.min(clip.duration, t - clip.start));
-          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: tLocal };
-          setEnvLive({ clipId: clip.id, tLocal, v: envValFromY(yIn, laneGeo.laneTop, laneGeo.h) });
+          onClipClick(envClip.id, false);
+          const tLocal = Math.max(0, Math.min(envClip.duration, t - envClip.start));
+          dragRef.current = { kind: "envelope", clipId: envClip.id, fixedT: tLocal };
+          setEnvLive({ clipId: envClip.id, tLocal, v: envValFromY(yIn, laneGeo.laneTop, laneGeo.h) });
           return;
         }
         // 3) 编辑模式下音频区其余点击:仅选中(防误移动)
-        onClipClick(clip.id, false);
+        onClipClick(envClip.id, false);
         return;
       }
       if (!audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow && yIn - laneGeo.laneTop <= 7) {
-        // 淡入/淡出手柄:顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
+        // 淡入/淡出手柄:波带顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
-        const maxFade = (clip.duration / tps) * 0.9;
-        const afx = clip.fx?.audio_fx;
-        const finX = clip.start * pxPerTick + Math.max(Math.min(maxFade, afx?.fade_in ?? 0) * tps * pxPerTick, 8);
-        const foutX = (clip.start + clip.duration) * pxPerTick - Math.max(Math.min(maxFade, afx?.fade_out ?? 0) * tps * pxPerTick, 8);
+        const maxFade = (envClip.duration / tps) * 0.9;
+        const afx = envClip.fx?.audio_fx;
+        const finX = envClip.start * pxPerTick + Math.max(Math.min(maxFade, afx?.fade_in ?? 0) * tps * pxPerTick, 8);
+        const foutX = (envClip.start + envClip.duration) * pxPerTick - Math.max(Math.min(maxFade, afx?.fade_out ?? 0) * tps * pxPerTick, 8);
         if (Math.abs(px - finX) <= 6) {
-          dragRef.current = { kind: "fade", clipId: clip.id, edge: "in" };
-          setFadeLive({ clipId: clip.id, edge: "in", secs: afx?.fade_in ?? 0 });
+          dragRef.current = { kind: "fade", clipId: envClip.id, edge: "in" };
+          setFadeLive({ clipId: envClip.id, edge: "in", secs: afx?.fade_in ?? 0 });
           return;
         }
         if (Math.abs(px - foutX) <= 6) {
-          dragRef.current = { kind: "fade", clipId: clip.id, edge: "out" };
-          setFadeLive({ clipId: clip.id, edge: "out", secs: afx?.fade_out ?? 0 });
+          dragRef.current = { kind: "fade", clipId: envClip.id, edge: "out" };
+          setFadeLive({ clipId: envClip.id, edge: "out", secs: afx?.fade_out ?? 0 });
           return;
         }
       }
@@ -1603,7 +1601,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           const tr = doc.tracks[ti];
           if (tr.kind === "File") {
             // File 轨 3 行:时间+视频+音频
-            canvasRow += (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1);
+            canvasRow += (collapsed[tr.id]?.time ? 0 : 1) + 1; // 时间行 + 单一内容行
           } else {
             canvasRow += 1;
           }
@@ -1651,11 +1649,17 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const rowClip = docIndex.clipsById.get(d.leftId);
       const row = rowClip && clipRow(rowClip);
       const geo = rowClip && row ? clipLaneGeo(row, rowClip) : null;
+      // 拖拽预览直接给素材内始/终(与块标签同语义):右缘修剪只伸缩 source_out
+      const rcSrcIn = rowClip?.asset.source_in ?? 0;
+      const rcSpan = (rowClip?.asset.source_out ?? 0) - rcSrcIn;
+      const dSpanSecs = (delta / tps) * (rowClip?.speed || 1);
       setTrimHint({
         clipId: d.leftId,
         edge: "right",
         newStart: d.origBoundary - d.origDurL,
         newDuration: d.origDurL + delta,
+        srcIn: rcSrcIn,
+        srcOut: Math.max(rcSrcIn + 0.04, rcSrcIn + rcSpan + dSpanSecs),
         x: e.clientX - (rectC?.left ?? 0),
         y: geo?.laneTop ?? 0,
       });
@@ -1670,11 +1674,18 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         const geo = clip && row ? clipLaneGeo(row, clip) : null;
         const rectC = canvasRef.current?.getBoundingClientRect();
         if (row && clip && geo) {
+          // 滑移 = 源窗口平移:预览直接给出平移后的素材内始/终(块位置/长度不变)
+          const deltaSlip = t - d.downT;
+          const sIn = clip.asset.source_in ?? 0;
+          const sSpan = (clip.asset.source_out ?? 0) - sIn;
+          const newSrcIn = Math.max(0, d.origSourceIn + (deltaSlip / tps) * (clip.speed || 1));
           setTrimHint({
             clipId: d.clipId,
             edge: "left",
             newStart: clip.start,
             newDuration: clip.duration,
+            srcIn: newSrcIn,
+            srcOut: newSrcIn + sSpan,
             x: e.clientX - (rectC?.left ?? 0),
             y: geo.laneTop,
           });
@@ -1754,22 +1765,15 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       let rowAcc = 0;
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
-        // File 轨 3 行(时间+视频+音频),普通轨 1 行
-        const rows = tr.kind === "File"
-          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
-          : 1;
+        // File 轨 2 行(时间+单一内容区),普通轨 1 行
+        const rows = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
         const offsetInTrack = targetCanvasRow - rowAcc;
         if (rowAcc + rows > targetCanvasRow) {
           targetTrackIdx = ti;
           // File 轨:0=时间行,1=视频行,2=音频行
           if (tr.kind === "File") {
-            if (offsetInTrack === 0) {
-              targetLaneInFile = "Time";
-            } else if (offsetInTrack === 1) {
-              targetLaneInFile = "Video";
-            } else {
-              targetLaneInFile = "Audio";
-            }
+            // 0=时间行,1=单一内容行;File 轨目标 lane 由被抓 clip 自身决定
+            targetLaneInFile = offsetInTrack === 0 ? "Time" : "Video";
           }
           break;
         }
@@ -1806,22 +1810,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const laneOff = 0;
       const gh = isFile ? timeRowH + videoRowH + audioRowH - 4 : trackH - 10;
       const grab = "grabTicks" in d ? d.grabTicks : 0;
-      // 抓取跟随:虚影保持按下时鼠标在块上的相对位置(抓取偏移),
-      // 先磁吸吸附(像素容差,排除自身块边缘防互吸),再对重叠块贴缘,避免虚影压块
-      const sib0 = siblingClip(clip);
+      // 抓取跟随:虚影 = 光标位置(扣抓取偏移)+ 磁吸吸附(排除自身块边缘防互吸)。
+      // 不做"对重叠块贴缘"传送:块一长虚影会飞到远处,且与落点级联推挤
+      // (cascadePushBlocks/后端 fixup)语义冲突 —— 所见(虚影)即所放(落点)。
       const rawStart = Math.max(0, snapTicks(Math.max(0, t - grab), blockClipIds(d.clipId)));
-      const mt = moveTargetRef.current;
-      const magStart = computeMagneticStart(
-        rawStart,
-        clip,
-        doc.clips,
-        laneOf,
-        mt?.trackId ?? clip.track_id,
-        mt?.lane ?? null
-      );
       setGhost({
         clipId: d.clipId,
-        start: magStart,
+        start: rawStart,
         duration: clip.duration,
         trackIdx: useRow,
         laneOff,
@@ -1839,9 +1834,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const newStart = Math.min(Math.max(t, minStart), maxStart);
       const rect = canvasRef.current?.getBoundingClientRect();
       const laneGeoTrim = row ? clipLaneGeo(row, clip) : null;
+      // 左缘修剪:起点位移(秒)×速度 = 源入点右移量
+      const dIn = ((newStart - clip.start) / tps) * (clip.speed || 1);
       setTrimHint({
         clipId: d.clipId, edge: "left", newStart,
         newDuration: clip.start + clip.duration - newStart,
+        srcIn: Math.max(0, (clip.asset.source_in ?? 0) + dIn),
+        srcOut: clip.asset.source_out ?? 0,
         x: e.clientX - (rect?.left ?? 0),
         y: laneGeoTrim?.laneTop ?? 0,
       });
@@ -1850,9 +1849,14 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const newEnd = Math.max(clip.start + 1, t);
       const rect = canvasRef.current?.getBoundingClientRect();
       const laneGeoTrim = row ? clipLaneGeo(row, clip) : null;
+      // 右缘修剪:时长伸缩(秒)×速度 = 源出点位移
+      const dOut = ((newEnd - clip.start - clip.duration) / tps) * (clip.speed || 1);
+      const sIn = clip.asset.source_in ?? 0;
       setTrimHint({
         clipId: d.clipId, edge: "right", newStart: clip.start,
         newDuration: newEnd - clip.start,
+        srcIn: sIn,
+        srcOut: Math.max(sIn + 0.04, (clip.asset.source_out ?? 0) + dOut),
         x: e.clientX - (rect?.left ?? 0),
         y: laneGeoTrim?.laneTop ?? 0,
       });
@@ -1965,24 +1969,18 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         const sib = primaryClip ? siblingClip(primaryClip) : null;
         const fileTarget = docIndex.trackById.get(target.trackId)?.kind === "File";
         const groupMoving = !!group && group.ids.length > 0;
-        // 与虚影一致:抓取偏移 + 磁吸吸附(排除自身块边缘) + 对重叠块贴缘(所见即所放)
-        const snapStart = Math.max(
+        // 落点 = 光标位置(扣抓取偏移)+ 磁吸吸附(排除自身块边缘);
+        // 与虚影同值,所见即所放。重叠消解交给级联推挤
+        // (File 轨:下方 cascadePushBlocks + 后端块级修正;普通轨:后端磁吸推挤)
+        const dropStart = Math.max(
           0,
           snapTicks(Math.max(0, ticksFromClientX(e.clientX) - grab), blockClipIds(d.clipId))
         );
-        const magStart = computeMagneticStart(
-          snapStart,
-          clip,
-          doc.clips,
-          laneOf,
-          target.trackId,
-          target.lane ?? null
-        );
         const entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[] = [];
         if (groupMoving && onMoveClips) {
-          const delta = magStart - clip.start;
+          const delta = dropStart - clip.start;
           entries.push(
-            { clipId: d.clipId, newStart: magStart, newTrackId: target.trackId, lane: target.lane ?? null },
+            { clipId: d.clipId, newStart: dropStart, newTrackId: target.trackId, lane: target.lane ?? null },
             ...group.ids
               .filter((id) => id !== d.clipId)
               .map((id) => ({
@@ -1996,7 +1994,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           // File 轨:保持被抓 clip 自身 lane(不按光标行改 lane)
           entries.push({
             clipId: d.clipId,
-            newStart: magStart,
+            newStart: dropStart,
             newTrackId: target.trackId,
             lane: fileTarget ? (clip.lane ?? "Video") : (target.lane ?? null),
           });
@@ -2005,7 +2003,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         if (sib) {
           entries.push({
             clipId: sib.id,
-            newStart: Math.max(0, magStart),
+            newStart: Math.max(0, dropStart),
             newTrackId: fileTarget ? target.trackId : sib.track_id,
             lane: sib.lane ?? null,
           });
@@ -2015,7 +2013,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         if (fileTarget && !groupMoving) {
           const D = clip.duration;
           const excludeIds = new Set(blockClipIds(d.clipId));
-          for (const p of cascadePushBlocks(doc.clips, target.trackId, magStart, D, excludeIds)) {
+          for (const p of cascadePushBlocks(doc.clips, target.trackId, dropStart, D, excludeIds)) {
             const c = docIndex.clipsById.get(p.clipId);
             entries.push({
               clipId: p.clipId,
@@ -2028,9 +2026,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         if (onMoveClips && entries.length > 0) {
           onMoveClips(entries);
         } else if (onClipMove) {
-          onClipMove(d.clipId, magStart, target.trackId, target.lane ?? undefined);
+          onClipMove(d.clipId, dropStart, target.trackId, target.lane ?? undefined);
           if (sib) {
-            onClipMove(sib.id, Math.max(0, magStart), sib.track_id);
+            onClipMove(sib.id, Math.max(0, dropStart), sib.track_id);
           }
         }
       }
@@ -2084,16 +2082,14 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     let rowAcc = 0;
     for (let ti = 0; ti < doc.tracks.length; ti++) {
       const tr = doc.tracks[ti];
-      // File 轨 3 行(时间+视频+音频),普通轨 1 行
-      const rows = tr.kind === "File"
-        ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
-        : 1;
+      // File 轨 2 行(时间+单一内容区),普通轨 1 行
+      const rows = tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
       if (rowAcc + rows > targetCanvasRow) {
         targetTrackIdx = ti;
         const rowInFile = targetCanvasRow - rowAcc;
         if (tr.kind === "File") {
-          // 0=时间行,1=视频行,2=音频行;lane 仅作落点类型参考
-          targetLane = rowInFile === 2 ? "Audio" : "Video";
+          // 0=时间行,1=单一内容行;lane 由素材类型在后端决定(lanes_for_drop)
+          targetLane = rowInFile === 0 ? null : "Video";
         } else {
           targetLane = tr.kind === "Audio" ? "Audio" : "Video";
         }
@@ -2137,15 +2133,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         if (tr.id === target.trackId) {
           hy = geo.tops[acc] ?? 0;
           hh = tr.kind === "File"
-            ? (collapsed[tr.id]?.time ? 0 : timeRowH) +
-              (collapsed[tr.id]?.video ? 0 : videoRowH) +
-              (collapsed[tr.id]?.audio ? 0 : audioRowH)
+            ? (collapsed[tr.id]?.time ? 0 : timeRowH) + videoRowH + audioRowH
             : trackH;
           break;
         }
-        acc += tr.kind === "File"
-          ? (collapsed[tr.id]?.time ? 0 : 1) + (collapsed[tr.id]?.video ? 0 : 1) + (collapsed[tr.id]?.audio ? 0 : 1)
-          : 1;
+        acc += tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
       }
     } else if (target.trackId === "__newlayer__") {
       // 新建轨道:在末尾追加,高亮完整新块高度
@@ -2387,8 +2379,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
               const track = doc.tracks[ti];
               if (track.kind === "File") {
                 const tH = collapsed[track.id]?.time ? 0 : timeRowH;
-                const vH = collapsed[track.id]?.video ? 0 : videoRowH;
-                const aH = collapsed[track.id]?.audio ? 0 : audioRowH;
+                const cH = videoRowH + audioRowH;
 
                 // ===== 时间行(File 轨) =====
                 if (tH > 0) {
@@ -2429,19 +2420,19 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                   );
                 }
 
-                // ===== 视频行(File 轨) =====
-                if (vH > 0) {
+                // ===== 内容行(File 轨,单一区):合成开关并列 =====
+                if (cH > 0) {
                   rows.push(
                     <div
-                      key={`${track.id}-v`}
+                      key={`${track.id}-c`}
                       className="track-head-video"
                       style={{
-                        height: vH,
+                        height: cH,
                         display: "flex",
                         alignItems: "center",
                         gap: 4,
                         padding: "0 6px",
-                        borderBottom: aH > 0 ? "none" : "1px solid var(--border)",
+                        borderBottom: "1px solid var(--border)",
                         position: "relative",
                         opacity: reorderHint === ti ? 0.45 : 1,
                       }}
@@ -2464,53 +2455,27 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                       {reorderInsert === ti && (
                         <div style={{ position: "absolute", top: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: "var(--radius-ctl)", boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
                       )}
-                      {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && vH === videoRowH && (
+                      {ti === doc.tracks.length - 1 && reorderInsert === ti + 1 && cH === videoRowH + audioRowH && (
                         <div style={{ position: "absolute", bottom: -2, left: 4, right: 4, height: 3, background: "var(--accent)", borderRadius: "var(--radius-ctl)", boxShadow: "0 0 6px #ffd75e88", zIndex: 2 }} />
                       )}
-                      {/* 行标签:缩进与音频行对齐 */}
                       <div style={{ width: 20, flexShrink: 0 }} />
                       <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
-                        <span style={{ fontSize: 9, color: "#5f9e73", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          视频
+                        <span style={{ fontSize: 9, color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          音视频
                         </span>
                       </div>
-                      {/* 视频合成开关(本行专属) */}
+                      {/* 视频合成开关:关闭 = 只合成音频 */}
                       <button className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.4, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
                         {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
                       </button>
-                    </div>
-                  );
-                }
-
-                // ===== 音频行(File 轨) =====
-                if (aH > 0) {
-                  rows.push(
-                    <div
-                      key={`${track.id}-a`}
-                      className="track-head-audio"
-                      style={{
-                        height: aH,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        padding: "0 6px",
-                        borderBottom: "1px solid var(--border)",
-                      }}
-                    >
-                      {/* 音频行缩进指示 */}
-                      <div style={{ width: 20, flexShrink: 0 }} />
-                      <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
-                        <span style={{ fontSize: 9, color: "#5f83b8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          音频
-                        </span>
-                      </div>
-                      {/* 音频合成开关(本行专属) */}
+                      {/* 音频合成开关:关闭 = 只合成视频 */}
                       <button className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.4, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
                         <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
                       </button>
                     </div>
                   );
                 }
+
               } else {
                 // ===== 普通轨道(Video/Audio) =====
                 const vH = trackH;
@@ -2672,22 +2637,27 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
               onDoubleClick={(e) => {
                 const t = ticksFromClientX(e.clientX);
                 const hit = hitTest(t, e.clientX, e.clientY);
-                if (hit) {
-                  const clip = docIndex.clipsById.get(hit.clipId)!;
-                  const tpsL = doc.timebase.num / doc.timebase.den;
-                  setRangeEdit({
-                    clipId: clip.id,
-                    start: clip.start,
-                    duration: clip.duration,
-                    sourceIn: clip.asset.source_in,
-                  });
-                  setRangeDraft({
-                    start: (clip.start / tpsL).toFixed(2),
-                    duration: (clip.duration / tpsL).toFixed(2),
-                    sourceIn: clip.asset.source_in.toFixed(2),
-                  });
-                  onClipRangeEdit?.(clip.id);
+                if (!hit) return;
+                const clip = docIndex.clipsById.get(hit.clipId)!;
+                // 双击文字片段:进入文字编辑(属性面板聚焦);其余:精确时间弹窗
+                if (clip.text) {
+                  if (!selectedSet.has(hit.clipId)) onClipClick(hit.clipId, false);
+                  onEditTextClip?.(hit.clipId);
+                  return;
                 }
+                const tpsL = doc.timebase.num / doc.timebase.den;
+                setRangeEdit({
+                  clipId: clip.id,
+                  start: clip.start,
+                  duration: clip.duration,
+                  sourceIn: clip.asset.source_in,
+                });
+                setRangeDraft({
+                  start: (clip.start / tpsL).toFixed(2),
+                  duration: (clip.duration / tpsL).toFixed(2),
+                  sourceIn: clip.asset.source_in.toFixed(2),
+                });
+                onClipRangeEdit?.(clip.id);
               }}
             />
           </div>

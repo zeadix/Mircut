@@ -13,12 +13,17 @@ pub(crate) struct AsrResult {
 
 #[tauri::command(async)]
 pub(crate) fn transcribe(path: String, state: State<'_, AppState>) -> Result<AsrResult, String> {
-    // 优先 whisper-cli(模型在 ~/.veditor/models/),降级静音切分
-    let model = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join(".veditor/models/ggml-base.bin");
+    // 优先 whisper-cli:自动选用已下载的 ggml 模型(small 质量优先),
+    // 都没有则降级静音切分
+    let models_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+        .join(".veditor/models");
+    let model = ["ggml-small.bin", "ggml-base.bin"]
+        .iter()
+        .map(|n| models_dir.join(n))
+        .find(|p| p.exists());
     let media = PathBuf::from(&path);
     let engine;
-    let segments = if model.exists() {
+    let segments = if let Some(model) = &model {
         let mut w = veditor_ai::WhisperCli::new(&model);
         match w.transcribe(&media) {
             Ok(s) => {

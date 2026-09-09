@@ -189,8 +189,39 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       for (const l of lanes) mockDoc.clips.push(mk(l) as Document["clips"][number]);
       return true;
     }
+    case "set_clip_text": {
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      if (c) c.text = args.text as typeof c.text;
+      return true;
+    }
+    case "transcribe": {
+      // 假 ASR:按素材时长造 1 条 cue,验证链路(真实推理需 whisper-cli)
+      const c = {
+        start: 0,
+        end: 2,
+        text: "(AI 字幕测试行)",
+      };
+      const cues = mockDoc.subtitles!.cues;
+      if (!cues.some((x) => x.text === c.text)) cues.push(c);
+      return { segments: [{ start_secs: 0, end_secs: 2, text: c.text }], engine: "mock" };
+    }
     case "drop_text": {
-      // 文字片段:合成资产 text://… + 3s 定格片段
+      // 文字片段:合成资产 text://… + 3s 定格片段;置顶"文字"轨(与 Rust 语义一致,
+      // 避免与主轨视频块重叠导致命中歧义)
+      let ttext = mockDoc.tracks.find((t) => t.name === "文字");
+      if (!ttext) {
+        ttext = {
+          id: "t-text",
+          kind: "File",
+          name: "文字",
+          locked: false,
+          hidden: false,
+          muted: false,
+          video_on: true,
+          audio_on: true,
+        };
+        mockDoc.tracks.unshift(ttext);
+      }
       const aid = `atext${Date.now()}`;
       mockDoc.assets.push({
         id: aid,
@@ -207,7 +238,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       const cid = `c${++counter}`;
       mockDoc.clips.push({
         id: cid,
-        track_id: mockDoc.tracks[0]?.id ?? "f1",
+        track_id: "t-text",
         start: Number(args.start ?? 0),
         duration: 90,
         asset: { asset_id: aid, source_in: 0, source_out: 3 },
@@ -241,7 +272,36 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "move_clip":
     case "trim_clip":
     case "set_clip_audio":
-    case "set_clips_audio":
+    case "set_clips_audio": {
+      // 与 Rust audio_write_target 同语义:File 轨视频半区重定向到配对音频块
+      // (导出/预览音频只从音频半区读取)
+      const ids: string[] = args.clipIds
+        ? (args.clipIds as string[]).map(String)
+        : [String(args.clipId)];
+      const target = (id: string) => {
+        const c = mockDoc.clips.find((x) => x.id === id);
+        const track = c ? mockDoc.tracks.find((t) => t.id === c.track_id) : null;
+        if (!c || track?.kind !== "File" || c.lane === "Audio") return id;
+        const sib = mockDoc.clips.find(
+          (x) =>
+            x.id !== c.id &&
+            x.track_id === c.track_id &&
+            x.lane === "Audio" &&
+            x.asset.asset_id === c.asset.asset_id &&
+            Math.abs((x.asset.source_in ?? 0) - (c.asset.source_in ?? 0)) < 1e-6 &&
+            Math.abs((x.asset.source_out ?? 0) - (c.asset.source_out ?? 0)) < 1e-6
+        );
+        return sib?.id ?? id;
+      };
+      for (const id of ids) {
+        const c = mockDoc.clips.find((x) => x.id === target(id));
+        if (c) {
+          if (args.volume !== undefined && args.volume !== null) c.volume = Number(args.volume);
+          if (args.muted !== undefined && args.muted !== null) c.muted = Boolean(args.muted);
+        }
+      }
+      return true;
+    }
     case "set_clip_fx": {
       // 真实覆写 fx(画中画 rect/调色等依赖此命令;此前为 no-op 桩,拖拽提交无效)
       const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
@@ -281,7 +341,35 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       }
       return true;
     }
-    case "set_speed":
+    case "set_speed": {
+      // 与 Rust SetSpeed 同语义:块长按 旧时长×旧速/新速 缩放,
+      // File 轨音视频配对块(同素材同源区间、另一 lane)同步速度与时长
+      const clipId = String(args.clipId);
+      const speed = Number(args.speed);
+      const target = mockDoc.clips.find((c) => c.id === clipId);
+      // 与 Rust set_speed 同守卫:speed=0 是定格/文字哨兵,拒绝覆盖
+      if (!target || !(speed > 0) || (target.speed ?? 1) === 0) return true;
+      const oldSpeed = target.speed ?? 1;
+      const rescale = oldSpeed > 0 && Math.abs(oldSpeed - speed) > 1e-9;
+      const newDur = rescale
+        ? Math.max(1, Math.round((target.duration * oldSpeed) / speed))
+        : target.duration;
+      const track = mockDoc.tracks.find((t) => t.id === target.track_id);
+      for (const c of mockDoc.clips) {
+        const isPair =
+          track?.kind === "File" &&
+          c.track_id === target.track_id &&
+          c.asset.asset_id === target.asset.asset_id &&
+          Math.abs((c.asset.source_in ?? 0) - (target.asset.source_in ?? 0)) < 1e-6 &&
+          Math.abs((c.asset.source_out ?? 0) - (target.asset.source_out ?? 0)) < 1e-6 &&
+          c.lane !== target.lane;
+        if (c.id === target.id || isPair) {
+          c.speed = speed;
+          c.duration = newDur;
+        }
+      }
+      return true;
+    }
     case "set_transition":
     case "remove_transition":
     case "set_chroma_key":
@@ -362,9 +450,13 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "apply_pack_item":
       return true;
     case "list_models":
-      // AI 模型清单 mock(未下载,引擎可用)
+      // AI 模型清单 mock(与 Rust MODELS 注册表对齐;未下载)
       return [
         { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: false, engineAvailable: false },
+        { id: "ggml-small.bin", name: "Whisper small", desc: "AI 字幕识别(更高精度)", size: 487000000, downloaded: false, engineAvailable: false },
+        { id: "piper-zh_CN-huayan-medium.onnx", name: "Piper 中文音色(华燕 medium)", desc: "TTS 音色", size: 62000000, downloaded: false, engineAvailable: false },
+        { id: "piper-zh_CN-huayan-medium.onnx.json", name: "Piper 中文音色配置", desc: "音色配置", size: 1000000, downloaded: false, engineAvailable: false },
+        { id: "rvm_mobilenetv3.onnx", name: "RVM 视频抠像", desc: "AI 人像抠像", size: 26000000, downloaded: false, engineAvailable: false },
       ];
     case "download_model":
     case "delete_model":
@@ -377,8 +469,14 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "separate_stems":
       return "mock:未安装分离引擎";
-    case "detect_hw_encoders":
-      return [];
+    case "detect_encoders":
+      // mock:软编全家可用;一个硬编可用 + 两个"清单有但试编失败"
+      // (覆盖 UI 的免版税分组/硬件组/不可用置灰三种渲染分支)
+      return {
+        software: ["libx264", "libx265", "libsvtav1", "libaom-av1", "libvpx-vp9"],
+        hardware: ["h264_nvenc"],
+        unavailable: ["h264_vaapi", "hevc_qsv"],
+      };
     case "list_recent_projects":
       return [];
     case "get_project_path":
@@ -452,6 +550,11 @@ export function installMockTauri() {
       Promise.resolve(mockInvoke(cmd, args)),
     convertFileSrc: (path: string) => path,
     transformCallback: (cb: unknown) => (typeof cb === "function" ? cb : () => {}),
+  };
+  // @tauri-apps/api event._unlisten 依赖运行时注入的此对象;缺了会在
+  // StrictMode 双挂载先卸载后 resolve 的 listen 清理路径上抛 TypeError
+  w.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: () => {},
   };
   void markerT;
 }

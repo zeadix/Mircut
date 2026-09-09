@@ -19,12 +19,17 @@ interface EditorState {
   status: string;
   /// 是否正在从后端拉取文档(防并发)。
   refreshing: boolean;
+  /// 正在编辑的文字片段 id(双击预览文字/时间轴文字块进入;null = 未在编辑)。
+  /// 选中该片段并聚焦属性面板文字编辑区。
+  editingTextClipId: string | null;
 
   setDoc: (d: Document | null) => void;
   setPlaying: (p: boolean) => void;
   setPlaySpeed: (s: number) => void;
   setPlayhead: (t: number) => void;
   setStatus: (msg: string) => void;
+  /// 进入/退出文字编辑模式(自动选中该片段)。
+  beginTextEdit: (clipId: string | null) => void;
 
   /// 单选(plain=替换,additive=切换增减)。
   selectClip: (clipId: string, additive?: boolean) => void;
@@ -76,12 +81,21 @@ export const useEditor = create<EditorState>((set, get) => ({
   playhead: 0,
   status: "",
   refreshing: false,
+  editingTextClipId: null,
 
   setDoc: (d) => set({ doc: d }),
   setPlaying: (p) => set({ playing: p }),
   setPlaySpeed: (s) => set({ playSpeed: s }),
   setPlayhead: (t) => set({ playhead: Math.max(0, t) }),
   setStatus: (status) => set({ status }),
+
+  beginTextEdit: (clipId) =>
+    set((s) => {
+      if (clipId && s.selected.length === 1 && s.selected[0] === clipId) {
+        return { editingTextClipId: clipId };
+      }
+      return clipId ? { editingTextClipId: clipId, selected: [clipId] } : { editingTextClipId: null };
+    }),
 
   selectClip: (clipId, additive = false) =>
     set((s) =>

@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { Clip, ClipAnimKind, ColorGrade, Document, FxRect, Mask, TextClipData, Transition } from "./types";
+import type { ChromaKey, Clip, ClipAnimKind, ColorGrade, Document, FxRect, LutApply, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
-import { Crosshair, Magnet } from "@phosphor-icons/react";
+import { Crosshair, FrameCorners, Magnet } from "@phosphor-icons/react";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
 type TransitionKind = Transition["kind"];
@@ -24,6 +24,10 @@ interface Props {
   onSetRect?: (clipId: string, rect: FxRect) => Promise<void>;
   /// 自动选取:点击预览中任意视频框直接选中其片段(无需先在时间轴选中)。
   onSelectClip?: (clipId: string) => void;
+  /// 双击文字片段进入编辑(选中并聚焦属性面板)。
+  onEditTextClip?: (clipId: string) => void;
+  /// 设置层旋转(静态单帧关键帧;变换工具旋转手柄提交)。
+  onSetRotate?: (clipId: string, deg: number) => void;
 }
 
 type SeekResp = { jpeg_path: string | null; error: string | null };
@@ -166,6 +170,16 @@ interface Layer {
   stretch: boolean;
   /// 文字片段(Some = 渲染为文本而非帧图)。
   text?: TextClipData;
+  /// 预览帧 fx 子集(抠像/调色/LUT,烧进帧由后端处理;null = 无)。
+  fx: {
+    chroma_key?: ChromaKey;
+    grade?: ColorGrade;
+    lut?: LutApply;
+  } | null;
+  /// fx 缓存键签名(fx 变化 → 帧内容变化)。
+  fxSig: string;
+  /// RVM alpha 序列目录(抠像预览 CSS mask 用;null = 无)。
+  mattingDir: string | null;
   /// 入场动画(种类 + 已进行比例 p:0→1)。
   animIn?: { kind: ClipAnimKind; p: number };
   /// 出场动画(种类 + 剩余比例 rem:1→0)。
@@ -189,9 +203,12 @@ interface Layer {
 /// 拖拽会话:中心移动 / 边缩放(水平/垂直) / 角缩放(双维)。
 type Grip =
   | { kind: "move"; startX: number; startY: number; orig: FxRect }
-  | { kind: "resize"; corner: string; startX: number; startY: number; orig: FxRect };
+  | { kind: "resize"; corner: string; startX: number; startY: number; orig: FxRect }
+  /// 旋转手柄:中心(client)与起始角。
+  | { kind: "rotate"; cx: number; cy: number; startDeg: number; startPointer: number };
 
 const HANDLES: { id: string; cursor: string; x: number; y: number }[] = [
+  { id: "rotate", cursor: "grab", x: 0.5, y: 1.35 },
   { id: "nw", cursor: "nwse-resize", x: 0, y: 0 },
   { id: "n", cursor: "ns-resize", x: 0.5, y: 0 },
   { id: "ne", cursor: "nesw-resize", x: 1, y: 0 },
@@ -237,17 +254,25 @@ function PreviewInner({
   onSetRect,
   onStickerMove,
   onSelectClip,
+  onEditTextClip,
+  onSetRotate,
 }: Props) {
 const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /// 层帧缓存:clipId -> url(拖拽/播放时持续刷新)。
   const [layerUrls, setLayerUrls] = useState<Record<string, string>>({});
+  /// RVM 抠像预览 mask:clipId -> alpha 帧灰度图 url。
+  const [maskUrls, setMaskUrls] = useState<Record<string, string>>({});
   /// 变换框实时 rect(拖拽中,松手提交)。ref 镜像:pointerup 闭包读最新值。
   const [liveRect, setLiveRect] = useState<FxRect | null>(null);
   const liveRectRef = useRef<FxRect | null>(null);
   const [snapOn, setSnapOn] = useState(true);
   /// 自动选取(快捷工具栏开关)。
   const [autoSelect, setAutoSelect] = useState(true);
+  /// 变换编辑模式(显示调整框;默认开)。
+  const [editMode, setEditMode] = useState(true);
+  /// 旋转实时值(拖拽中;度)。null = 未在旋转。
+  const [liveRotate, setLiveRotate] = useState<number | null>(null);
   /// 贴纸拖拽实时状态。
   const [stickerDrag, setStickerDrag] = useState<{ id: string; x: number; y: number } | null>(null);
   const stickerDragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
@@ -309,7 +334,16 @@ const [url, setUrl] = useState<string | null>(null);
       const compH = doc.height ?? 1080;
       const native =
         asset.width && asset.height ? nativeRect(asset.width, asset.height, compW, compH) : null;
-      const { rect, rotate } = deriveRect(c, tLocalTicks, native);
+      // 文字片段无 rect 时回退默认文字框(而非旧模型小窗)
+      const textNative = c.text
+        ? {
+            x: 0.5,
+            y: 0.5,
+            w: 0.8,
+            h: Math.min(0.9, Math.max(0.02, (c.text.font_size || 64) / 1080)),
+          }
+        : null;
+      const { rect, rotate } = deriveRect(c, tLocalTicks, textNative ?? native);
       // 入场/出场动画进度:in p = 已进行比例(0→1);out rem = 剩余比例(1→0)
       let animIn: Layer["animIn"];
       let animOut: Layer["animOut"];
@@ -322,6 +356,13 @@ const [url, setUrl] = useState<string | null>(null);
         const d = Math.max(0.05, c.fx.exit.dur_secs);
         animOut = { kind: c.fx.exit.kind, rem: Math.min(1, Math.max(0, (durSecs - tLocalTicks / tps) / d)) };
       }
+      const pfx = {
+        // enabled 判断是 Rust 侧方法;前端按字段有效性判断
+        chroma_key: c.fx?.chroma_key && c.fx.chroma_key.similarity > 0 ? c.fx.chroma_key : undefined,
+        grade: c.fx?.grade,
+        lut: c.fx?.lut && c.fx.lut.path ? c.fx.lut : undefined,
+      };
+      const fxSig = JSON.stringify(pfx);
       return {
         clipId: c.id,
         path: asset.path,
@@ -331,6 +372,9 @@ const [url, setUrl] = useState<string | null>(null);
         assetW: asset.width ?? null,
         assetH: asset.height ?? null,
         text: c.text ?? undefined,
+        fx: pfx,
+        fxSig,
+        mattingDir: c.fx?.alpha_matting?.dir ?? null,
         stretch: !!c.fx?.rect?.stretch,
         animIn,
         animOut,
@@ -414,45 +458,62 @@ const [url, setUrl] = useState<string | null>(null);
     if (layersKey === layerFetchRef.current) return;
     layerFetchRef.current = layersKey;
     const gen = ++fetchGenRef.current;
-    const fetchOne = async (path: string, secs: number, clipId: string, next: Record<string, string>) => {
-      if (path.startsWith("text://")) return; // 文字片段无源帧
+    const fetchOne = async (
+      l: Layer,
+      next: Record<string, string>,
+      masks: Record<string, string>
+    ) => {
+      if (l.path.startsWith("text://")) return; // 文字片段无源帧
+      const secs = l.secs;
       const bucket = Math.round(secs * 20);
-      const hit = cachedFrame(path, bucket);
+      const key = `${l.path}|${l.fxSig}`;
+      const hit = cachedFrame(key, bucket);
       if (hit) {
-        next[clipId] = hit;
-        return;
-      }
-      try {
-        const r: SeekResp = await invoke("preview_asset_frame", { path, secs });
-        if (r.jpeg_path) {
-          const url = frameUrl(r.jpeg_path);
-          // 缓存写入无条件执行(与时间无关;过期请求的帧在未来仍可复用)
-          putFrame(path, bucket, url);
-          if (fetchGenRef.current !== gen) return; // 过期:仅跳过显示更新
-          next[clipId] = url;
+        next[l.clipId] = hit;
+      } else {
+        try {
+          // fx(抠像/调色/LUT)烧进帧;抠像输出 PNG 保留 alpha,前端层叠即所见
+          const r: SeekResp = await invoke("preview_asset_frame", {
+            path: l.path,
+            secs,
+            fx: l.fx,
+          });
+          if (r.jpeg_path) {
+            const url = frameUrl(r.jpeg_path);
+            // 缓存写入无条件执行(与时间无关;过期请求的帧在未来仍可复用)
+            putFrame(key, bucket, url);
+            if (fetchGenRef.current !== gen) return; // 过期:仅跳过显示更新
+            next[l.clipId] = url;
+          }
+        } catch {
+          // 单层失败不阻塞其他层
         }
-      } catch {
-        // 单层失败不阻塞其他层
+      }
+      // RVM 抠像预览近似:alpha 序列帧(灰度)作 CSS luminance mask
+      if (l.mattingDir) {
+        const frameNo = Math.round(secs * 30) + 1;
+        masks[l.clipId] = frameUrl(`${l.mattingDir}/rvm_${String(frameNo).padStart(5, "0")}.png`);
       }
     };
     (async () => {
       const next: Record<string, string> = {};
-      await Promise.all(layers.map((l) => fetchOne(l.path, l.secs, l.clipId, next)));
+      const masks: Record<string, string> = {};
+      await Promise.all(layers.map((l) => fetchOne(l, next, masks)));
       if (fetchGenRef.current !== gen) return;
       setLayerUrls(next);
-      // 播放预取:前方 3 桶(约 0.15~0.3s)提前解码入缓存,fire-and-forget
-      // (不做 gen 检查:缓存写入永不过期,预取完成时即使播放头已推进,
-      //  这些桶也会在稍后播放到时命中)
+      setMaskUrls(masks);
+      // 播放预取:前方 3 桶提前解码入缓存(fire-and-forget;缓存写入永不过期)
       if (playing) {
         const step = 1 / bucketRate;
         for (const l of layers) {
+          if (l.path.startsWith("text://")) continue;
           for (let i = 1; i <= 3; i++) {
             const ahead = l.secs + step * i;
             const bucket = Math.round(ahead * 20);
-            if (cachedFrame(l.path, bucket)) continue;
-            void invoke<SeekResp>("preview_asset_frame", { path: l.path, secs: ahead })
+            if (cachedFrame(`${l.path}|${l.fxSig}`, bucket)) continue;
+            void invoke<SeekResp>("preview_asset_frame", { path: l.path, secs: ahead, fx: l.fx })
               .then((r: SeekResp) => {
-                if (r.jpeg_path) putFrame(l.path, bucket, frameUrl(r.jpeg_path));
+                if (r.jpeg_path) putFrame(`${l.path}|${l.fxSig}`, bucket, frameUrl(r.jpeg_path));
               })
               .catch(() => {});
           }
@@ -627,6 +688,7 @@ const [url, setUrl] = useState<string | null>(null);
     const st = stageRef.current?.getBoundingClientRect();
     if (!st) return { dx: 0, dy: 0 };
     const g = gripRef.current!;
+    if (!("startX" in g)) return { dx: 0, dy: 0 }; // rotate 手柄无归一化位移
     return {
       dx: (e.clientX - g.startX) / st.width,
       dy: (e.clientY - g.startY) / st.height,
@@ -700,6 +762,15 @@ const [url, setUrl] = useState<string | null>(null);
     if (!selected || !activeRect) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (corner === "rotate") {
+      const st = stageRef.current?.getBoundingClientRect();
+      const cx = (st?.left ?? 0) + (activeRect.x * (st?.width ?? 0));
+      const cy = (st?.top ?? 0) + (activeRect.y * (st?.height ?? 0));
+      const startDeg = (Math.atan2(e.clientY - cy, e.clientX - cx) * 180) / Math.PI + 90;
+      gripRef.current = { kind: "rotate", cx, cy, startDeg, startPointer: e.clientX };
+      setLiveRotate(selected.rotate || 0);
+      return;
+    }
     gripRef.current =
       corner === "move"
         ? { kind: "move", startX: e.clientX, startY: e.clientY, orig: activeRect }
@@ -710,6 +781,13 @@ const [url, setUrl] = useState<string | null>(null);
   function onGripMove(e: React.PointerEvent) {
     const g = gripRef.current;
     if (!g) return;
+    // 旋转手柄:角度 = 指针相对中心的角度;Shift = 15° 吸附
+    if (g.kind === "rotate") {
+      const deg = (Math.atan2(e.clientY - g.cy, e.clientX - g.cx) * 180) / Math.PI + 90;
+      const snapped = e.shiftKey ? Math.round(deg / 15) * 15 : deg;
+      setLiveRotate(Math.round(snapped * 10) / 10);
+      return;
+    }
     const { dx, dy } = normDelta(e);
     const o = g.orig;
     if (g.kind === "move") {
@@ -719,8 +797,9 @@ const [url, setUrl] = useState<string | null>(null);
       setGuides(gx !== null || gy !== null ? { x: gx, y: gy } : null);
       return;
     }
-    // 缩放:角双向,边单向;锚点是对侧(固定不动)
+    // 缩放:角 = 等比例(锁定原始宽高比);边 = 单轴;锚点是对侧(固定不动)
     const c = g.corner;
+    const isCorner = c.length === 2;
     const left = o.x - o.w / 2;
     const right = o.x + o.w / 2;
     const top = o.y - o.h / 2;
@@ -729,10 +808,22 @@ const [url, setUrl] = useState<string | null>(null);
     let rr = right;
     let t = top;
     let b = bottom;
-    if (c.includes("w")) l = left + dx;
-    if (c.includes("e")) rr = right + dx;
-    if (c.includes("n")) t = top + dy;
-    if (c.includes("s")) b = bottom + dy;
+    if (isCorner) {
+      // 等比例:按主轴位移比例缩放宽高(锚点对侧)
+      const s = Math.max(
+        Math.abs(dx) > Math.abs(dy) ? (o.w + 2 * dx) / o.w : (o.h + 2 * dy) / o.h,
+        0.05
+      );
+      l = o.x - (o.w * s) / 2;
+      rr = o.x + (o.w * s) / 2;
+      t = o.y - (o.h * s) / 2;
+      b = o.y + (o.h * s) / 2;
+    } else {
+      if (c.includes("w")) l = left + dx;
+      if (c.includes("e")) rr = right + dx;
+      if (c.includes("n")) t = top + dy;
+      if (c.includes("s")) b = bottom + dy;
+    }
     // 最小尺寸保护
     const minW = 0.05;
     const minH = 0.05;
@@ -796,6 +887,13 @@ const [url, setUrl] = useState<string | null>(null);
     (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
     gripRef.current = null;
     setGuides(null);
+    // 旋转提交:静态单帧关键帧(t=0 全程生效)
+    if (g?.kind === "rotate" && selected && onSetRotate) {
+      const deg = liveRotate ?? selected.rotate ?? 0;
+      setLiveRotate(null);
+      if (Math.abs(deg - (selected.rotate ?? 0)) > 0.05) onSetRotate(selected.clipId, Math.round(deg * 10) / 10);
+      return;
+    }
     if (!g) return;
     const r = liveRectRef.current;
     if (r && selected && onSetRect) {
@@ -828,7 +926,7 @@ const [url, setUrl] = useState<string | null>(null);
     panelHDrag.current = null;
   }
 
-  const showTransform = composing && !!selected && !!onSetRect;
+  const showTransform = editMode && composing && !!selected && !!onSetRect;
 
   return (
     <div
@@ -887,9 +985,15 @@ const [url, setUrl] = useState<string | null>(null);
               flexShrink: 0,
             }}
             onDoubleClick={(e) => {
-              // 双击视频层:铺满画布(contain)↔ 原始分辨率
               const l = layerAtPoint(e.clientX, e.clientY);
-              if (l) toggleLayerFit(l);
+              if (!l) return;
+              // 双击文字层:进入编辑模式(属性面板);双击视频层:铺满切换
+              if (l.text) {
+                onSelectClip?.(l.clipId);
+                onEditTextClip?.(l.clipId);
+                return;
+              }
+              toggleLayerFit(l);
             }}
             onPointerDown={onStagePointerDown}
             onPointerMove={(e) => {
@@ -945,7 +1049,8 @@ const [url, setUrl] = useState<string | null>(null);
               else if (kind === "ZoomOut") animTf += ` scale(${(rem + 0.3 * q).toFixed(3)})`;
             }
             const op = Math.max(0, Math.min(1, l.opacity * l.fade * animOp));
-            let tf = l.rotate ? `rotate(${l.rotate.toFixed(2)}deg)` : "";
+            const liveDeg = l.clipId === selId ? liveRotate : null;
+            let tf = `rotate(${(liveDeg ?? l.rotate ?? 0).toFixed(2)}deg)`;
             tf += animTf;
             if (l.trans) {
               if (l.trans.kind === "SlideLeft") tf += ` translateX(${((1 - l.trans.p) * 100).toFixed(1)}%)`;
@@ -970,16 +1075,18 @@ const [url, setUrl] = useState<string | null>(null);
                       width: "100%",
                       height: "100%",
                       display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
+                      // 框内对齐(可配置);内容超出框时从锚点侧溢出,首字保底可见
+                      alignItems: l.text.align_v === "top" ? "flex-start" : l.text.align_v === "bottom" ? "flex-end" : "center",
+                      justifyContent: l.text.align_h === "left" ? "flex-start" : l.text.align_h === "right" ? "flex-end" : "center",
                       overflow: "hidden",
                       pointerEvents: "none",
                       color: l.text.color,
-                      // 字号 = rect.h × 舞台高(与导出 font_size/1080×H 同语义)
-                      fontSize: Math.max(10, r.h * (framePx?.h ?? 300)),
+                      // 字号 = text.font_size(1080p 基准)× 舞台/1080 缩放,即时跟随
+                      fontSize: Math.max(8, (l.text.font_size * (framePx?.h ?? 300)) / 1080),
+                      lineHeight: 1.2,
                       fontWeight: l.text.bold ? 700 : 500,
                       whiteSpace: "pre-wrap",
-                      textAlign: "center",
+                      textAlign: (l.text.align_h as "left" | "center" | "right") ?? "center",
                       WebkitTextStroke: l.text.outline ? `1.5px ${l.text.outline}` : undefined,
                       textShadow: l.text.outline2
                         ? `0 0 4px ${l.text.outline2}, 0 0 4px ${l.text.outline2}`
@@ -989,6 +1096,7 @@ const [url, setUrl] = useState<string | null>(null);
                       background: l.text.bg_color ? `${l.text.bg_color}99` : undefined,
                       borderRadius: 4,
                       padding: "0.1em 0.4em",
+                      wordBreak: "break-all",
                     }}
                   >
                     {l.text.content}
@@ -1007,6 +1115,16 @@ const [url, setUrl] = useState<string | null>(null);
                       objectFit: l.stretch ? "fill" : "contain",
                       pointerEvents: "none",
                       filter: l.filter,
+                      // RVM 抠像预览近似:alpha 序列灰度帧作 luminance mask
+                      ...(l.mattingDir && maskUrls[l.clipId]
+                        ? {
+                            maskImage: `url("${maskUrls[l.clipId]}")`,
+                            WebkitMaskImage: `url("${maskUrls[l.clipId]}")`,
+                            maskSize: "100% 100%",
+                            WebkitMaskSize: "100% 100%",
+                            maskMode: "luminance",
+                          }
+                        : {}),
                     }}
                   />
                 ) : (
@@ -1124,31 +1242,58 @@ const [url, setUrl] = useState<string | null>(null);
               );
             })}
 
-          {/* 变换框 + 手柄 */}
+          {/* 变换框 + 手柄(移动/缩放/旋转;编辑开关门控) */}
           {showTransform && activeRect && (
             <div style={{ ...stageRectStyle(activeRect), border: "1px solid var(--accent)", pointerEvents: "none" }}>
-              {HANDLES.map((h) => (
-                <div
-                  key={h.id}
-                  style={{
-                    position: "absolute",
-                    left: `calc(${h.x * 100}% - 5px)`,
-                    top: `calc(${h.y * 100}% - 5px)`,
-                    width: 10,
-                    height: 10,
-                    background: "var(--text)",
-                    border: "1px solid var(--accent)",
-                    borderRadius: "var(--radius-ctl)",
-                    cursor: h.cursor,
-                    pointerEvents: "auto",
-                  }}
-                  onPointerDown={(e) => onGripDown(e, h.id)}
-                  onPointerMove={(e) => {
-                    if (gripRef.current) onGripMove(e);
-                  }}
-                  onPointerUp={onGripUp}
-                />
-              ))}
+              {HANDLES.map((h) =>
+                h.id === "rotate" ? (
+                  <div
+                    key={h.id}
+                    style={{
+                      position: "absolute",
+                      left: `${h.x * 100}%`,
+                      top: `calc(${h.y * 100}% + 14px)`,
+                      width: 16,
+                      height: 16,
+                      marginLeft: -8,
+                      marginTop: -8,
+                      borderRadius: "50%",
+                      background: "var(--accent)",
+                      border: "2px solid #fff",
+                      cursor: "grab",
+                      pointerEvents: "auto",
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.5)",
+                    }}
+                    title="拖拽旋转(Shift = 15° 吸附)"
+                    onPointerDown={(e) => onGripDown(e, "rotate")}
+                    onPointerMove={(e) => {
+                      if (gripRef.current?.kind === "rotate") onGripMove(e);
+                    }}
+                    onPointerUp={onGripUp}
+                  />
+                ) : (
+                  <div
+                    key={h.id}
+                    style={{
+                      position: "absolute",
+                      left: `calc(${h.x * 100}% - 5px)`,
+                      top: `calc(${h.y * 100}% - 5px)`,
+                      width: 10,
+                      height: 10,
+                      background: "var(--text)",
+                      border: "1px solid var(--accent)",
+                      borderRadius: "var(--radius-ctl)",
+                      cursor: h.cursor,
+                      pointerEvents: "auto",
+                    }}
+                    onPointerDown={(e) => onGripDown(e, h.id)}
+                    onPointerMove={(e) => {
+                      if (gripRef.current) onGripMove(e);
+                    }}
+                    onPointerUp={onGripUp}
+                  />
+                )
+              )}
               {/* 中心拖动区(移动) */}
               <div
                 style={{
@@ -1208,6 +1353,16 @@ const [url, setUrl] = useState<string | null>(null);
             title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
           >
             <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
+          </button>
+
+          {/* 变换编辑开关:激活后选中层显示调整框(移动/缩放/旋转) */}
+          <button
+            className={`btn icon sm float${editMode ? " on" : ""}`}
+            style={{ position: "absolute", left: 64, top: 8, zIndex: 10 }}
+            onClick={() => setEditMode((v) => !v)}
+            title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
+          >
+            <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
           </button>
 
           {/* 吸附开关 */}

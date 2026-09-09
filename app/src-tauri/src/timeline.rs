@@ -133,7 +133,10 @@ pub(crate) fn set_clips_audio(
     let mut inner = state.inner.lock().unwrap();
     let cmds: Vec<Box<dyn Command>> = clip_ids
         .iter()
-        .map(|id| Box::new(SetClipAudio::new(id.clone(), volume, muted)) as Box<dyn Command>)
+        .map(|id| {
+            let target = audio_write_target(&inner.doc, id);
+            Box::new(SetClipAudio::new(target, volume, muted)) as Box<dyn Command>
+        })
         .collect();
     inner.exec(Box::new(Compound::new("批量片段音频", cmds)));
     true
@@ -155,36 +158,85 @@ pub(crate) fn remove_marker(t: Ticks, state: State<'_, AppState>) -> bool {
     true
 }
 
+/// File 轨双块联动:同轨同素材同起点同时长的另一半(视频/音频)。
+/// 分割/场景切分共用(否则另一半时长不匹配,块分组/渲染/命中错乱)。
+fn split_siblings(doc: &Document, clip_id: &str) -> Vec<String> {
+    let Some(c) = doc.clip(clip_id) else {
+        return vec![];
+    };
+    let is_file = doc.track(&c.track_id).map(|t| t.kind) == Some(TrackKind::File);
+    if !is_file {
+        return vec![];
+    }
+    doc.clips
+        .iter()
+        .filter(|x| {
+            x.id != clip_id
+                && x.track_id == c.track_id
+                && x.asset.asset_id == c.asset.asset_id
+                && x.start == c.start
+                && x.duration == c.duration
+                && x.lane != c.lane
+        })
+        .map(|x| x.id.clone())
+        .collect()
+}
+
+/// 场景分割:按秒时间点从后往前切分,File 轨配对块同步分割。
+/// 提取为独立函数供单测(不需要真实 ffmpeg)。
+fn apply_scene_splits(inner: &mut crate::state::Inner, clip_id: &str, start: i64, duration: i64, times: Vec<f64>) -> usize {
+    let tb_num = inner.doc.timebase.num as f64 / inner.doc.timebase.den as f64;
+    let mut count = 0;
+    for t in times.into_iter().rev() {
+        let pos = start + (t * tb_num).round() as Ticks;
+        if pos > start && pos < start + duration {
+            let sibs = split_siblings(&inner.doc, clip_id);
+            let mut cmds: Vec<Box<dyn Command>> =
+                vec![Box::new(SplitClip::new(clip_id.to_string(), pos))];
+            for sid in sibs {
+                cmds.push(Box::new(SplitClip::new(sid, pos)));
+            }
+            inner.exec(Box::new(veditor_core::Compound::new("场景分割", cmds)));
+            count += 1;
+        }
+    }
+    count
+}
+
+/// 音频写入目标:File 轨视频半区重定向到配对音频块。
+/// 导出/预览的音频只从音频半区读取(lane=Audio),写在视频半区不生效;
+/// 单块音量与批量统一音量共用此规则。
+fn audio_write_target(doc: &Document, clip_id: &str) -> String {
+    let Some(c) = doc.clip(clip_id) else {
+        return clip_id.into();
+    };
+    if doc.track(&c.track_id).map(|t| t.kind) != Some(TrackKind::File)
+        || c.lane == Some(veditor_core::Lane::Audio)
+    {
+        return clip_id.into();
+    }
+    doc.clips
+        .iter()
+        .find(|x| {
+            x.id != c.id
+                && x.track_id == c.track_id
+                && x.lane == Some(veditor_core::Lane::Audio)
+                && x.asset.asset_id == c.asset.asset_id
+                && (x.asset.source_in - c.asset.source_in).abs() < 1e-6
+                && (x.asset.source_out - c.asset.source_out).abs() < 1e-6
+        })
+        .map(|x| x.id.clone())
+        .unwrap_or_else(|| clip_id.into())
+}
+
 #[tauri::command]
 pub(crate) fn split_clip(clip_id: String, pos: Ticks, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
+    let sib_ids = split_siblings(&inner.doc, &clip_id);
+    if inner.doc.clip(&clip_id).is_none() && sib_ids.is_empty() {
+        return false;
+    }
     let mut cmds: Vec<Box<dyn Command>> = vec![Box::new(SplitClip::new(clip_id.clone(), pos))];
-    // File 轨双块联动:同轨同素材同起点的另一半(视频/音频)同步分割,
-    // 保持视频/音频配对完整(否则另一半时长不匹配,块分组/渲染/命中错乱)
-    let sib_ids: Vec<String> = {
-        let Some(c) = inner.doc.clip(&clip_id) else {
-            return false;
-        };
-        let is_file = inner.doc.track(&c.track_id).map(|t| t.kind) == Some(TrackKind::File);
-        if !is_file {
-            vec![]
-        } else {
-            inner
-                .doc
-                .clips
-                .iter()
-                .filter(|x| {
-                    x.id != clip_id
-                        && x.track_id == c.track_id
-                        && x.asset.asset_id == c.asset.asset_id
-                        && x.start == c.start
-                        && x.duration == c.duration
-                        && x.lane != c.lane
-                })
-                .map(|x| x.id.clone())
-                .collect()
-        }
-    };
     for sid in sib_ids {
         cmds.push(Box::new(SplitClip::new(sid, pos)));
     }
@@ -249,20 +301,9 @@ pub(crate) fn auto_split_scenes(
         )
     };
     let times = detect_scene_times(&path, source_in, source_out)?;
-    let tb_num = {
-        let inner = state.inner.lock().unwrap();
-        inner.doc.timebase.num as f64 / inner.doc.timebase.den as f64
-    };
-    // 从后往前切分(前面 clip 保持原 id)
-    let mut count = 0;
+    // 从后往前切分(前面 clip 保持原 id);配对块同步(与手动分割同语义)
     let mut inner = state.inner.lock().unwrap();
-    for t in times.into_iter().rev() {
-        let pos = start + (t * tb_num).round() as Ticks;
-        if pos > start && pos < start + duration {
-            inner.exec(Box::new(SplitClip::new(clip_id.clone(), pos)));
-            count += 1;
-        }
-    }
+    let count = apply_scene_splits(&mut inner, &clip_id, start, duration, times);
     if count > 0 {
         inner.autosave();
     }
@@ -480,6 +521,15 @@ pub(crate) fn drop_text(start: Ticks, state: State<'_, AppState>) -> Result<Stri
     }
     let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
     let mut seq = inner.doc.clips.len();
+    let mut fx = veditor_core::ClipFx::default();
+    // 默认文字框:宽 80%、高 = 默认字号(64px)相对 1080p 画布
+    fx.rect = Some(veditor_core::FxRect {
+        x: 0.5,
+        y: 0.5,
+        w: 0.8,
+        h: (64.0f64 / 1080.0).clamp(0.02, 0.9),
+        stretch: false,
+    });
     let clip = Clip {
         id: next_clip_id(&inner.doc, &mut seq),
         track_id,
@@ -494,7 +544,7 @@ pub(crate) fn drop_text(start: Ticks, state: State<'_, AppState>) -> Result<Stri
         volume: 1.0,
         muted: false,
         lane: Some(veditor_core::Lane::Video),
-        fx: Default::default(),
+        fx,
         text: Some(TextClipData::default()),
     };
     let id = clip.id.clone();
@@ -1096,6 +1146,14 @@ pub(crate) fn ripple_delete(clip_id: String, state: State<'_, AppState>) -> bool
 #[tauri::command]
 pub(crate) fn set_speed(clip_id: String, speed: f64, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
+    // speed=0 是定格/文字哨兵(导出靠它走 tpad/单帧管线),覆盖即破坏
+    if inner
+        .doc
+        .clip(&clip_id)
+        .is_some_and(|c| c.speed.abs() < 1e-3)
+    {
+        return false;
+    }
     inner.exec(Box::new(SetSpeed::new(clip_id, speed)));
     true
 }
@@ -1108,7 +1166,9 @@ pub(crate) fn set_clip_audio(
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    inner.exec(Box::new(SetClipAudio::new(clip_id, volume, muted)));
+    // 视频半区重定向到配对音频块(写入真正被消费的位置)
+    let target = audio_write_target(&inner.doc, &clip_id);
+    inner.exec(Box::new(SetClipAudio::new(target, volume, muted)));
     true
 }
 
@@ -1133,6 +1193,13 @@ pub(crate) fn freeze_frame(
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
+    // 文字块定格会把文字内容剥掉(残留 text:// 怪块),音频块定格无意义
+    let bad = inner.doc.clip(&clip_id).is_some_and(|c| {
+        c.text.is_some() || c.lane == Some(veditor_core::Lane::Audio)
+    });
+    if bad {
+        return false;
+    }
     let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
     let ticks = (freeze_secs * tps as f64).round() as i64;
     inner.exec(Box::new(FreezeFrame::new(clip_id, pos, ticks)));
@@ -1305,5 +1372,111 @@ mod block_arrange_tests {
         add_dual(&mut doc, "B", "a2", 300);
         let _ = file_track_fixup(&mut doc, "f1", &[]);
         assert_eq!(doc.clip("Bv").unwrap().start, 300, "大间隙不压缩");
+    }
+}
+
+#[cfg(test)]
+mod inspector_target_tests {
+    use super::*;
+    use crate::state::Inner;
+    use veditor_core::{Asset, AssetRef, Clip, Lane};
+
+    fn doc_with_dual() -> (crate::state::AppState, String) {
+        let st = crate::state::AppState::default();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            inner.ensure();
+            inner.doc = Document::default();
+            inner.doc.tracks.push(Track {
+                id: "f1".into(),
+                kind: TrackKind::File,
+                name: "文件轨 1".into(),
+                locked: false,
+                hidden: false,
+                muted: false,
+                video_on: true,
+                audio_on: true,
+            });
+            inner.doc.assets.push(Asset {
+                id: "a1".into(),
+                path: "/tmp/x.mp4".into(),
+                duration_secs: 10.0,
+                has_video: true,
+                has_audio: true,
+                width: None,
+                height: None,
+                name: None,
+                fps: None,
+                tags: vec![],
+            });
+            let mk = |id: &str, lane: Lane| Clip {
+                id: id.into(),
+                track_id: "f1".into(),
+                start: 0,
+                duration: 90,
+                asset: AssetRef {
+                    asset_id: "a1".into(),
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 1.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(lane),
+                fx: Default::default(),
+                text: None,
+            };
+            inner.doc.clips.push(mk("v1", Lane::Video));
+            inner.doc.clips.push(mk("a1h", Lane::Audio));
+        }
+        (st, "v1".into())
+    }
+
+    /// 音频写入目标:视频半区重定向到配对音频块(导出只读音频半区)。
+    #[test]
+    fn audio_write_target_redirects_video_half() {
+        let (st, vid) = doc_with_dual();
+        let inner = st.inner.lock().unwrap();
+        assert_eq!(audio_write_target(&inner.doc, &vid), "a1h");
+        assert_eq!(audio_write_target(&inner.doc, "a1h"), "a1h");
+        // 未知 id 原样返回
+        assert_eq!(audio_write_target(&inner.doc, "zzz"), "zzz");
+    }
+
+    /// 场景分割配对同步:视频半区切 N 刀,音频半区同点切开(音画不错位)。
+    #[test]
+    fn scene_splits_sync_audio_pair() {
+        let (st, vid) = doc_with_dual();
+        {
+            let mut inner = st.inner.lock().unwrap();
+            let n = apply_scene_splits(&mut inner, &vid, 0, 90, vec![1.0, 2.0]);
+            assert_eq!(n, 2, "两处场景切点都应生效");
+            let mut v: Vec<(i64, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Video))
+                .map(|c| (c.start, c.duration))
+                .collect();
+            v.sort();
+            let mut a: Vec<(i64, i64)> = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Audio))
+                .map(|c| (c.start, c.duration))
+                .collect();
+            a.sort();
+            assert_eq!(v.len(), 3, "视频半区切成 3 段: {v:?}");
+            assert_eq!(a.len(), 3, "音频半区同步切成 3 段: {a:?}");
+            assert_eq!(v, a, "音画配对几何应一致: v={v:?} a={a:?}");
+            // 撤销一次 = 整刀(两半区一起回滚)
+            let mut doc = std::mem::take(&mut inner.doc);
+            inner.stack.undo(&mut doc);
+            inner.doc = doc;
+            let v2 = inner.doc.clips.iter().filter(|c| c.lane == Some(Lane::Video)).count();
+            let a2 = inner.doc.clips.iter().filter(|c| c.lane == Some(Lane::Audio)).count();
+            assert_eq!((v2, a2), (2, 2), "撤销一刀后回到 2+2");
+        }
     }
 }

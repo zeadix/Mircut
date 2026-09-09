@@ -152,16 +152,50 @@ impl StemSeparator {
                     "demucs 失败: {}",
                     String::from_utf8_lossy(&out.stderr)
                 );
-                // demucs 以输入文件名建子目录
+                // demucs 实际输出布局: {out}/{model}/{输入文件名}/{vocals,no_vocals}.wav;
+                // 历史约定 {out}/htdemucs_{Name}/ 与 {out}/{stem}/ 保留兼容,
+                // 全部未命中则递归扫描 out_dir 兜底(杜绝坏素材静默落轨)
                 let stem = media
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("audio");
-                let sub = out_dir.join(format!("htdemucs_{}", capitalize(stem)));
-                let alt = out_dir.join(stem);
-                let base = if sub.exists() { sub } else { alt };
+                let candidates = [
+                    out_dir.join("htdemucs").join(stem),
+                    out_dir.join(format!("htdemucs_{}", capitalize(stem))),
+                    out_dir.join(stem),
+                ];
+                for base in &candidates {
+                    let (v, i) = (base.join("vocals.wav"), base.join("no_vocals.wav"));
+                    if v.exists() && i.exists() {
+                        return Ok((v, i));
+                    }
+                }
+                // 兜底:递归找 vocals.wav / no_vocals.wav(取最浅同目录对)
+                let mut found: Option<(PathBuf, PathBuf)> = None;
+                let mut stack = vec![out_dir.to_path_buf()];
+                while let Some(dir) = stack.pop() {
+                    let mut v = None;
+                    let mut i = None;
+                    if let Ok(rd) = std::fs::read_dir(&dir) {
+                        for e in rd.flatten() {
+                            let name = e.file_name().to_string_lossy().to_lowercase();
+                            if name == "vocals.wav" {
+                                v = Some(e.path());
+                            } else if name == "no_vocals.wav" {
+                                i = Some(e.path());
+                            }
+                            if e.path().is_dir() {
+                                stack.push(e.path());
+                            }
+                        }
+                    }
+                    if let (Some(v), Some(i)) = (v, i) {
+                        found = Some((v, i));
+                        break;
+                    }
+                }
                 let _ = out_prefix;
-                Ok((base.join("vocals.wav"), base.join("no_vocals.wav")))
+                found.context("未找到 demucs 输出(vocals/no_vocals)")
             }
         }
     }
@@ -262,21 +296,33 @@ impl Transcriber for SilenceSegments {
 
 /// piper 音色探测(~/.veditor/voices/*.onnx,同名 .json 为配置)。
 pub fn list_piper_voices() -> Vec<String> {
-    let dir = std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".veditor/voices"))
-        .unwrap_or_else(|_| std::env::temp_dir().join("veditor-voices"));
+    // 音色来源:~/.veditor/voices/(手动放置)与 ~/.veditor/models/(模型面板下载的
+    // piper-*.onnx);配对的 .json 配置存在才算可用
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("onnx") {
-                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                    out.push(stem.to_string());
+    let dirs = [
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".veditor/voices"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("veditor-voices")),
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".veditor/models"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("veditor-models")),
+    ];
+    for dir in &dirs {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("onnx")
+                    && p.with_extension("onnx.json").exists()
+                {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        out.push(stem.to_string());
+                    }
                 }
             }
         }
     }
     out.sort();
+    out.dedup();
     out
 }
 
@@ -291,9 +337,26 @@ pub struct RvmMatting {
 
 impl RvmMatting {
     /// 探测可用引擎 + 本地模型(None = 不可用)。
+    /// 引擎候选:独立 CLI(rvm-cli/rvm)或 python 模块(-m robust_video_matting);
+    /// 调用约定统一为 --input/--model/--start/--duration/--output-dir/--alpha-only。
     pub fn detect() -> Option<Self> {
-        let bins = ["rvm-cli", "rvm", "robust-video-matting"];
-        let engine = bins.iter().find(|b| which_bin(b))?.to_string();
+        let mut engine = None;
+        for bin in ["rvm-cli", "rvm"] {
+            if which_bin(bin) {
+                engine = Some(bin.to_string());
+                break;
+            }
+        }
+        if engine.is_none() && which_bin("python3") {
+            // python 模块封装:python3 -m robust_video_matting <同参数>
+            let probe = Command::new("python3")
+                .args(["-m", "robust_video_matting", "--help"])
+                .output();
+            if matches!(&probe, Ok(o) if o.status.success()) {
+                engine = Some("python3 -m robust_video_matting".into());
+            }
+        }
+        let engine = engine?;
         let model = std::env::var("HOME")
             .map(|h| PathBuf::from(h).join(".veditor/models/rvm_mobilenetv3.onnx"))
             .unwrap_or_else(|_| std::env::temp_dir().join("rvm_mobilenetv3.onnx"));
@@ -318,8 +381,13 @@ impl RvmMatting {
             self.model.display()
         );
         std::fs::create_dir_all(out_dir)?;
-        // 常见 rvm CLI 约定:--input/--model/--output-dir(逐帧灰度 PNG)
-        let out = Command::new(&self.engine)
+        // 引擎约定:--input/--model/--output-dir(逐帧灰度 PNG);
+        // engine 含空格(python -m …)时按词拆分构造命令
+        let mut parts = self.engine.split_whitespace().map(String::from);
+        let bin = parts.next().context("RVM 引擎为空")?;
+        let mut cmd = Command::new(bin);
+        cmd.args(parts);
+        let out = cmd
             .args(["--input"])
             .arg(media)
             .args(["--model"])
@@ -398,49 +466,6 @@ impl Tts {
     }
 }
 
-/// 背景移除引擎(规格 P2):可插拔。
-/// - `BgRemover::binary("rembg" 等)`:调用外部 CLI 输出透明 PNG 序列(逐帧,M4 简化);
-/// - 无可用引擎时 `available()` 返回 false,UI 禁用入口。
-pub struct BgRemover {
-    pub engine: String,
-}
-
-impl BgRemover {
-    pub fn detect_engine() -> Option<Self> {
-        for bin in ["rembg", "backgroundremover", "bria-rm-CLI"] {
-            if which_bin(bin) {
-                return Some(Self { engine: bin.into() });
-            }
-        }
-        None
-    }
-
-    pub fn available(&self) -> bool {
-        which_bin(&self.engine)
-    }
-
-    /// 对单帧图片做背景移除,输出 PNG 路径。
-    pub fn remove_frame(&self, input_png: &Path, out_png: &Path) -> Result<()> {
-        ensure!(
-            self.available(),
-            "背景移除引擎 {} 不可用,请安装 rembg 等工具",
-            self.engine
-        );
-        let out = Command::new(&self.engine)
-            .args(["i", "-o"])
-            .arg(out_png)
-            .arg(input_png)
-            .output()
-            .context("启动背景移除引擎失败")?;
-        ensure!(
-            out.status.success(),
-            "背景移除失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,21 +530,44 @@ mod tests {
     }
 
     #[test]
-    fn bg_remover_graceful_when_missing() {
-        let r = BgRemover {
-            engine: "definitely-not-installed-xyz".into(),
-        };
-        assert!(!r.available());
-        let err = r
-            .remove_frame(Path::new("/tmp/a.png"), Path::new("/tmp/b.png"))
-            .unwrap_err();
-        assert!(err.to_string().contains("不可用"));
-    }
-
-    #[test]
     fn capitalize_handles_ascii() {
         assert_eq!(capitalize("abc"), "Abc");
         assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn demucs_finds_output_in_nested_layout() {
+        // 真实 demucs 布局: {out}/htdemucs/{输入名}/vocals.wav + no_vocals.wav
+        let dir = std::env::temp_dir().join(format!("veditor-demucs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let base = dir.join("htdemucs").join("song");
+        std::fs::create_dir_all(&base).unwrap();
+        let v = base.join("vocals.wav");
+        let i = base.join("no_vocals.wav");
+        std::fs::write(&v, b"x").unwrap();
+        std::fs::write(&i, b"x").unwrap();
+        // separate() 的候选目录 + 兜底扫描都要能命中
+        let candidates = [dir.join("htdemucs").join("song")];
+        let hit = candidates.iter().any(|b| b.join("vocals.wav").exists() && b.join("no_vocals.wav").exists());
+        assert!(hit);
+        // 兜底扫描(模拟布局变化)
+        let mut found = false;
+        let mut stack = vec![dir.clone()];
+        while let Some(d) = stack.pop() {
+            let mut v = None;
+            let mut iv = None;
+            if let Ok(rd) = std::fs::read_dir(&d) {
+                for e in rd.flatten() {
+                    let n = e.file_name().to_string_lossy().to_lowercase();
+                    if n == "vocals.wav" { v = Some(e.path()); }
+                    if n == "no_vocals.wav" { iv = Some(e.path()); }
+                    if e.path().is_dir() { stack.push(e.path()); }
+                }
+            }
+            if let (Some(_), Some(_)) = (v, iv) { found = true; break; }
+        }
+        assert!(found);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

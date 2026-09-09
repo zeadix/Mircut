@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * 块移动插入语义(剪映式):
- * - 拖块到目标块左半 → 插到其前(贴左缘);右半 → 插到其后(贴右缘);
- * - 插入点右侧空间不足时,右侧所有块(含配对)在提交 entries 中整体右移;
- * - 空隙足够则直接落位,不推挤。
+ * 块移动插入语义(剪映式,光标跟手):
+ * - 虚影/落点 = 光标位置(扣抓取偏移)+ 边缘磁吸,不传送到远处;
+ * - 落点与既有块重叠时,右侧所有块(含配对)级联右移让位;
+ * - 空隙足够(含恰好贴边)则不推挤。
  */
 
 interface Clip {
@@ -70,7 +70,8 @@ test("块移动:中心点插入 + 右侧推挤 + 空隙直落", async ({ page })
       return singles.length ? [{ clip_id: `x${singles.length}`, new_start: -1 }] : null;
     });
 
-  // ===== 1. 拖 A 到 C 左半(x=100,t=200 < C 中心 225)→ 插到 C 前:S=180,C 推到 270 =====
+  // ===== 1. 拖 A 到 x=100(t=200,扣抓取偏移 44 → 156,磁吸 20 ticks 容差吸附 150)
+  // 落点 150 与 B[90,180) 重叠 → B/C 级联右移让位(光标跟手,不传送到 C 边缘) =====
   await page.mouse.move(box!.x + 22, box!.y + 50);
   await page.mouse.down();
   await page.mouse.move(box!.x + 100, box!.y + 50, { steps: 8 });
@@ -79,15 +80,17 @@ test("块移动:中心点插入 + 右侧推挤 + 空隙直落", async ({ page })
   let entries = (await lastMoveEntries()) as { clip_id: string; new_start: number }[] | null;
   expect(entries, "应提交 move_clips").toBeTruthy();
   const byId = new Map(entries!.map((e) => [e.clip_id, e.new_start]));
-  expect(byId.get("Av")).toBe(180);
-  expect(byId.get("Aa")).toBe(180);
-  expect(byId.get("Cv")).toBe(270);
-  expect(byId.get("Ca")).toBe(270);
-  expect(byId.has("Bv"), "B 不受影响").toBeFalsy();
+  expect(byId.get("Av")).toBe(150);
+  expect(byId.get("Aa")).toBe(150);
+  expect(byId.get("Bv")).toBe(240); // A 末端 240
+  expect(byId.get("Ba")).toBe(240);
+  expect(byId.get("Cv")).toBe(330); // B 末端 330
+  expect(byId.get("Ca")).toBe(330);
 
-  // ===== 2. 拖 A 到 C 右半(x=120,t=240 > 225)→ 插到 C 后:S=270,空隙足够不推挤 =====
+  // ===== 2. 拖 A 到 x=120(t=240,扣偏移 → 196,磁吸择近吸附整秒 210 而非 180):
+  // A[210,300) 压住 C → C 推到 A 末端 300;B 在左侧不动 =====
   await clearCalls();
-  // A 已在 180(mock 不改状态,仍按初始文档判定;重新从 A 原位拖)
+  // A 已在 150(mock 不改状态,仍按初始文档判定;重新从 A 原位拖)
   await page.mouse.move(box!.x + 22, box!.y + 50);
   await page.mouse.down();
   await page.mouse.move(box!.x + 120, box!.y + 50, { steps: 8 });
@@ -96,7 +99,9 @@ test("块移动:中心点插入 + 右侧推挤 + 空隙直落", async ({ page })
   entries = (await lastMoveEntries()) as { clip_id: string; new_start: number }[] | null;
   expect(entries).toBeTruthy();
   const byId2 = new Map((entries ?? []).map((e) => [e.clip_id, e.new_start]));
-  expect(byId2.get("Av")).toBe(270);
-  expect(byId2.get("Aa")).toBe(270);
-  expect(byId2.has("Cv"), "右侧无块或空间足够 → 不推挤").toBeFalsy();
+  expect(byId2.get("Av")).toBe(210);
+  expect(byId2.get("Aa")).toBe(210);
+  expect(byId2.get("Cv")).toBe(300);
+  expect(byId2.get("Ca")).toBe(300);
+  expect(byId2.has("Bv"), "B 在落点左侧 → 不推挤").toBeFalsy();
 });

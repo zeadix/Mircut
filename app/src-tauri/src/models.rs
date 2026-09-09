@@ -35,6 +35,20 @@ pub(crate) const MODELS: &[ModelEntry] = &[
         size: 487_000_000,
     },
     ModelEntry {
+        id: "piper-zh_CN-huayan-medium.onnx",
+        name: "Piper 中文音色(华燕 medium)",
+        desc: "TTS 配音音色(onnx,~62MB;piper 引擎从 pip 安装 piper-tts)",
+        url: "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx",
+        size: 62_000_000,
+    },
+    ModelEntry {
+        id: "piper-zh_CN-huayan-medium.onnx.json",
+        name: "Piper 中文音色配置",
+        desc: "上一条音色的配套配置文件(~1MB),两条都要下载",
+        url: "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json",
+        size: 1_000_000,
+    },
+    ModelEntry {
         id: "rvm_mobilenetv3.onnx",
         name: "RVM 视频抠像",
         desc: "AI 人像抠像(视频时序 matting,需 rvm-cli 引擎,~26MB)",

@@ -317,12 +317,26 @@ export interface ExportRequest {
   width: number;
   height: number;
   fps: number;
-  crf: number;
-  /// 视频编码器(libx264/h264_nvenc/h264_qsv)。
+  /// 质量 1-100(后端按编码器家族换算 crf/qp;50 ≈ crf20)。
+  quality?: number;
+  /// 容器格式(mp4/mkv/webm/mov/gif/wav/flac/ogg/mp3/m4a;缺省按输出扩展名推断)。
+  format?: string;
+  /// 仅音频导出(跳过视频链;容器用 wav/flac/ogg/mp3/m4a)。
+  audioOnly?: boolean;
+  /// 兼容旧字段:显式 crf(quality 未传时生效)。
+  crf?: number;
+  /// 视频编码器(libx264/libx265/libsvtav1/libaom-av1/libvpx-vp9/硬编…;默认 libx264)。
   vcodec?: string;
   loudnessNormalize?: boolean;
   /// 入队时的文档快照(排队任务不受后续剪辑影响)。
   docSnapshot?: Document;
+}
+
+export interface DetectedEncoders {
+  software: string[];
+  hardware: string[];
+  /// ffmpeg 清单存在但试编失败(硬件/驱动缺失)。
+  unavailable: string[];
 }
 
 export async function exportVideo(req: ExportRequest): Promise<string> {
@@ -332,8 +346,11 @@ export async function exportVideo(req: ExportRequest): Promise<string> {
       width: req.width,
       height: req.height,
       fps: req.fps,
-      crf: req.crf,
+      quality: req.quality ?? 50,
+      crf: req.crf ?? null,
       vcodec: req.vcodec ?? null,
+      format: req.format ?? null,
+      audio_only: req.audioOnly ?? false,
       loudness_normalize: req.loudnessNormalize ?? false,
       doc_snapshot: req.docSnapshot ?? null,
     },
@@ -452,9 +469,9 @@ export async function getDocSnapshot(): Promise<Document> {
   return invoke("get_doc_snapshot");
 }
 
-/// 硬件编码器探测(nvenc/qsv)。
-export async function detectHwEncoders(): Promise<string[]> {
-  return invoke("detect_hw_encoders");
+/// 编码器探测(软编 + 硬编,按本机 ffmpeg -encoders)。
+export async function detectEncoders(): Promise<DetectedEncoders> {
+  return invoke("detect_encoders");
 }
 
 export async function previewExportCmd(req: ExportRequest): Promise<string> {
@@ -464,8 +481,10 @@ export async function previewExportCmd(req: ExportRequest): Promise<string> {
       width: req.width,
       height: req.height,
       fps: req.fps,
-      crf: req.crf,
+      quality: req.quality ?? 50,
+      crf: req.crf ?? null,
       vcodec: req.vcodec ?? null,
+      format: req.format ?? null,
       loudness_normalize: req.loudnessNormalize ?? false,
       doc_snapshot: req.docSnapshot ?? null,
     },

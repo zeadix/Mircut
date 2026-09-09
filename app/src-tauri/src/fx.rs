@@ -501,6 +501,8 @@ pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Resu
                     bold: true,
                     shadow: true,
                     bg_color: None,
+                    align_h: "center".into(),
+                    align_v: "middle".into(),
                 }),
             },
         }));

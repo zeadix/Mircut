@@ -20,6 +20,8 @@ interface QueueTask {
   req: api.ExportRequest;
   status: "pending" | "running" | "done" | "failed" | "cancelled";
   pct: number;
+  /// 失败原因(人性化摘要,悬停看全文)。
+  err?: string;
   publish?: "bilibili" | "douyin";
 }
 
@@ -42,15 +44,85 @@ const STATUS_COLOR: Record<QueueTask["status"], string> = {
  * 导出操作窗口(模态):平台预设/编码器/路径/命令预览 + 导出队列
  * (顺序执行/暂停/单任务取消/按预设批量入队),一键发布经队列导出后跳上传页。
  */
+/// 软编目录按版权分组(免版税优先展示;探测过滤 + 永远兜底的 libx264)。
+/// AV1:SVT-AV1 快、libaom 慢但几乎所有 ffmpeg 构建都有;VP9 同为免版税。
+const SW_GROUPS: { label: string; hint?: string; encoders: [string, string][] }[] = [
+  {
+    label: "免版税(商用无忧)",
+    encoders: [
+      ["libsvtav1", "AV1(SVT)"],
+      ["libaom-av1", "AV1(慢速)"],
+      ["libvpx-vp9", "VP9"],
+    ],
+  },
+  { label: "通用", encoders: [["libx264", "H.264"]] },
+  {
+    label: "需注意授权",
+    hint: "H.265/HEVC 有多个专利池,商用分发需自行评估授权风险",
+    encoders: [["libx265", "H.265"]],
+  },
+];
+/// 硬编目录(id 前缀 -> 友好名)。
+const HW_PREFIX: [string, string][] = [
+  ["h264", "H.264"],
+  ["hevc", "H.265"],
+  ["av1", "AV1"],
+];
+const HW_VENDOR: [string, string][] = [
+  ["nvenc", "NVENC"],
+  ["qsv", "QSV"],
+  ["vaapi", "VAAPI"],
+  ["amf", "AMF"],
+];
+/// 容器清单与兼容矩阵(webm 仅 VP9/AV1;mp4/mov 不允许 VP9;mkv 全兼容;gif 内置编码)。
+const FORMATS: [string, string][] = [
+  ["mp4", "MP4"],
+  ["mkv", "MKV"],
+  ["webm", "WebM"],
+  ["mov", "MOV"],
+  ["gif", "GIF 动图"],
+];
+/// 仅音频容器(全部免版税/专利过期;mp3 专利 2017 年已到期)。
+const AUDIO_FORMATS: [string, string][] = [
+  ["wav", "WAV(无损)"],
+  ["flac", "FLAC(无损)"],
+  ["ogg", "OGG"],
+  ["mp3", "MP3"],
+  ["m4a", "M4A"],
+];
+/// 免版税软编优先级(一键免版税预设按可用性依次挑选)。
+const ROYALTY_FREE = ["libsvtav1", "libaom-av1", "libvpx-vp9"];
+function encoderAllowed(vcodec: string, format: string): boolean {
+  if (format === "gif") return true; // GIF 内置编码,忽略选择
+  if (format === "webm") return vcodec === "libvpx-vp9" || vcodec.includes("av1");
+  if (format === "mp4" || format === "mov") return vcodec !== "libvpx-vp9";
+  return true;
+}
+/// 质量 1-100 -> 数值(crf/qp 同刻度;q50≈20)
+function qualityToValue(q: number): number {
+  return Math.round(34.3 - 0.286 * Math.min(100, Math.max(1, q)));
+}
+function hwLabel(id: string): string {
+  const codec = HW_PREFIX.find(([p]) => id.startsWith(p))?.[1] ?? "";
+  const vendor = HW_VENDOR.find(([p]) => id.includes(p))?.[1] ?? "";
+  return `${codec} ${vendor}`.trim();
+}
+
 function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   const [exportPath, setExportPath] = useState("/tmp/veditor-export.mp4");
   const [exportCmd, setExportCmd] = useState("");
   const [presets, setPresets] = useState<api.ExportPresetInfo[]>([]);
   const [presetIdx, setPresetIdx] = useState(0);
   const [loudness, setLoudness] = useState(false);
-  /// 视频编码器(默认软编 libx264;探测到硬编后可选)。
+  /// 视频编码器(默认软编 libx264;软编/硬编按本机 ffmpeg 试编探测)。
   const [vcodec, setVcodec] = useState("libx264");
-  const [hwEncoders, setHwEncoders] = useState<string[]>([]);
+  const [encoders, setEncoders] = useState<api.DetectedEncoders | null>(null);
+  /// 容器格式(mp4/mkv/webm/mov/gif;与编码器兼容联动)。
+  const [format, setFormat] = useState("mp4");
+  /// 仅音频导出容器。
+  const [audioFormat, setAudioFormat] = useState("mp3");
+  /// 质量 1-100(50 ≈ crf20)。
+  const [quality, setQuality] = useState(50);
   /// 导出队列。
   const [queue, setQueue] = useState<QueueTask[]>([]);
   const [paused, setPaused] = useState(false);
@@ -62,8 +134,8 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
 
   useEffect(() => {
     api.listExportPresets().then(setPresets).catch(() => {});
-    // B3:硬件编码器探测接入(此前下拉永远只有 libx264)
-    api.detectHwEncoders().then(setHwEncoders).catch(() => {});
+    // 编码器探测(软编 + 硬编;此前下拉永远只有 libx264)
+    api.detectEncoders().then(setEncoders).catch(() => {});
   }, []);
 
   // 导出进度事件 -> 活动任务进度
@@ -91,11 +163,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
       width: doc.width ?? 1280,
       height: doc.height ?? 720,
       fps: preset?.fps ?? Math.round(fps),
-      crf: preset?.crf ?? 20,
+      quality,
+      format,
       vcodec,
       loudnessNormalize: loudness,
     }),
-    [exportPath, doc.width, doc.height, preset, fps, loudness, vcodec]
+    [exportPath, doc.width, doc.height, preset, fps, loudness, vcodec, format, quality]
   );
 
   // 队列顺序执行器:无活动且未暂停时取队首 pending
@@ -127,7 +200,13 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         const cancelled = String(e).includes("取消");
         setQueue((q) =>
           q.map((t) =>
-            t.id === next.id ? { ...t, status: cancelled ? "cancelled" : "failed" } : t
+            t.id === next.id
+              ? {
+                  ...t,
+                  status: cancelled ? "cancelled" : "failed",
+                  err: cancelled ? undefined : String(e),
+                }
+              : t
           )
         );
         onStatus(`导出失败: ${e}`);
@@ -172,14 +251,56 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
     void enqueue(req, `${file} · ${preset?.name ?? "自定义"}`);
   }
 
-  /// 批量入队:每个平台预设一个任务(路径后缀区分)。
+  /// 一键免版税:WebM 容器 + 首个实测可用的免版税编码(AV1 优先,VP9 兜底)。
+  function onRoyaltyFree() {
+    const usable = encoders?.software ?? [];
+    const pick = ROYALTY_FREE.find((id) => id === "libvpx-vp9" || usable.includes(id));
+    if (pick) setVcodec(pick);
+    setFormat("webm");
+    const dot = exportPath.lastIndexOf(".");
+    const ext = `.${"webm"}`;
+    setExportPath(dot > exportPath.lastIndexOf("/") ? exportPath.slice(0, dot) + ext : exportPath + ext);
+    onStatus(`已切换免版税预设:WebM · ${pick === "libvpx-vp9" ? "VP9" : "AV1"} + Opus`);
+  }
+
+  /// 仅音频导出:混音全部未静音音频轨,编码按容器自动选择。
+  function onEnqueueAudio() {
+    if (doc.clips.length === 0) {
+      onStatus("时间轴为空:请先添加素材");
+      return;
+    }
+    const hasAudio = doc.clips.some((c) => {
+      const a = doc.assets.find((x) => x.id === c.asset.asset_id);
+      return a?.has_audio && !c.muted;
+    });
+    if (!hasAudio) {
+      onStatus("时间轴上没有可用音频(全部静音或无音轨),无法导出音频");
+      return;
+    }
+    const dot = exportPath.lastIndexOf(".");
+    const base = dot > exportPath.lastIndexOf("/") ? exportPath.slice(0, dot) : exportPath;
+    const outPath = `${base}_audio.${audioFormat}`;
+    void enqueue(
+      { ...req, audioOnly: true, format: audioFormat, outPath },
+      `${outPath.split("/").pop()} · 仅音频`
+    );
+  }
+
+  /// 批量入队:每个平台预设一个任务(路径后缀区分;容器/编码器/质量跟随当前设置)。
   function onEnqueueAllPresets() {
     if (!checkTimeline()) return;
-    const base = exportPath.replace(/\.mp4$/i, "");
+    const base = exportPath.replace(/\.[a-z0-9]+$/i, "");
     for (const p of presets) {
       enqueue(
-        { ...req, width: p.width, height: p.height, fps: p.fps, crf: p.crf, outPath: `${base}_${p.name}.mp4` },
-        `${p.name}.mp4 · ${p.width}x${p.height}`
+        {
+          ...req,
+          width: p.width,
+          height: p.height,
+          fps: p.fps,
+          format,
+          outPath: `${base}_${p.name}.${format}`,
+        },
+        `${p.name}.${format} · ${p.width}x${p.height}`
       );
     }
     onStatus(`已按 ${presets.length} 个预设批量入队`);
@@ -194,7 +315,7 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
   async function onPickSavePath() {
     const picked = await saveDialog({
       defaultPath: exportPath,
-      filters: [{ name: "视频", extensions: ["mp4"] }],
+      filters: [{ name: "视频", extensions: [format] }],
     });
     if (picked) setExportPath(picked);
   }
@@ -267,22 +388,117 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
           </select>
         </label>
 
-        {/* 视频编码器(硬编探测) */}
+        {/* 视频编码器(试编探测;按版权分组,不可用置灰) */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {t("export.encoder")}
           <select
             className="ti"
+            style={{ flex: 1 }}
             value={vcodec}
-            onChange={(e) => setVcodec(e.target.value)}
-            title="硬件编码可大幅提速;不可用时 ffmpeg 会报错,请回退 libx264"
+            disabled={format === "gif"}
+            onChange={(e) => {
+              const next = e.target.value;
+              setVcodec(next);
+              // 编码器与当前容器不兼容时自动切到 MKV(全兼容)
+              if (!encoderAllowed(next, format)) setFormat("mkv");
+            }}
+            title={
+              format === "gif"
+                ? "GIF 使用内置编码器,无需选择"
+                : "仅列出本机试编可用的编码器;免版税组商用无忧,H.265 有专利池授权风险"
+            }
           >
-            <option value="libx264">{t("export.software")}</option>
-            {hwEncoders.map((c) => (
-              <option key={c} value={c}>
-                {t("export.hardware")} {c}
+            {encoders === null && <option value="libx264">检测编码器中…</option>}
+            {encoders !== null &&
+              SW_GROUPS.map((g) => {
+                const usableInGroup = g.encoders.filter(
+                  ([id]) => id === "libx264" || (encoders.software ?? []).includes(id)
+                );
+                if (usableInGroup.length === 0) return null;
+                return (
+                  <optgroup key={g.label} label={g.label} title={g.hint}>
+                    {usableInGroup.map(([id, label]) => (
+                      <option key={id} value={id} disabled={!encoderAllowed(id, format)}>
+                        {label}
+                      </option>
+                    ))}
+                  </optgroup>
+                );
+              })}
+            {encoders !== null && (encoders.hardware ?? []).length > 0 && (
+              <optgroup label="硬件加速">
+                {encoders!.hardware.map((id) => (
+                  <option key={id} value={id} disabled={!encoderAllowed(id, format)}>
+                    {hwLabel(id)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {encoders !== null && (encoders.unavailable ?? []).length > 0 && (
+              <optgroup label="本机不可用(试编失败)">
+                {encoders!.unavailable.map((id) => (
+                  <option key={id} value={id} disabled>
+                    {`${hwLabel(id) || id}(本机不可用)`}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+
+        {/* 容器格式(与编码器兼容联动;不合法组合禁用)+ 一键免版税 */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          容器
+          <select
+            className="ti"
+            style={{ flex: 1 }}
+            value={format}
+            onChange={(e) => {
+              const next = e.target.value;
+              setFormat(next);
+              // 切换容器自动替换输出扩展名
+              const ext = `.${next}`;
+              setExportPath((p) => {
+                const dot = p.lastIndexOf(".");
+                return dot > p.lastIndexOf("/") ? p.slice(0, dot) + ext : p + ext;
+              });
+            }}
+            title="输出容器格式"
+          >
+            {FORMATS.map(([id, label]) => (
+              <option key={id} value={id} disabled={!encoderAllowed(vcodec, id)}>
+                {label}
+                {!encoderAllowed(vcodec, id) ? "(与当前编码器不兼容)" : ""}
               </option>
             ))}
           </select>
+          <button className="btn" onClick={onRoyaltyFree} title="WebM 容器 + AV1/VP9 + Opus,全部免版税可商用">
+            免版税
+          </button>
+        </label>
+        {format === "gif" && (
+          <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
+            GIF 动图:无音频,自动限 15fps / 640 宽;质量滑条控制调色板颜色数
+          </div>
+        )}
+
+        {/* 质量(统一滑条,后端按编码器家族换算 crf/qp) */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          质量
+          <input
+            type="range"
+            min={1}
+            max={100}
+            value={quality}
+            onChange={(e) => setQuality(Number(e.target.value))}
+            style={{ flex: 1 }}
+            title="质量:越高画质越好、文件越大(50 ≈ CRF 20)"
+          />
+          <span style={{ fontSize: 11, color: "var(--text-dim)", width: 60, flexShrink: 0 }}>
+            {format === "gif"
+              ? `${quality} ≈ ${Math.min(256, Math.max(32, Math.round(((32 - qualityToValue(quality)) / 18) * 224)) + 32)} 色`
+              : `${quality} ≈ CRF ${qualityToValue(quality)}`}
+          </span>
         </label>
         {/* 响度标准化 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -292,6 +508,27 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
             onChange={(e) => setLoudness(e.target.checked)}
           />
           {t("export.loudness")}
+        </label>
+
+        {/* 仅音频导出(混音全部未静音音频;免版税容器为主) */}
+        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          仅音频
+          <select
+            className="ti"
+            style={{ flex: 1 }}
+            value={audioFormat}
+            onChange={(e) => setAudioFormat(e.target.value)}
+            title="WAV/FLAC/OGG 免版税;MP3 专利已过期;M4A 兼容 Apple"
+          >
+            {AUDIO_FORMATS.map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button className="btn" onClick={onEnqueueAudio} disabled={busy}>
+            导出音频
+          </button>
         </label>
 
         {/* 输出路径 */}
@@ -384,6 +621,21 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 >
                   {task.name}
                 </span>
+                {task.status === "failed" && task.err && (
+                  <span
+                    title={task.err}
+                    style={{
+                      flex: 1,
+                      color: "#ff5f5f",
+                      fontSize: 11,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {task.err}
+                  </span>
+                )}
                 {task.status === "running" && (
                   <>
                     <div

@@ -169,11 +169,15 @@ impl Command for RippleDelete {
     }
 }
 
-/// 设置片段速度(保持时间轴长度不变,源消费区间按比例伸缩)。
+/// 设置片段速度(块长同步缩放:新时长 = 旧时长 × 旧速 ÷ 新速)。
+/// 时间轴语义 = 内容时长(素材跨度 ÷ 速度),与属性面板"时长"显示、
+/// 截取范围换算、导出/预览取帧映射三方一致;块尾即出点,所见即所得。
+/// File 轨的音视频配对块(同素材同源区间的另一半)同步速度与时长,保持对齐。
 pub struct SetSpeed {
     pub clip_id: String,
     pub speed: f64,
-    old: Option<f64>,
+    /// 撤销快照:(clip_id, 旧速度, 旧时长),含配对块。
+    old: Vec<(String, f64, i64)>,
 }
 
 impl SetSpeed {
@@ -181,7 +185,7 @@ impl SetSpeed {
         Self {
             clip_id: clip_id.into(),
             speed,
-            old: None,
+            old: Vec::new(),
         }
     }
 }
@@ -191,15 +195,46 @@ impl Command for SetSpeed {
         "变速"
     }
     fn apply(&mut self, doc: &mut Document) {
-        if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-            self.old = Some(c.speed);
-            c.speed = self.speed;
+        let Some(c) = doc.clip(&self.clip_id).cloned() else {
+            return;
+        };
+        if self.speed <= 0.0 {
+            return;
+        }
+        // 冻结片段(speed=0,时长任意)与同速设置不缩放;其余按比例缩放
+        let rescale = c.speed > 0.0 && (c.speed - self.speed).abs() > 1e-9;
+        let new_duration = if rescale {
+            ((c.duration as f64) * c.speed / self.speed).round().max(1.0) as i64
+        } else {
+            c.duration
+        };
+        // 撤销快照:目标块 + File 轨配对块(同素材同源区间、另一 lane)
+        self.old = doc
+            .clips
+            .iter()
+            .filter(|x| {
+                x.id == c.id
+                    || (doc.track(&c.track_id).map(|t| t.kind) == Some(crate::TrackKind::File)
+                        && x.track_id == c.track_id
+                        && x.asset.asset_id == c.asset.asset_id
+                        && (x.asset.source_in - c.asset.source_in).abs() < 1e-6
+                        && (x.asset.source_out - c.asset.source_out).abs() < 1e-6
+                        && x.lane != c.lane)
+            })
+            .map(|x| (x.id.clone(), x.speed, x.duration))
+            .collect();
+        for (id, _, _) in &self.old {
+            if let Some(x) = doc.clips.iter_mut().find(|x| &x.id == id) {
+                x.speed = self.speed;
+                x.duration = new_duration;
+            }
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some(s) = self.old.take() {
-            if let Some(c) = doc.clips.iter_mut().find(|c| c.id == self.clip_id) {
-                c.speed = s;
+        for (id, speed, duration) in self.old.drain(..) {
+            if let Some(x) = doc.clips.iter_mut().find(|x| x.id == id) {
+                x.speed = speed;
+                x.duration = duration;
             }
         }
     }
@@ -1023,8 +1058,72 @@ mod tests {
         );
         stack.execute(&mut doc, Box::new(SetSpeed::new("c1", 2.0)));
         assert_eq!(doc.clip("c1").unwrap().speed, 2.0);
+        // 块长同步缩放:30 ticks × 1.0 / 2.0 = 15(块尾即出点,所见即所得)
+        assert_eq!(doc.clip("c1").unwrap().duration, 15);
         stack.undo(&mut doc);
         assert_eq!(doc.clip("c1").unwrap().speed, 1.0);
+        assert_eq!(doc.clip("c1").unwrap().duration, 30);
+    }
+
+    #[test]
+    fn set_speed_scales_block_and_syncs_file_pair() {
+        use crate::{Asset, Track, TrackKind};
+        let mut doc = Document::default();
+        doc.assets.push(Asset {
+            id: "a1".into(),
+            path: "/tmp/v.mp4".into(),
+            duration_secs: 100.0,
+            has_video: true,
+            has_audio: true,
+            width: None,
+            height: None,
+            name: None,
+            fps: None,
+            tags: vec![],
+        });
+        // File 轨:视频块 + 音频配对块(同素材同源区间,另一 lane)
+        doc.tracks.push(Track {
+            id: "f1".into(),
+            kind: TrackKind::File,
+            name: "文件轨".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+            video_on: true,
+            audio_on: true,
+        });
+        let mut stack = CommandStack::new();
+        let mut v = clip("c1", "f1", 0, 300);
+        v.lane = Some(crate::Lane::Video);
+        let mut a = clip("c1a", "f1", 0, 300);
+        a.lane = Some(crate::Lane::Audio);
+        stack.execute(&mut doc, Box::new(crate::AddClip { clip: v }));
+        stack.execute(&mut doc, Box::new(crate::AddClip { clip: a }));
+
+        stack.execute(&mut doc, Box::new(SetSpeed::new("c1", 2.0)));
+        // 10s 块 × 1/2 = 5s:视频块与音频配对块同步缩放 + 同步速度
+        assert_eq!(doc.clip("c1").unwrap().duration, 150);
+        assert_eq!(doc.clip("c1a").unwrap().duration, 150);
+        assert_eq!(doc.clip("c1a").unwrap().speed, 2.0);
+
+        // 撤销:两块都完整回滚
+        stack.undo(&mut doc);
+        assert_eq!(doc.clip("c1").unwrap().duration, 300);
+        assert_eq!(doc.clip("c1").unwrap().speed, 1.0);
+        assert_eq!(doc.clip("c1a").unwrap().duration, 300);
+        assert_eq!(doc.clip("c1a").unwrap().speed, 1.0);
+    }
+
+    #[test]
+    fn set_speed_freeze_clip_no_rescale() {
+        let mut doc = Document::default();
+        let mut stack = CommandStack::new();
+        let mut f = clip("c1", "v1", 0, 30);
+        f.speed = 0.0; // 定格片段:时长任意,不参与缩放
+        stack.execute(&mut doc, Box::new(crate::AddClip { clip: f }));
+        stack.execute(&mut doc, Box::new(SetSpeed::new("c1", 2.0)));
+        assert_eq!(doc.clip("c1").unwrap().speed, 2.0);
+        assert_eq!(doc.clip("c1").unwrap().duration, 30);
     }
 
     #[test]

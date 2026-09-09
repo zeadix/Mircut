@@ -64,15 +64,15 @@ test("拖放落点:同轨重复 + 第二轨各行映射", async ({ page }) => {
   await page.keyboard.press("m"); // 触发 refresh,载入补充的轨道/块
   await page.waitForTimeout(600);
 
-  // File 轨几何(未折叠):每轨 120px = 时间[0,20)+视频[20,80)+音频[80,120)
-  // 轨1块 [0,45)px(中心 22.5px);轨2无块(空隙 → 磁吸,无吸附命中时保留原位)
+  // File 轨几何(未折叠):每轨 120px = 时间[0,20) + 单一内容行[20,120)
+  // 轨1块 [0,45)px(中心 22.5px);轨2无块(空隙 → 磁吸);lane 由素材类型决定,前端仅占位
   const cases: { dx: number; dy: number; track: string; lane: string | null; start: number; desc: string }[] = [
-    { dx: 10, dy: 50, track: "f1", lane: "Video", start: 0, desc: "轨1视频行左半 → 贴块左缘" },
-    { dx: 35, dy: 50, track: "f1", lane: "Video", start: 90, desc: "轨1视频行右半 → 贴块右缘" },
-    { dx: 22, dy: 100, track: "f1", lane: "Audio", start: 0, desc: "轨1音频行左半" },
-    { dx: 22, dy: 130, track: "f2", lane: "Video", start: 30, desc: "轨2时间行(磁吸吸附到整秒)" },
-    { dx: 22, dy: 150, track: "f2", lane: "Video", start: 30, desc: "轨2视频行(磁吸吸附到整秒)" },
-    { dx: 22, dy: 200, track: "f2", lane: "Audio", start: 30, desc: "轨2音频行(磁吸吸附到整秒)" },
+    { dx: 10, dy: 50, track: "f1", lane: "Video", start: 0, desc: "轨1内容行左半 → 贴块左缘" },
+    { dx: 35, dy: 50, track: "f1", lane: "Video", start: 90, desc: "轨1内容行右半 → 贴块右缘" },
+    { dx: 22, dy: 100, track: "f1", lane: "Video", start: 0, desc: "轨1内容行下部左半" },
+    { dx: 22, dy: 130, track: "f2", lane: null, start: 30, desc: "轨2时间行(磁吸吸附到整秒)" },
+    { dx: 22, dy: 150, track: "f2", lane: "Video", start: 30, desc: "轨2内容行(磁吸吸附到整秒)" },
+    { dx: 22, dy: 200, track: "f2", lane: "Video", start: 30, desc: "轨2内容行下部(磁吸吸附到整秒)" },
   ];
   for (const c of cases) {
     const ok = await dropAt(page, c.dx, c.dy);

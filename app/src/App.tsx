@@ -25,6 +25,10 @@ import { t } from "./i18n";
 import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
 import RightPanel from "./RightPanel";
+import SubtitlePanel from "./SubtitlePanel";
+import TextPanel from "./TextPanel";
+import StickerPanel from "./StickerPanel";
+import PackPanel from "./PackPanel";
 import ResPresetSelect from "./ResPreset";
 import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
@@ -195,6 +199,8 @@ const panelComponents = {
             onSetRect={c.onSetRect}
             onStickerMove={c.onStickerMove}
             onSelectClip={c.onSelectClipPlain}
+            onEditTextClip={(id) => c.beginTextEdit(id)}
+            onSetRotate={c.onSetRotate}
           />
         </div>
         <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
@@ -236,6 +242,7 @@ const panelComponents = {
             onRenameTrack={c.onRenameTrack}
             onRemoveTrack={c.onRemoveTrack}
             onDuplicateClip={c.onDuplicateClip}
+            onEditTextClip={(id) => c.beginTextEdit(id)}
           />
         </ErrorBoundary>
       </div>
@@ -252,12 +259,61 @@ const panelComponents = {
             playhead={c.playhead}
             fps={c.fps}
             onRefresh={c.refresh}
-            onStatus={c.setStatus}
             onBatchRemove={c.onBatchRemove}
             onBatchAudio={c.onBatchAudio}
-            onAddToTimeline={c.addToTimeline}
-            onSeek={c.setPlayhead}
+            editingTextClipId={c.editingTextClipId}
+            onEndTextEdit={() => c.beginTextEdit(null)}
           />
+        </ErrorBoundary>
+      </div>
+    );
+  },
+  /// 项目级工作面板(窗口菜单开关;默认不在布局中)
+  subtitles: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="subtitle" style={{ height: "100%", overflowY: "auto" }}>
+        <ErrorBoundary label="字幕面板">
+          <SubtitlePanel
+            assetPaths={(c.doc?.assets ?? []).map((a: { path: string }) => a.path)}
+            fps={c.fps}
+            onRefresh={c.refresh}
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  },
+  text: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="text" style={{ height: "100%", overflowY: "auto" }}>
+        <ErrorBoundary label="文字面板">
+          <TextPanel
+            doc={c.doc}
+            playheadTicks={c.playhead}
+            onSeek={c.setPlayhead}
+            onRefresh={c.refresh}
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  },
+  sticker: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="sticker" style={{ height: "100%", overflowY: "auto" }}>
+        <ErrorBoundary label="贴纸面板">
+          <StickerPanel doc={c.doc} onAddToTimeline={c.addToTimeline} onRefresh={c.refresh} />
+        </ErrorBoundary>
+      </div>
+    );
+  },
+  packs: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="packs" style={{ height: "100%", overflowY: "auto" }}>
+        <ErrorBoundary label="素材包面板">
+          <PackPanel doc={c.doc} playheadTicks={c.playhead} onRefresh={c.refresh} onStatus={c.setStatus} />
         </ErrorBoundary>
       </div>
     );
@@ -271,6 +327,12 @@ const buildDefaultLayout = (api: DockviewApi) => {
   api.addPanel({ id: "media", component: "media", title: t("menu.panelMedia"), position: { referencePanel: "preview", direction: "left" } });
   api.addPanel({ id: "inspector", component: "inspector", title: t("menu.panelInspector"), position: { referencePanel: "preview", direction: "right" } });
   api.addPanel({ id: "timeline", component: "timeline", title: t("menu.panelTimeline"), position: { referencePanel: "preview", direction: "below" } });
+  // 侧栏默认 280px(媒体库/属性面板各占一列,预览/时间轴吃剩余空间);
+  // 用户拖过分隔线后的尺寸由布局持久化接管
+  for (const id of ["media", "inspector"]) {
+    const panel = api.getPanel(id);
+    panel?.group.api.setSize({ width: 280 });
+  }
 };
 
 /// dockview 8:组级显隐 API 在内部 DockviewComponent 上(公开 DockviewApi 未转发,
@@ -282,8 +344,17 @@ type DockComponent = {
 const dockComponent = (api: DockviewApi): DockComponent | null =>
   (api as unknown as { component?: DockComponent }).component ?? null;
 
-/// 窗口菜单管理的四个面板 id 与标题。
-const PANEL_IDS = ["media", "preview", "timeline", "inspector"] as const;
+/// 窗口菜单管理的面板 id 与标题。
+const PANEL_IDS = [
+  "media",
+  "preview",
+  "timeline",
+  "inspector",
+  "subtitles",
+  "text",
+  "sticker",
+  "packs",
+] as const;
 const panelTitle = (id: string): string =>
   id === "media"
     ? t("menu.panelMedia")
@@ -291,7 +362,15 @@ const panelTitle = (id: string): string =>
       ? t("menu.panelPreview")
       : id === "timeline"
         ? t("menu.panelTimeline")
-        : t("menu.panelInspector");
+        : id === "inspector"
+          ? t("menu.panelInspector")
+          : id === "subtitles"
+            ? t("panel.subtitles")
+            : id === "text"
+              ? t("panel.texts")
+              : id === "sticker"
+                ? t("panel.stickers")
+                : t("panel.packs");
 
 export default function App() {  /// 全局编辑器状态(store):doc/selected/playing/playhead/status。
   const doc = useEditor((s) => s.doc);
@@ -306,6 +385,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const selectClip = useEditor((s) => s.selectClip);
   const selectMany = useEditor((s) => s.selectMany);
   const refreshStore = useEditor((s) => s.refresh);
+  const beginTextEdit = useEditor((s) => s.beginTextEdit);
+  const editingTextClipId = useEditor((s) => s.editingTextClipId);
   const setPlayheadStore = useEditor((s) => s.setPlayhead);
   /// 播放头真值(rAF 播放循环直写;seek 一律经下方 setPlayhead 回写)。
   const playheadRef = useRef(0);
@@ -341,7 +422,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [dragAssetId, setDragAssetId] = useState<string | null>(null);
   // dockview:api 引用 + 隐藏面板(窗口菜单可见性)
   const dockApiRef = useRef<DockviewApi | null>(null);
-  const [hiddenPanels, setHiddenPanels] = useState<string[]>([]);
+  /// 工作面板(字幕/文字/贴纸/素材包)默认不在布局中:按需经窗口菜单添加
+  /// (addPanel 浮动窗口),再次点击隐藏(eof setVisible)。
+  const [hiddenPanels, setHiddenPanels] = useState<string[]>([
+    "subtitles",
+    "text",
+    "sticker",
+    "packs",
+  ]);
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const rafRef = useRef<number>(0);
@@ -1171,12 +1259,32 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   /// Preview 单选(面板包装层不再传内联箭头,保住 memo)。
   const onSelectClipPlain = useCallback((id: string) => selectClip(id, false), [selectClip]);
 
+  /// 变换工具旋转提交:rotate 静态单帧关键帧(t=0 全程生效)。
+  const onSetRotate = useCallback(
+    async (clipId: string, deg: number) => {
+      const { setKeyframe } = await import("./api");
+      await setKeyframe(clipId, "rotate", 0, deg, "linear");
+      await refreshStore();
+    },
+    [refreshStore]
+  );
+
   // 键盘快捷键(含 JKL 变速播放)。修饰键组合与单键逻辑互斥:
   // Ctrl/Meta 只走文件/撤销分支(修复 Ctrl+S 误触发分割、Ctrl+O 误设出点)。
   // 依赖不含 playhead:播放头一律读 playheadRef,否则播放期间监听器 5Hz 反复解绑重绑。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      // 焦点在可编辑控件(输入框/下拉/文本域)时快捷键全部让位给编辑
+      // —— 曾漏掉 textarea:编辑文字内容按退格触发全局删除,把文字块删掉
+      const tgt = e.target as HTMLElement | null;
+      if (
+        tgt instanceof HTMLInputElement ||
+        tgt instanceof HTMLSelectElement ||
+        tgt instanceof HTMLTextAreaElement ||
+        tgt?.isContentEditable
+      ) {
+        return;
+      }
       const seekTo = (t: number) => {
         playheadRef.current = Math.max(0, t);
         setPlayhead(playheadRef.current);
@@ -1204,7 +1312,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           onSplit();
           break;
         case "Delete":
-        case "Backspace":
+          // 仅 Delete 删除选中元素;退格(Backspace)专用于文字编辑,
+          // 不承担删除元素功能(否则编辑文字内容时误删块)
           onRemove();
           break;
         case " ":
@@ -1308,6 +1417,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       addToTimeline, refresh, onSwitchRenderMode, onSetRect, onStickerMove,
       clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
       tcDraft, onDetectBeats, onRemoveSilence, onSelectClipPlain,
+      editingTextClipId, beginTextEdit, onSetRotate,
     }),
     [
       doc, thumbs, waveforms, playhead, selected, playing, playSpeed, renderMode,
@@ -1319,7 +1429,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       onClipTrim, onDuplicateClip, onSetRect, onRenameTrack, onRemoveTrack,
       onReorderTrack, onClipRangeSet, onDropAsset, onScanMusicDir, onToggleTrackMedia,
       onToggleLaneView, onToggleTrack, onSwitchRenderMode, onDetectBeats,
-      onRemoveSilence, onSelectClipPlain,
+      onRemoveSilence, onSelectClipPlain, editingTextClipId, beginTextEdit, onSetRotate,
     ]
   );
 
@@ -1333,7 +1443,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     setHiddenPanels(
       PANEL_IDS.filter((id) => {
         const p = api.getPanel(id);
-        return p ? !comp.isVisible(p.group) : false;
+        // 面板不在布局中(被 × 关闭/工作面板未创建)= 隐藏,
+        // 否则打开任一面板后其余未创建面板被误标"可见",菜单点击变成无效的隐藏操作
+        return p ? !comp.isVisible(p.group) : true;
       })
     );
   };
@@ -1367,8 +1479,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       // 必须传"组"。此前误调不存在的 api.setVisible → 点击即 TypeError 打崩渲染树(白屏)。
       comp.setVisible(panel.group, show);
     } else if (!panel && show && api) {
-      // 面板不在当前布局(被标签×关闭/保存时缺失):重新添加(dockview 默认入格)
-      void api.addPanel({ id, component: id, title: panelTitle(id) });
+      // 面板不在当前布局(被标签×关闭/保存时缺失):以浮动窗口添加,
+      // 避免挤占时间轴等既有面板的标签位(工作面板 = 独立窗口)
+      void api.addPanel({ id, component: id, title: panelTitle(id), floating: true });
     }
     if (api) syncHiddenFromLayout(api);
     else setHiddenPanels((prev) => (show ? prev.filter((p) => p !== id) : [...prev, id]));
@@ -1472,6 +1585,12 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 { label: t("menu.panelPreview"), checked: !hiddenPanels.includes("preview"), fn: () => togglePanelVisible("preview") },
                 { label: t("menu.panelTimeline"), checked: !hiddenPanels.includes("timeline"), fn: () => togglePanelVisible("timeline") },
                 { label: t("menu.panelInspector"), checked: !hiddenPanels.includes("inspector"), fn: () => togglePanelVisible("inspector") },
+                { separator: true },
+                ...PANEL_IDS.slice(4).map((id) => ({
+                  label: panelTitle(id),
+                  checked: !hiddenPanels.includes(id),
+                  fn: () => togglePanelVisible(id),
+                })),
               ],
             },
             {

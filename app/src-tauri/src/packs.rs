@@ -3,7 +3,7 @@
 
 use crate::state::AppState;
 use tauri::State;
-use veditor_core::{AddClip, AssetRef, Clip, Lane, SetSubtitleStyle, SetTextOverlays, SubtitleStyle, TextOverlay};
+use veditor_core::{AddClip, AssetRef, Clip, Lane, SetSubtitleStyle, SubtitleStyle};
 use crate::util::uuid_of;
 
 /// 素材包清单(veditor-pack.json 顶层)。
@@ -291,32 +291,78 @@ pub(crate) fn apply_pack_item(
             let _ = name;
         }
         "text-styles" => {
+            // 文字样式包:生成文字片段(真轨片段,与文字面板同语义);
+            // 样式字段(字号/颜色/粗体)有则用之,缺省与文字面板一致
             let style = item.get("style").cloned().unwrap_or(serde_json::json!({}));
             let text = item
                 .get("text")
                 .and_then(|s| s.as_str())
                 .unwrap_or("标题文字")
                 .to_string();
-            let o = serde_json::from_value::<TextOverlay>(serde_json::json!({
-                "id": "",
-                "start": t,
-                "end": t + dur.max(1),
-                "text": text,
-                "font_size": style.get("font_size").and_then(|v| v.as_u64()).unwrap_or(64),
-                "color": style.get("color").and_then(|v| v.as_str()).unwrap_or("#ffffff"),
-                "outline": style.get("outline").and_then(|v| v.as_str()).map(String::from),
-                "bold": style.get("bold").and_then(|v| v.as_bool()).unwrap_or(false),
-                "shadow": style.get("shadow").and_then(|v| v.as_bool()).unwrap_or(false),
-                "bg_color": style.get("bg_color").and_then(|v| v.as_str()).map(String::from),
-                "outline2": style.get("outline2").and_then(|v| v.as_str()).map(String::from),
-                "animation": style.get("animation").and_then(|v| v.as_str()).unwrap_or("None"),
-                "x": 0.5,
-                "y": 0.5,
-            }))
-            .map_err(|e| e.to_string())?;
-            let mut next = inner.doc.text_overlays.clone();
-            next.push(o);
-            inner.exec(Box::new(SetTextOverlays::new(next)));
+            let font_size = style.get("font_size").and_then(|v| v.as_f64()).unwrap_or(64.0);
+            let color = style
+                .get("color")
+                .and_then(|v| v.as_str())
+                .unwrap_or("#ffffff")
+                .to_string();
+            let bold = style.get("bold").and_then(|v| v.as_bool()).unwrap_or(false);
+            let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "文字");
+            let aid = format!("atext{}", uuid_of(&format!("{}-{}", pack_id, t)));
+            if inner.doc.asset(&aid).is_none() {
+                inner.doc.assets.push(veditor_core::Asset {
+                    id: aid.clone(),
+                    path: format!("text://{aid}"),
+                    duration_secs: 3600.0,
+                    has_video: true,
+                    has_audio: false,
+                    width: None,
+                    height: None,
+                    name: Some("文字".into()),
+                    fps: None,
+                    tags: vec![],
+                });
+            }
+            let mut fx = veditor_core::ClipFx::default();
+            fx.rect = Some(veditor_core::FxRect {
+                x: 0.5,
+                y: 0.5,
+                w: 0.8,
+                h: (64.0f64 / 1080.0).clamp(0.02, 0.9),
+                stretch: false,
+            });
+            fx.enter = Some(veditor_core::ClipAnim {
+                kind: veditor_core::ClipAnimKind::Fade,
+                dur_secs: 0.5,
+            });
+            let clip = Clip {
+                id: format!("txt{}", uuid_of(&format!("{}-{}", pack_id, t))),
+                track_id,
+                start: t,
+                duration: dur.max(1),
+                asset: AssetRef {
+                    asset_id: aid,
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 0.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(Lane::Video),
+                fx,
+                text: Some(veditor_core::TextClipData {
+                    content: text,
+                    font_size,
+                    color,
+                    outline: None,
+                    outline2: None,
+                    bold,
+                    shadow: false,
+                    bg_color: None,
+                    align_h: "center".into(),
+                    align_v: "middle".into(),
+                }),
+            };
+            inner.exec(Box::new(AddClip { clip }));
         }
         "subtitle-styles" => {
             let style = item.get("style").cloned().unwrap_or(serde_json::json!({}));

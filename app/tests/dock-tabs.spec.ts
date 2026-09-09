@@ -111,16 +111,17 @@ test("面板内容自适应:媒体库/属性面板铺满停靠面板宽度", asy
       return {
         mediaAside: findAside("导入")?.clientWidth ?? 0,
         mediaGroup: findGroup("媒体库")?.clientWidth ?? 0,
-        inspectorAside: findAside("属性")?.clientWidth ?? 0,
+        // 右栏已纯属性化(无 Tab 按钮):直接取属性面板组内的 aside
+      inspectorAside: findGroup("属性面板")?.querySelector("aside")?.clientWidth ?? 0,
         inspectorGroup: findGroup("属性面板")?.clientWidth ?? 0,
       };
     });
 
   await expect.poll(widths).toEqual(expect.objectContaining({ mediaGroup: expect.any(Number) }));
   const w = await widths();
-  // 面板本身被拉伸,不再是 220/240px 固定宽
-  expect(w.mediaGroup).toBeGreaterThan(300);
+  // 面板本身被拉伸,不再是 220/240px 固定宽(默认 280px)
+  expect(w.mediaGroup).toBeGreaterThan(260);
   expect(Math.abs(w.mediaAside - w.mediaGroup)).toBeLessThanOrEqual(2);
-  expect(w.inspectorGroup).toBeGreaterThan(300);
+  expect(w.inspectorGroup).toBeGreaterThan(260);
   expect(Math.abs(w.inspectorAside - w.inspectorGroup)).toBeLessThanOrEqual(2);
 });

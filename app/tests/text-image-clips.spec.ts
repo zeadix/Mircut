@@ -12,12 +12,13 @@ test("图片素材上轨:3 秒定格片段 + fx.rect + 入场动画", async ({ p
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
   // 切到贴纸 Tab,图片素材卡存在(mock a3 png)
-  const rightAside = page.locator("aside").last();
-  await rightAside.getByRole("button", { name: "贴纸", exact: true }).click();
-  await expect(rightAside.getByText("图片素材(单击放到播放头")).toBeVisible();
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.locator('[data-menu-item="贴纸"]').click();
+  const stickerPanel = page.locator('[data-panel="sticker"]');
+  await expect(stickerPanel.getByText("图片素材(单击放到播放头")).toBeVisible();
 
   // 单击图片卡 → dropAsset 定格片段
-  await rightAside.locator(".asset-card", { hasText: "mock-sticker.png" }).click();
+  await stickerPanel.locator(".asset-card", { hasText: "mock-sticker.png" }).click();
   const still = () =>
     page.evaluate(() => {
       const c = window.__veditorMock.doc.clips.find(
@@ -35,8 +36,7 @@ test("图片素材上轨:3 秒定格片段 + fx.rect + 入场动画", async ({ p
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
-  await rightAside.getByRole("button", { name: "属性", exact: true }).click();
-  await rightAside.locator("select[title*='入场动画']").selectOption("Fade");
+  await page.locator("select[title*='入场动画']").selectOption("Fade");
   // 点击命中的可能是同位置的其他片段;断言"任一片段写入入场动画"
   await expect
     .poll(
@@ -54,9 +54,11 @@ test("文字面板:新建文字片段(合成资产)", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  const rightAside = page.locator("aside").last();
-  await rightAside.getByRole("button", { name: "文字", exact: true }).click();
-  await rightAside.getByRole("button", { name: "+ 在播放头新建文字" }).click();
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.locator('[data-menu-item="文字"]').click();
+  const textPanel = page.locator('[data-panel="text"]');
+  await expect(textPanel).toBeVisible();
+  await textPanel.getByRole("button", { name: "+ 在播放头新建文字" }).click();
 
   const textClip = () =>
     page.evaluate(() => {
@@ -67,5 +69,5 @@ test("文字面板:新建文字片段(合成资产)", async ({ page }) => {
     expect.objectContaining({ content: "双击编辑", dur: 90, speed: 0 })
   );
   // 面板列表出现该片段
-  await expect(rightAside.getByText("双击编辑").first()).toBeVisible();
+  await expect(textPanel.getByText("双击编辑").first()).toBeVisible();
 });

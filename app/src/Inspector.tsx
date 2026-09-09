@@ -1,8 +1,38 @@
-import { useEffect, useState, memo } from "react";
+import { useEffect, useRef, useState, memo } from "react";
 import * as api from "./api";
 import type { Clip, Document } from "./types";
 import KeyframeEditor from "./KeyframeEditor";
+import NumInput from "./NumInput";
 import TransPreview from "./TransPreview";
+
+/// 元素类型(属性面板按此拼装区块:通用段 + 各自专有段)。
+export type ClipKind = "video" | "audio" | "image" | "text";
+/// 片段 -> 元素类型:
+/// text 非空 = 文字块;音频 lane/纯音频素材 = 音频块;
+/// 有画面无音频且 speed=0 = 图片定格块(定格哨兵);其余 = 视频块。
+export const clipKindOf = (
+  clip: Clip,
+  asset?: { has_video?: boolean; has_audio?: boolean } | null
+): ClipKind =>
+  clip.text
+    ? "text"
+    : clip.lane === "Audio" || (asset && !asset.has_video && asset.has_audio)
+      ? "audio"
+      : asset && asset.has_video && !asset.has_audio && (clip.speed ?? 1) === 0
+        ? "image"
+        : "video";
+/// File 轨音视频配对:同轨同素材同源区间、另一 lane 的音频块。
+/// 视频块的音量/音频滤镜写入目标(导出音频只从音频半区读取)。
+export const siblingAudioOf = (clip: Clip, doc: Document): Clip | null =>
+  doc.clips.find(
+    (c) =>
+      c.id !== clip.id &&
+      c.track_id === clip.track_id &&
+      c.lane === "Audio" &&
+      c.asset.asset_id === clip.asset.asset_id &&
+      Math.abs((c.asset.source_in ?? 0) - (clip.asset.source_in ?? 0)) < 1e-6 &&
+      Math.abs((c.asset.source_out ?? 0) - (clip.asset.source_out ?? 0)) < 1e-6
+  ) ?? null;
 
 interface Props {
   doc: Document;
@@ -13,11 +43,18 @@ interface Props {
   onBatchAudio?: (volume: number | null, muted: boolean | null) => Promise<void>;
   onRefresh: () => Promise<void>;
   playheadTicks: number;
+  /// 双击文字进入编辑模式的片段(文字区高亮 + 聚焦;null = 非编辑态)。
+  editingText?: string | null;
+  onEndTextEdit?: () => void;
 }
 
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
-function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAudio, onRefresh, playheadTicks }: Props) {
+function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAudio, onRefresh, playheadTicks, editingText, onEndTextEdit }: Props) {
   const tps = doc.timebase.num / doc.timebase.den;
+  /// 编辑态去重:同一次进入只 autofocus 一次。
+  const editingTextApplied = useRef<string | null>(null);
+  /// 字号即时提交的防抖 timer。
+  const fontDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [speed, setSpeed] = useState("1.0");
   const [volume, setVolume] = useState("1.0");
   const [grade, setGrade] = useState({ brightness: 0, contrast: 1, saturation: 1, temperature: 0 });
@@ -50,8 +87,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
 
   useEffect(() => {
     if (clip) {
+      // 音量显示源 = 音频写入目标(视频块读配对音频块,所见即所写)
+      const volSrc =
+        clipKindOf(clip, doc.assets.find((a) => a.id === clip.asset.asset_id)) === "audio"
+          ? clip
+          : siblingAudioOf(clip, doc);
       setSpeed(String(clip.speed));
-      setVolume(String(clip.volume));
+      setVolume(String(volSrc?.volume ?? clip.volume));
       if (clip.fx) {
         setGrade({
           brightness: clip.fx.grade.brightness,
@@ -66,11 +108,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         });
       }
     }
-  }, [clip?.id, clip?.speed, clip?.volume]);
+  }, [clip?.id, clip?.speed, clip?.volume, doc]);
 
   useEffect(() => {
-    if (clip?.fx?.audio_fx) {
-      const a = clip.fx.audio_fx;
+    // 视频块的音频滤镜状态来自配对音频块(写入目标同源)
+    const src = clip ? (clipKindOf(clip, doc.assets.find((a) => a.id === clip.asset.asset_id)) === "audio" ? clip : siblingAudioOf(clip, doc)) : null;
+    if (src?.fx?.audio_fx) {
+      const a = src.fx.audio_fx;
       setAfx({
         fade_in: a.fade_in,
         fade_out: a.fade_out,
@@ -133,6 +177,15 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     await onRefresh();
   }
 
+  /// 人声分离引擎可用性(挂载时探测;按钮 title/提示用)。
+  const [stemEngine, setStemEngine] = useState<string | null>(null);
+  useEffect(() => {
+    import("./api")
+      .then((m) => m.stemEngineStatus())
+      .then((r) => setStemEngine(r.engine))
+      .catch(() => {});
+  }, []);
+
   /// 文字片段内容/样式写入(整体覆写 text)。
   async function applyTextClip(patch: Partial<NonNullable<Clip["text"]>>) {
     if (!clip?.text) return;
@@ -184,14 +237,14 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     try {
       if (edge === "left") {
         const deltaSrc = secs - clip.asset.source_in;
-        const newStart = Math.max(0, clip.start + Math.round(deltaSrc * tps / clip.speed));
+        const newStart = Math.max(0, clip.start + Math.round(deltaSrc * tps / (clip.speed || 1)));
         const newDuration = Math.max(1, clip.duration - (newStart - clip.start));
         await invoke("trim_clip", {
           clipId: clip.id, edge: "left",
           newStart, newDuration, ripple: false,
         });
       } else {
-        const newDuration = Math.max(1, Math.round((secs - clip.asset.source_in) * tps / clip.speed));
+        const newDuration = Math.max(1, Math.round((secs - clip.asset.source_in) * tps / (clip.speed || 1)));
         await invoke("trim_clip", {
           clipId: clip.id, edge: "right",
           newStart: clip.start, newDuration, ripple: false,
@@ -205,6 +258,34 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   }
 
   if (!clip) {
+    // 无选中:工程概要(全局信息独立于此,不与元素属性混排)
+    if (selectedCount === 0) {
+      const durSecs = doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0) / tps;
+      return (
+        <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 13 }}>工程</h3>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-dim)" }}>分辨率</span>
+            <span>{doc.width ?? 1920}×{doc.height ?? 1080}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-dim)" }}>帧率</span>
+            <span>{tps.toFixed(2)} fps</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-dim)" }}>时长</span>
+            <span>{durSecs.toFixed(2)}s</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "var(--text-dim)" }}>片段 / 轨道</span>
+            <span>{doc.clips.length} / {doc.tracks.length}</span>
+          </div>
+          <div style={{ color: "var(--text-dim)", fontSize: 11 }}>
+            点击轨道上的片段查看其属性;工程级设置(字幕/导出)在各自面板与菜单。
+          </div>
+        </div>
+      );
+    }
     if (selectedCount > 1) {
       return (
         <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -254,6 +335,22 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     .sort((a, b) => a.start - b.start)[0];
   const existingTrans = doc.transitions?.find((t) => t.left_clip_id === clip.id);
 
+  // ===== 元素类型 + 区块可见性 + 音频写入目标 =====
+  const assetOf = doc.assets.find((a) => a.id === clip.asset.asset_id);
+  const kind = clipKindOf(clip, assetOf);
+  const audioSibling = kind === "video" ? siblingAudioOf(clip, doc) : null;
+  /// 音量/音频滤镜/人声分离的写入目标:音频块自身;视频块 -> 配对音频块;无音频则隐藏。
+  const audioTarget = kind === "audio" ? clip : audioSibling;
+  const showAudio = !!audioTarget; // 音量 + 音频滤镜 + 人声分离
+  const showVisual = kind === "video" || kind === "image"; // LUT/画中画/蒙版/调色/抠像
+  const showSpeedTrim = kind === "video" || kind === "audio"; // 截取范围 + 变速
+  const showVideoOnly = kind === "video"; // 智能分割/分离音频/定格帧/转场
+  const showKeyframes = kind !== "text";
+  const showAnim = kind !== "audio";
+  const showKfVolume = showAudio;
+  const showKfSpeed = kind === "video" || kind === "audio";
+  const showKfSpatial = kind === "video" || kind === "image"; // 不透明度/缩放/旋转/位移
+
   async function applySpeed(v: string) {
     const s = parseFloat(v);
     if (Number.isFinite(s) && s > 0) {
@@ -264,8 +361,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
 
   async function applyVolume(v: string) {
     const s = parseFloat(v);
-    if (Number.isFinite(s)) {
-      await api.setClipAudio(clip!.id, s, null);
+    if (Number.isFinite(s) && audioTarget) {
+      // 写入目标 = 配对音频块(视频半区的音量导出不消费)
+      await api.setClipAudio(audioTarget.id, s, null);
       await onRefresh();
     }
   }
@@ -301,6 +399,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     await onRefresh();
   }
 
+  /// 音量帧:写入音频目标(视频块 -> 配对音频块;时间基准也用目标块的起点)。
+  async function addKeyframeVolume(value = 1.0) {
+    if (!audioTarget) return;
+    await api.setKeyframe(audioTarget.id, "volume", playheadTicks - audioTarget.start, value, "smooth");
+    await onRefresh();
+  }
+
   async function applyChromaKey() {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_chroma_key", {
@@ -313,9 +418,10 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   }
 
   async function applyAudioFx() {
+    if (!audioTarget) return;
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_audio_fx", {
-      clipId: clip!.id,
+      clipId: audioTarget.id,
       fx: {
         fade_in: afx.fade_in,
         fade_out: afx.fade_out,
@@ -374,6 +480,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <h3 style={{ margin: 0, fontSize: 13 }}>{clip.id}</h3>
 
+      {showVideoOnly && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>智能分割</legend>
         <button
@@ -392,32 +499,34 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </button>
         {splitStatus && <div style={{ color: "var(--text-dim)", marginTop: 3 }}>{splitStatus}</div>}
       </fieldset>
+      )}
 
+      {showSpeedTrim && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>截取范围(素材内,秒)</legend>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <label>
             入点
-            <input
-              className="ti"
-              style={{ width: 64 }}
+            <NumInput
+              width={64}
               value={inSecs}
-              onChange={(e) => setInSecs(e.target.value)}
-              onBlur={() => applyTrimByNumbers("left", inSecs)}
-              onKeyDown={(e) => e.key === "Enter" && applyTrimByNumbers("left", inSecs)}
-              title="素材内的入点位置(秒)"
+              step={0.1}
+              min={0}
+              digits={2}
+              onCommit={(v) => applyTrimByNumbers("left", String(v))}
+              title="素材内的入点位置(秒;键入即时生效;按住左右拖拽调值)"
             />
           </label>
           <label>
             出点
-            <input
-              className="ti"
-              style={{ width: 64 }}
+            <NumInput
+              width={64}
               value={outSecs}
-              onChange={(e) => setOutSecs(e.target.value)}
-              onBlur={() => applyTrimByNumbers("right", outSecs)}
-              onKeyDown={(e) => e.key === "Enter" && applyTrimByNumbers("right", outSecs)}
-              title="素材内的出点位置(秒)"
+              step={0.1}
+              min={0}
+              digits={2}
+              onCommit={(v) => applyTrimByNumbers("right", String(v))}
+              title="素材内的出点位置(秒;键入即时生效;按住左右拖拽调值)"
             />
           </label>
         </div>
@@ -425,20 +534,24 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           时长 {(((clip.asset.source_out ?? 0) - (clip.asset.source_in ?? 0)) / (clip.speed || 1)).toFixed(2)}s · 快捷键 I/O 用播放头设置
         </div>
       </fieldset>
+      )}
 
+      {showSpeedTrim && (
       <label>
         变速:{" "}
-        <input
-          className="ti"
-          style={{ width: 60 }}
+        <NumInput
+          width={60}
           value={speed}
-          onChange={(e) => setSpeed(e.target.value)}
-          onBlur={() => applySpeed(speed)}
+          step={0.05}
+          min={0.1}
+          max={16}
+          digits={2}
+          onCommit={(v) => applySpeed(String(v))}
           disabled={(clip.fx?.speed?.keyframes?.length ?? 0) >= 2}
           title={
             (clip.fx?.speed?.keyframes?.length ?? 0) >= 2
               ? "存在速度关键帧:静态变速不生效,请在下方关键帧编辑器调整曲线"
-              : "静态变速倍率"
+              : "静态变速倍率(键入即时生效;按住左右拖拽调值,Shift 加速/Alt 微调)"
           }
         />
         {(clip.fx?.speed?.keyframes?.length ?? 0) >= 2 && (
@@ -447,18 +560,26 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           </span>
         )}
       </label>
+      )}
 
-      <label>
+      {showAudio && (
+      <label title={audioSibling ? "作用于整个文件块(写入音频部分)" : undefined}>
         音量:{" "}
-        <input
-          className="ti"
-          style={{ width: 60 }}
+        <NumInput
+          width={60}
           value={volume}
-          onChange={(e) => setVolume(e.target.value)}
-          onBlur={() => applyVolume(volume)}
+          step={0.05}
+          min={0}
+          max={4}
+          digits={2}
+          onCommit={(v) => applyVolume(String(v))}
+          title="音量倍率(键入即时生效;按住左右拖拽调值)"
         />
       </label>
+      )}
 
+      {showVideoOnly && (
+      <>
       <button className="btn" onClick={() => api.detachAudio(clip.id).then(onRefresh)}>
         分离音频
       </button>
@@ -478,18 +599,28 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       >
         定格帧
       </button>
+      </>
+      )}
 
+      {(showVisual || showAudio) && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>特效预设</legend>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {["电影感", "复古", "黑白", "音频降噪", "平滑淡入淡出"].map((n) => (
+          {(showVisual
+            ? ["电影感", "复古", "黑白"]
+            : showAudio
+              ? ["音频降噪", "平滑淡入淡出"]
+              : []
+          ).map((n) => (
             <button key={n} className="btn" onClick={() => applyPreset(n)}>
               {n}
             </button>
           ))}
         </div>
       </fieldset>
+      )}
 
+      {showAudio && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>音频滤镜</legend>
         {([
@@ -541,7 +672,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             setStemBusy(true);
             setSplitStatus("分离中...(demucs 首次运行需下载模型)");
             try {
-              const msg = await api.separateStems(clip.id);
+              const msg = await api.separateStems(audioTarget!.id);
               setSplitStatus(msg);
               await onRefresh();
             } catch (e) {
@@ -553,8 +684,15 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         >
           {stemBusy ? "分离中…" : "AI 人声分离(真实引擎)"}
         </button>
+        <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>
+          {stemEngine
+            ? `引擎: ${stemEngine} ✓`
+            : "未检测到 demucs/uvr(pip install demucs);当前走频段滤波近似"}
+        </span>
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>LUT (.cube)</legend>
         <input
@@ -567,7 +705,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         />
         {lutPath && <div style={{ color: "var(--text-dim)", marginTop: 4 }}>已应用(强度 100%)</div>}
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>画中画(上层轨道片段)</legend>
         {([["scale", "大小", 0.05, 1.0], ["x", "横向位置", 0, 1], ["y", "纵向位置", 0, 1]] as const).map(
@@ -605,7 +745,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         </label>
         <div style={{ color: "var(--text-dim)", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>蒙版</legend>
         <label style={{ display: "block", marginBottom: 4 }}>
@@ -643,7 +785,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             </label>
           ))}
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>调色</legend>
         <label style={{ display: "block", marginBottom: 6 }}>
@@ -697,7 +841,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           />
         </label>
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>AI 人像抠像(RVM 视频时序)</legend>
         <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
@@ -705,7 +851,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
             className="btn"
             style={{ flex: 1 }}
             disabled={mattingBusy}
-            title="需 rvm-cli 引擎 + RVM 模型(字幕面板 AI 模型区下载);alpha 序列按片段源区间提取,导出时 blend"
+            title="引擎候选: rvm-cli / rvm / python -m robust_video_matting(pip install robust-video-matting);RVM 模型在字幕面板 AI 模型区下载;alpha 序列按片段源区间提取,导出时 blend 合成,预览以灰度帧近似显示"
             onClick={async () => {
               setMattingBusy(true);
               setSplitStatus("抠像中...(RVM 逐帧提取 alpha)");
@@ -769,7 +915,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           />
         </label>
       </fieldset>
+      )}
 
+      {showVisual && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>智能抠像(绿幕/纯色背景)</legend>
         <button
@@ -828,22 +976,33 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           {ck.similarity > 0.01 ? `已启用 (similarity=${ck.similarity})` : "拖动强度启用"}
         </div>
       </fieldset>
+      )}
 
+      {showKeyframes && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>关键帧</legend>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+          {showKfSpatial && (
           <button className="btn" onClick={() => addKeyframe("opacity")}>
             + 不透明度帧
-          </button>{" "}
-          <button className="btn" onClick={() => addKeyframe("volume")}>
+          </button>
+          )}
+          {showKfVolume && (
+          <button className="btn" onClick={() => addKeyframeVolume()}>
             + 音量帧
           </button>
+          )}
+          {showKfSpatial && (
+          <>
           <button className="btn" onClick={() => addKeyframe("scale", 0.5)} title="缩放关键帧(0.5 = 一半大小)">
             + 缩放帧
           </button>
           <button className="btn" onClick={() => addKeyframe("rotate", 0)} title="旋转关键帧(度)">
             + 旋转帧
           </button>
+          </>
+          )}
+          {showKfSpeed && (
           <button
             className="btn"
             onClick={() => addKeyframe("speed", 1.0)}
@@ -851,6 +1010,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           >
             + 速度帧
           </button>
+          )}
+          {showKfSpatial && (
           <button
             className="btn"
             onClick={async () => {
@@ -867,7 +1028,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           >
             + 位移帧
           </button>
+          )}
         </div>
+        {showKfSpatial && (
         <KeyframeEditor
           clipId={clip.id}
           prop="opacity"
@@ -876,14 +1039,18 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           tps={tps}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfVolume && (
         <KeyframeEditor
-          clipId={clip.id}
+          clipId={audioTarget!.id}
           prop="volume"
           label="音量"
-          keyframes={clip.fx?.volume.keyframes ?? []}
+          keyframes={audioTarget.fx?.volume.keyframes ?? []}
           tps={tps}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfSpatial && (
         <KeyframeEditor
           clipId={clip.id}
           prop="scale"
@@ -895,6 +1062,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.01}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfSpatial && (
         <KeyframeEditor
           clipId={clip.id}
           prop="rotate"
@@ -906,6 +1075,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={1}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfSpatial && (
         <KeyframeEditor
           clipId={clip.id}
           prop="x_offset"
@@ -917,6 +1088,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.01}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfSpatial && (
         <KeyframeEditor
           clipId={clip.id}
           prop="y_offset"
@@ -928,6 +1101,8 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.01}
           onRefresh={onRefresh}
         />
+        )}
+        {showKfSpeed && (
         <KeyframeEditor
           clipId={clip.id}
           prop="speed"
@@ -939,24 +1114,57 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           step={0.05}
           onRefresh={onRefresh}
         />
+        )}
         <div style={{ color: "var(--text-dim)", marginTop: 2 }}>
           关键帧按播放头位置添加;缩放/位移 ≥2 帧时优先于画中画静态参数
         </div>
       </fieldset>
+      )}
 
       {clip.text && (
-        <fieldset style={{ borderColor: "var(--border)" }}>
-          <legend>文字</legend>
+        <fieldset
+          ref={(el) => {
+            if (editingText === clip.id && el) {
+              el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              el.style.borderColor = "var(--accent)";
+              const ta = el.querySelector("textarea");
+              if (editingText !== editingTextApplied.current) {
+                editingTextApplied.current = editingText;
+                ta?.focus();
+                ta?.select();
+              }
+            } else if (el) {
+              el.style.borderColor = "var(--border)";
+            }
+          }}
+          style={{ borderColor: "var(--border)" }}
+        >
+          <legend>
+            文字
+            {editingText === clip.id && onEndTextEdit && (
+              <button className="btn sm" style={{ marginLeft: 6 }} onClick={onEndTextEdit}>
+                完成编辑
+              </button>
+            )}
+          </legend>
           <textarea
             key={`txt-${clip.id}`}
             className="ti"
             rows={2}
             style={{ width: "100%", resize: "vertical" }}
             defaultValue={clip.text.content}
+            onChange={(e) => {
+              // 键入即时提交(防抖 300ms):预览实时跟随,无需失焦
+              if (fontDebounceRef.current) clearTimeout(fontDebounceRef.current);
+              const v = e.target.value;
+              fontDebounceRef.current = setTimeout(() => {
+                if (v !== clip.text?.content) applyTextClip({ content: v });
+              }, 300);
+            }}
             onBlur={(e) => {
               if (e.target.value !== clip.text?.content) applyTextClip({ content: e.target.value });
             }}
-            placeholder="文字内容"
+            placeholder="文字内容(键入即时生效)"
           />
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
             <input
@@ -967,19 +1175,17 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               title="文字颜色"
               onChange={(e) => applyTextClip({ color: e.target.value })}
             />
-            <input
-              className="ti"
-              type="number"
-              style={{ width: 56 }}
+            <NumInput
+              width={56}
+              value={clip.text.font_size}
+              step={2}
               min={12}
               max={400}
-              step={2}
-              defaultValue={clip.text.font_size}
-              title="字号(1080p 基准像素)"
-              onBlur={(e) => {
-                const v = Math.min(400, Math.max(12, parseFloat(e.target.value) || 64));
+              digits={0}
+              onCommit={(v) => {
                 if (v !== clip.text?.font_size) applyTextClip({ font_size: v });
               }}
+              title="字号(1080p 基准像素;键入即时生效;按住左右拖拽调值)"
             />
             <label style={{ fontSize: 11 }}>
               <input type="checkbox" checked={clip.text.bold} onChange={(e) => applyTextClip({ bold: e.target.checked })} /> 粗体
@@ -1017,12 +1223,36 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               </button>
             ))}
           </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>对齐</span>
+            <select
+              className="ti sm"
+              value={clip.text.align_h ?? "center"}
+              onChange={(e) => applyTextClip({ align_h: e.target.value as "left" | "center" | "right" })}
+              title="水平对齐(框内排版)"
+            >
+              <option value="left">左</option>
+              <option value="center">中</option>
+              <option value="right">右</option>
+            </select>
+            <select
+              className="ti sm"
+              value={clip.text.align_v ?? "middle"}
+              onChange={(e) => applyTextClip({ align_v: e.target.value as "top" | "middle" | "bottom" })}
+              title="垂直对齐(框内排版)"
+            >
+              <option value="top">上</option>
+              <option value="middle">中</option>
+              <option value="bottom">下</option>
+            </select>
+          </div>
           <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6 }}>
             位置在预览窗口拖拽调整;时长在时间轴拖拽裁剪;出入场动画在下方"动画"区
           </div>
         </fieldset>
       )}
 
+      {showAnim && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>动画</legend>
         {([
@@ -1046,33 +1276,29 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
                   <option key={k} value={k}>{name}</option>
                 ))}
               </select>
-              <input
+              <NumInput
                 key={`anim-${slot}-${clip.id}-${dur}`}
-                ref={fitNumberInput}
-                className="ti"
-                type="number"
+                width={56}
+                value={dur}
+                step={0.05}
                 min={0.1}
                 max={5}
-                step={0.1}
-                defaultValue={dur}
+                digits={2}
                 disabled={kind === "None"}
-                title={`${label}时长(秒,0.1~5)`}
-                onInput={(e) => fitNumberInput(e.currentTarget)}
-                onBlur={(e) => {
+                onCommit={(v) => {
                   if (kind === "None") return;
-                  const v = Math.min(5, Math.max(0.1, parseFloat(e.target.value) || 0.5));
                   if (v !== dur) applyAnim(slot, kind, v);
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                }}
+                title={`${label}时长(秒,0.1~5;键入即时生效;按住左右拖拽调值)`}
               />
               <span style={{ fontSize: 10, color: "var(--text-dim)" }}>s</span>
             </div>
           );
         })}
       </fieldset>
+      )}
 
+      {showVideoOnly && (
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>转场(与右侧片段)</legend>
         {rightNeighbor ? (
@@ -1091,11 +1317,21 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               kind={transKind}
               label={`${TRANSITIONS.find((t) => t[0] === transKind)?.[1] ?? ""} 预览`}
             />
-            <input
-              className="ti"
-              style={{ width: 48 }}
+            <NumInput
+              width={48}
               value={transDur}
-              onChange={(e) => setTransDur(e.target.value)}
+              step={0.1}
+              min={0.1}
+              max={5}
+              digits={2}
+              onCommit={(v) => {
+                setTransDur(String(v));
+                // 已有转场:改时长即时生效;未添加时仅更新待应用值
+                if (existingTrans) {
+                  api.setTransition(clip.id, rightNeighbor!.id, transKind, v).then(onRefresh);
+                }
+              }}
+              title="转场时长(秒;键入即时生效;按住左右拖拽调值)"
             />
             <div style={{ marginTop: 6 }}>
               {existingTrans ? (
@@ -1113,18 +1349,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           <span style={{ color: "var(--text-dim)" }}>右侧无相邻片段</span>
         )}
       </fieldset>
+      )}
     </div>
   );
 }
 
 /// 数字输入自适应内容宽度:按字符数估宽并预留步进按钮区,
 /// 避免 number 输入的上下调节按钮遮挡数值(ref 与 onInput 两处调用)。
-function fitNumberInput(el: HTMLInputElement | null) {
-  if (!el) return;
-  const len = Math.max(1, el.value.length);
-  el.style.width = `${Math.max(40, len * 8 + 26)}px`;
-}
-
 /// 文字片段花字样式(套用到选中的文字片段)。
 const TEXT_CLIP_STYLES: [string, Partial<NonNullable<import("./types").Clip["text"]>>][] = [
   ["黄字黑边", { color: "#ffd75e", outline: "#000000", outline2: undefined, bg_color: undefined, bold: true }],

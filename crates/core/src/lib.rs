@@ -116,6 +116,19 @@ pub struct TextClipData {
     pub shadow: bool,
     #[serde(default)]
     pub bg_color: Option<String>,
+    /// 水平对齐(left/center/right;默认 center,框内排版)。
+    #[serde(default = "default_align_h")]
+    pub align_h: String,
+    /// 垂直对齐(top/middle/bottom;默认 middle)。
+    #[serde(default = "default_align_v")]
+    pub align_v: String,
+}
+
+fn default_align_h() -> String {
+    "center".into()
+}
+fn default_align_v() -> String {
+    "middle".into()
 }
 
 fn default_text_font_size() -> f64 {
@@ -136,6 +149,8 @@ impl Default for TextClipData {
             bold: false,
             shadow: false,
             bg_color: None,
+            align_h: default_align_h(),
+            align_v: default_align_v(),
         }
     }
 }

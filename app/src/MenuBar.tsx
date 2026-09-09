@@ -33,6 +33,7 @@ function MenuRow({ item, onRun }: { item: MenuItem; onRun: () => void }) {
   return (
     <button
       className="btn"
+      data-menu-item={item.label}
       disabled={item.disabled}
       style={{
         width: "100%",

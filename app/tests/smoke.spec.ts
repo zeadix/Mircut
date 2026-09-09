@@ -43,19 +43,24 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
   await expect(page.locator("text=完成").first()).toBeVisible({ timeout: 5000 });
 });
 
-test("冒烟:右侧面板 Tab 切换与贴纸面板", async ({ page }) => {
+test("冒烟:工作面板经窗口菜单开关,右栏常显属性", async ({ page }) => {
   await page.goto("/");
 
-  // 右侧 Tab 均可切换(右栏是最后一个 aside;最后停在贴纸以便断言)
+  // 右栏(最后 aside)默认显示属性 Inspector
   const rightAside = page.locator("aside").last();
-  for (const label of ["属性", "字幕", "文字", "素材包", "贴纸"]) {
-    await rightAside.getByRole("button", { name: label, exact: true }).click();
-  }
-  // 贴纸面板可见(导入按钮 + 图片素材入口;贴纸=图片片段,已无旧叠层"已放置"区)
-  await expect(
-    rightAside.getByRole("button", { name: /导入图片贴纸/ })
-  ).toBeVisible();
-  await expect(rightAside.getByText(/图片素材\(单击放到播放头/)).toBeVisible();
+  await expect(rightAside.getByText(/工程$/).or(rightAside.getByText(/工程/).first())).toBeVisible();
+
+  // 窗口菜单开关贴纸面板(dock 面板;data-panel 定位)
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.locator('[data-menu-item="贴纸"]').click();
+  const stickerPanel = page.locator('[data-panel="sticker"]');
+  await expect(stickerPanel).toBeVisible();
+  await expect(stickerPanel.getByRole("button", { name: /导入图片贴纸/ })).toBeVisible();
+
+  // 再次切换 → 隐藏
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.locator('[data-menu-item="贴纸"]').click();
+  await expect(stickerPanel).not.toBeVisible();
 });
 
 test("冒烟:标记打点与列表", async ({ page }) => {
@@ -77,18 +82,41 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  // 1. 字幕面板:AI 模型区(mock 清单含 Whisper base)
-  const rightAside = page.locator("aside").last();
-  await rightAside.getByRole("button", { name: "字幕", exact: true }).click();
-  await expect(rightAside.getByText("AI 模型")).toBeVisible();
-  await expect(rightAside.getByText("Whisper base")).toBeVisible();
-  await expect(rightAside.getByRole("button", { name: "下载" }).first()).toBeVisible();
+  // 1. 字幕工作面板(窗口菜单开启):AI 模型区(mock 清单含 Whisper base)
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button").filter({ hasText: "字幕" }).last().click();
+  const subPanel = page.locator('[data-panel="subtitle"]');
+  await expect(subPanel).toBeVisible();
+  await expect(subPanel.getByText("AI 模型")).toBeVisible();
+  await expect(subPanel.getByText("Whisper base")).toBeVisible();
+  await expect(subPanel.getByRole("button", { name: "下载" }).first()).toBeVisible();
 
-  // 2. 属性面板:选中片段后 AI 抠像按钮 + 音频滤镜区 AI 人声分离按钮
+  // 2. 右栏属性(选中带配对的视频块):AI 抠像按钮 + 音频滤镜 + AI 人声分离(引擎状态提示)。
+  //    注入干净音视频配对(初始 c1 无音频半区,自适应面板会隐藏音频滤镜)
+  await page.addInitScript(() => {
+    const timer = setInterval(() => {
+      const w = window as unknown as { __mockDoc?: { clips: unknown[] } };
+      if (w.__mockDoc) {
+        clearInterval(timer);
+        const mk = (id: string, lane: string) => ({
+          id, track_id: "f1", start: 0, duration: 90,
+          asset: { asset_id: "a1", source_in: 0, source_out: 3 },
+          speed: 1, volume: 1, muted: false, lane,
+          fx: undefined, text: undefined,
+        });
+        w.__mockDoc.clips = [mk("vSel", "Video"), mk("aSel", "Audio")];
+      }
+    }, 5);
+  });
+  await page.reload();
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+  await page.keyboard.press("m"); // 触发 refresh 载入注入文档
+  await page.waitForTimeout(500);
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cbox = await canvas.boundingBox();
-  await page.mouse.click(cbox.x + 20, cbox.y + 20);
-  await rightAside.getByRole("button", { name: "属性", exact: true }).click();
+  await page.mouse.click(cbox.x + 20, cbox.y + 60);
+  await page.waitForTimeout(300);
+  const rightAside = page.locator("aside").last();
   await expect(
     rightAside.getByRole("button", { name: /AI 人像抠像/ })
   ).toBeVisible();
@@ -99,10 +127,12 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await expect(rightAside.getByText(/时序平滑 \d+ 帧/)).toBeVisible();
   await expect(rightAside.getByText(/边缘精修 \d+\.\d/)).toBeVisible();
 
-  // 3. 文字面板:音色下拉(piper 多音色)
-  await rightAside.getByRole("button", { name: "文字", exact: true }).click();
-  await expect(rightAside.getByText(/音色\(piper\)/)).toBeVisible();
-  const voiceSel = rightAside.locator("select").last();
+  // 3. 文字工作面板:音色下拉(piper 多音色)
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button").filter({ hasText: "文字" }).last().click();
+  const textPanel = page.locator('[data-panel="text"]');
+  await expect(textPanel.getByText(/音色\(piper\)/)).toBeVisible();
+  const voiceSel = textPanel.locator("select").last();
   await expect(voiceSel.locator("option")).toHaveCount(2); // 默认 + mock 音色
 });
 

@@ -42,7 +42,9 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   const box = await canvas.boundingBox();
   expect(box).toBeTruthy();
 
-  // File 轨几何(未折叠):时间行[0,20) 视频行[20,80) 音频行[80,120)
+  // File 轨几何(未折叠):时间行[0,20) + 单一内容行[20,120)
+  // 波形带(有视频部分)= [75,120);包络铺满内容行(ENV_MAX=1.5):
+  // v=1 → envY = 22+96-3-(1/1.5)×88 ≈ 56;v=0.8 → ≈ 68
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
 
@@ -51,11 +53,11 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     page.evaluate(() => {
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
-      const img = ctx.getImageData(10, 93, 30, 6);
+      const img = ctx.getImageData(12, 53, 24, 6); // 避开 x≈39 的缩略图接缝浅色竖条
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-        if (r > 235 && g > 235 && b > 235) n++;
+        if (r > 200 && g > 200 && b > 200) n++; // 白线压在亮绿缩略图上,抗锯齿后单行 alpha≈0.64
       }
       return n;
     });
@@ -80,7 +82,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   await page.waitForTimeout(200);
   // 编辑模式下包络线出现
   expect(await whiteLinePixels(), "编辑模式应显示音量节点曲线").toBeGreaterThan(5);
-  const envY = box!.y + 96;
+  const envY = box!.y + 56;
   await page.mouse.move(midX, envY);
   await page.mouse.down();
   await page.mouse.move(midX + 8, envY + 12, { steps: 5 });
@@ -237,9 +239,9 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
   const box = await canvas.boundingBox();
   expect(box).toBeTruthy();
 
-  // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 82, 36) ≈ 100(canvas 内)
+  // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 22, 96) ≈ 68(canvas 内)
   const nodeX = box!.x + 15;
-  const nodeY = box!.y + 100;
+  const nodeY = box!.y + 68;
   await page.mouse.move(nodeX, nodeY);
   await page.mouse.down();
   await page.mouse.move(nodeX, nodeY + 15, { steps: 5 });

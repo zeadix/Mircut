@@ -3,7 +3,7 @@ use crate::diag;
 use crate::render::SeekResult;
 use crate::state::AppState;
 use crate::util::{base64_encode, uuid_of};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
 use veditor_ai::Transcriber;
@@ -27,43 +27,127 @@ pub(crate) fn read_media_base64(path: String) -> Result<String, String> {
     Ok(format!("data:{mime};base64,{}", base64_encode(&buf)))
 }
 
+/// 预览层帧的 fx 子集(抠像/调色/LUT;与导出 colorkey/eq/lut3d 同语义)。
+#[derive(Deserialize, Serialize, Default)]
+pub(crate) struct PreviewFx {
+    #[serde(default)]
+    chroma_key: Option<veditor_core::ChromaKey>,
+    #[serde(default)]
+    grade: Option<veditor_core::ColorGrade>,
+    #[serde(default)]
+    lut: Option<veditor_core::LutApply>,
+}
+
+impl PreviewFx {
+    fn signature(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        // fx 结构无 Hash,借 JSON 文本哈希(字段集固定,足够做缓存键)
+        let text = serde_json::to_string(self).unwrap_or_default();
+        let mut h = DefaultHasher::new();
+        text.hash(&mut h);
+        h.finish()
+    }
+
+    fn filters(&self) -> String {
+        let mut vf = String::from("scale=640:-2");
+        if let Some(ck) = &self.chroma_key {
+            if ck.enabled() {
+                let color = ck.color.trim_start_matches('#');
+                vf.push_str(&format!(
+                    ",format=yuva420p,colorkey=0x{color}:similarity={:.3}:blend={:.3}",
+                    ck.similarity, ck.blend
+                ));
+            }
+        }
+        if let Some(g) = &self.grade {
+            if (g.brightness - 0.0).abs() > 1e-3
+                || (g.contrast - 1.0).abs() > 1e-3
+                || (g.saturation - 1.0).abs() > 1e-3
+            {
+                vf.push_str(&format!(
+                    ",eq=brightness={:.3}:contrast={:.3}:saturation={:.3}",
+                    g.brightness, g.contrast, g.saturation
+                ));
+            }
+            if (g.temperature - 0.0).abs() > 1e-3 {
+                let kelvin = (6500.0 - g.temperature * 3500.0).clamp(3000.0, 10000.0) as u32;
+                vf.push_str(&format!(",colortemperature=temperature={kelvin}"));
+            }
+        }
+        if let Some(lut) = &self.lut {
+            if lut.enabled() {
+                let p = lut.path.replace('\\', "/").replace(':', "\\:");
+                vf.push_str(&format!(",lut3d=file='{p}'"));
+            }
+        }
+        vf
+    }
+}
+
+/// 层帧预览:fx(抠像/调色/LUT)直接烧进帧,预览即所见;输出 PNG(抠像保留 alpha)。
 #[tauri::command(async)]
-pub(crate) fn preview_asset_frame(path: String, secs: f64) -> SeekResult {
+pub(crate) fn preview_asset_frame(
+    path: String,
+    secs: f64,
+    fx: Option<PreviewFx>,
+) -> SeekResult {
+    let fx = fx.unwrap_or_default();
     let dir = std::env::temp_dir().join("veditor-render-cache/asset");
     let _ = std::fs::create_dir_all(&dir);
-    // 文件名含路径哈希:多层同刻取帧并行写时互不覆盖(此前只按毫秒命名会互写)
+    // 文件名含路径哈希 + fx 签名:多层同刻并行写互不覆盖,fx 变化不串缓存
     let path_hash = {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut h = DefaultHasher::new();
         path.hash(&mut h);
+        fx.signature().hash(&mut h);
         h.finish()
     };
-    let jpeg = dir.join(format!("{path_hash:x}_{}.jpg", (secs * 1000.0) as i64));
+    let has_fx = fx.chroma_key.as_ref().is_some_and(|c| c.enabled())
+        || fx.grade.as_ref().is_some_and(|g| {
+            (g.brightness - 0.0).abs() > 1e-3
+                || (g.contrast - 1.0).abs() > 1e-3
+                || (g.saturation - 1.0).abs() > 1e-3
+                || (g.temperature - 0.0).abs() > 1e-3
+        })
+        || fx.lut.as_ref().is_some_and(|l| l.enabled());
+    // 有 fx 时输出 PNG(colorkey 需 alpha 才能在前端层叠透出);无 fx 维持 jpg 旧路径
+    let (out_path, out_args): (PathBuf, Vec<String>) = if has_fx {
+        (
+            dir.join(format!("{path_hash:x}_{}.png", (secs * 1000.0) as i64)),
+            vec![],
+        )
+    } else {
+        (
+            dir.join(format!("{path_hash:x}_{}.jpg", (secs * 1000.0) as i64)),
+            vec!["-q:v".into(), "3".into()],
+        )
+    };
+    let vf = fx.filters();
     let mut source = secs;
     for _ in 0..4 {
-        let out = std::process::Command::new("ffmpeg")
-            .args([
-                "-y",
-                "-ss",
-                &format!("{source:.3}"),
-                "-i",
-                &path,
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale=640:-2",
-                "-q:v",
-                "3",
-            ])
-            .arg(&jpeg)
-            .output();
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.args([
+            "-y",
+            "-ss",
+            &format!("{source:.3}"),
+            "-i",
+            &path,
+            "-frames:v",
+            "1",
+            "-vf",
+            &vf,
+        ]);
+        cmd.args(&out_args).arg(&out_path);
+        let out = cmd.output();
         match out {
             Ok(o)
-                if o.status.success() && jpeg.metadata().map(|m| m.len() > 0).unwrap_or(false) =>
+                if o.status.success()
+                    && out_path.metadata().map(|m| m.len() > 0).unwrap_or(false) =>
             {
                 return SeekResult {
-                    jpeg_path: Some(jpeg.to_string_lossy().to_string()),
+                    jpeg_path: Some(out_path.to_string_lossy().to_string()),
                     error: None,
                 };
             }

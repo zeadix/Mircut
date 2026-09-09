@@ -30,40 +30,6 @@ export function snapToEdges(
   return Math.max(0, best);
 }
 
-/// 磁吸插入:同半区与目标块头尾重叠时,按水平中心点判放左/放右贴合;
-/// 放左空间不足(起点<0)则对齐 0。
-export function computeMagneticStart(
-  rawStart: number,
-  clip: { id: string; duration: number; track_id: string; lane?: string | null },
-  clips: { id: string; start: number; duration: number; track_id: string; lane?: string | null }[],
-  laneOf: (c: { track_id: string; lane?: string | null }) => "Video" | "Audio",
-  targetTrackId: string,
-  targetLane: string | null
-): number {
-  const dur = clip.duration;
-  let t = Math.max(0, Math.floor(rawStart));
-  const lane = targetLane ?? laneOf(clip);
-  const overlapped = clips.find(
-    (c) =>
-      c.id !== clip.id &&
-      c.track_id === targetTrackId &&
-      laneOf(c) === lane &&
-      c.start < t + dur &&
-      t < c.start + c.duration
-  );
-  if (overlapped) {
-    const aCenter = t + dur / 2;
-    const bCenter = overlapped.start + overlapped.duration / 2;
-    if (aCenter < bCenter) {
-      t = overlapped.start - dur;
-      if (t < 0) t = 0;
-    } else {
-      t = overlapped.start + overlapped.duration;
-    }
-  }
-  return t;
-}
-
 /// 文件块:File 轨上同素材的视频/音频 clip 配对(音频起点漂移时按最近起点兜底配对)。
 export interface FileBlock {
   videoId: string | null;

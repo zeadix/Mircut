@@ -137,6 +137,10 @@ export interface TextClipData {
   bold: boolean;
   shadow: boolean;
   bg_color?: string;
+  /// 框内水平对齐(left/center/right;默认 center)。
+  align_h?: "left" | "center" | "right";
+  /// 框内垂直对齐(top/middle/bottom;默认 middle)。
+  align_v?: "top" | "middle" | "bottom";
 }
 
 export interface AlphaMatting {

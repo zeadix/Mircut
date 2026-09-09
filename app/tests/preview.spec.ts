@@ -167,8 +167,8 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
 
+  // 右栏已纯属性化(无 Tab 栏):选中片段后 Inspector 直接显示
   const rightAside = page.locator("aside").last();
-  await rightAside.getByRole("button", { name: "属性", exact: true }).click();
 
   // 入场 = 淡入 → fx.enter 写入文档
   const enterSel = rightAside.locator("select[title*='入场动画']");

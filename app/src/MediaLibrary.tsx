@@ -55,7 +55,7 @@ function MediaLibraryInner({
   onApplyPackItem,
   onRefresh,
 }: Props) {
-const [mediaGrid, setMediaGrid] = useState(false);
+const [mediaGrid, setMediaGrid] = useState(true); // 默认网格视图
   const [mediaCat, setMediaCat] = useState<
     "all" | "video" | "audio" | "image" | "templates"
   >("all");
