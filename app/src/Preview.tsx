@@ -666,15 +666,21 @@ const [url, setUrl] = useState<string | null>(null);
     if (!st) return null;
     const nx = (clientX - st.left) / st.width;
     const ny = (clientY - st.top) / st.height;
-    // layers 顺序为自下而上;倒序即自上而下(最上层优先)
+    // layers 顺序为自下而上;倒序即自上而下(最上层优先)。
+    // 小块命中容差:矩形任一边小于 ~16px 时向外扩到最小可点尺寸
+    // (小块文字/贴纸否则几乎点不中)
     for (let i = layers.length - 1; i >= 0; i--) {
       const l = layers[i];
       const r = l.rect;
+      const pxW = r.w * st.width;
+      const pxH = r.h * st.height;
+      const expandW = Math.max(0, (16 - pxW) / 2) / st.width;
+      const expandH = Math.max(0, (16 - pxH) / 2) / st.height;
       if (
-        nx >= r.x - r.w / 2 &&
-        nx <= r.x + r.w / 2 &&
-        ny >= r.y - r.h / 2 &&
-        ny <= r.y + r.h / 2
+        nx >= r.x - r.w / 2 - expandW &&
+        nx <= r.x + r.w / 2 + expandW &&
+        ny >= r.y - r.h / 2 - expandH &&
+        ny <= r.y + r.h / 2 + expandH
       ) {
         return l;
       }
@@ -1257,6 +1263,21 @@ const [url, setUrl] = useState<string | null>(null);
           {/* 变换框 + 手柄(移动/缩放/旋转;编辑开关门控) */}
           {showTransform && activeRect && (
             <div style={{ ...stageRectStyle(activeRect), border: "1px solid var(--accent)", pointerEvents: "none" }}>
+              {/* 中心拖动区(移动):先渲染垫底,手柄在其上层。
+                  此前 inset:14 让小块(宽/高<28px)完全没有可点区,无法拖拽 */}
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  cursor: "move",
+                  pointerEvents: "auto",
+                }}
+                onPointerDown={(e) => onGripDown(e, "move")}
+                onPointerMove={(e) => {
+                  if (gripRef.current) onGripMove(e);
+                }}
+                onPointerUp={onGripUp}
+              />
               {HANDLES.map((h) =>
                 h.id === "rotate" ? (
                   <div
@@ -1306,20 +1327,6 @@ const [url, setUrl] = useState<string | null>(null);
                   />
                 )
               )}
-              {/* 中心拖动区(移动) */}
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 14,
-                  cursor: "move",
-                  pointerEvents: "auto",
-                }}
-                onPointerDown={(e) => onGripDown(e, "move")}
-                onPointerMove={(e) => {
-                  if (gripRef.current) onGripMove(e);
-                }}
-                onPointerUp={onGripUp}
-              />
             </div>
           )}
 
