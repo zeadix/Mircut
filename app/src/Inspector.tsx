@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { Clip, Document } from "./types";
 import KeyframeEditor from "./KeyframeEditor";
 import NumInput from "./NumInput";
+import FontPicker from "./FontPicker";
 import TransPreview from "./TransPreview";
 
 /// 元素类型(属性面板按此拼装区块:通用段 + 各自专有段)。
@@ -1193,18 +1194,11 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               }}
               title="字号(1080p 基准像素;键入即时生效;按住左右拖拽调值)"
             />
-            <select
-              className="ti"
-              style={{ width: 118 }}
+            <FontPicker
               value={clip.text.font ?? ""}
-              title="字体(系统字体;导出经 fontconfig 同名解析)"
-              onChange={(e) => applyTextClip({ font: e.target.value })}
-            >
-              <option value="">默认字体</option>
-              {fonts.map((f) => (
-                <option key={f} value={f}>{f}</option>
-              ))}
-            </select>
+              options={fonts}
+              onChange={(f) => applyTextClip({ font: f })}
+            />
             <label style={{ fontSize: 11 }}>
               <input type="checkbox" checked={clip.text.bold} onChange={(e) => applyTextClip({ bold: e.target.checked })} /> 粗体
             </label>
