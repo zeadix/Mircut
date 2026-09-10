@@ -7,6 +7,7 @@
   --border: #2a2c33;
   --border-strong: #3a3d46;
   --accent: #ffd75e;
+  --accent-dim: rgba(255, 215, 94, 0.12);
   --text: #e6e8ec;
   --text-dim: #8b93a1;
   --surface: #24262c;
@@ -33,6 +34,7 @@
   --border: #d9dce1;
   --border-strong: #b9bfc8;
   --accent: #b8860b;
+  --accent-dim: rgba(184, 134, 11, 0.14);
   --text: #1d2126;
   --text-dim: #6b7280;
   --surface: #e9ebee;
@@ -134,10 +136,25 @@ body { background: var(--bg); }
 /* 纯图标方按钮(宽=高;必须带 title) */
 .btn.icon { width: var(--ctl-h); padding: 0; }
 .btn.icon.sm { width: var(--ctl-h-sm); }
-/* 画布悬浮开关(磁吸/选取等叠在视频画面上):实底保证可读,.on 为激活态 */
-.btn.float { background: var(--card); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
-.btn.float.on { border-color: var(--accent); color: var(--accent); }
-.btn.float:not(.on) { opacity: 0.55; }
+/* 状态切换 chip(预览工具开关/轨头合成开关):扁平无阴影;
+   未激活 = 低调描边 + 弱化图标,激活 = accent 描边/图标/弱染色底 */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ctl-h-sm);
+  height: var(--ctl-h-sm);
+  padding: 0;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.chip:hover { color: var(--text); border-color: var(--border-strong); background: var(--btn-hover); }
+.chip.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
 .btn:hover:not(:disabled) { background: var(--btn-hover); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.primary { background: var(--progress); border-color: #4d6cb3; color: #fff; }

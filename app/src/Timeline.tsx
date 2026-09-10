@@ -1102,8 +1102,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       }
 
       if (trackAtRow?.kind === "File") {
+        // File 轨两行(时间+单一内容区);此前按旧三行模型取 +3,把下一条
+        // 轨道的时间行也圈进虚影 -> 盖住轨道标题区
         gy = geo.tops[trackFirstRow] ?? trackFirstRow * (timeRowH + videoRowH + audioRowH);
-        gh = geo.rowH.slice(trackFirstRow, trackFirstRow + 3).reduce((a, b) => a + b, 0);
+        gh = geo.rowH.slice(trackFirstRow, trackFirstRow + 2).reduce((a, b) => a + b, 0) - 2;
       } else {
         // 普通/音频轨:trackIdx 是 canvas 行号,上方 File 轨是 3 行不等高,
         // 不能按统一 trackH 相乘(行多时虚影 Y 累积漂移到很远的位置)
@@ -2465,11 +2467,21 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                         </span>
                       </div>
                       {/* 视频合成开关:关闭 = 只合成音频 */}
-                      <button className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: track.video_on !== false ? 1 : 0.4, borderColor: track.video_on !== false ? "var(--accent)" : undefined, color: track.video_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "video")}>
+                      <button
+                        className={`chip${track.video_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center" }}
+                        title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"}
+                        onClick={() => onToggleTrackMedia?.(track.id, "video")}
+                      >
                         {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
                       </button>
                       {/* 音频合成开关:关闭 = 只合成视频 */}
-                      <button className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: track.audio_on !== false ? 1 : 0.4, borderColor: track.audio_on !== false ? "var(--accent)" : undefined, color: track.audio_on !== false ? "var(--accent)" : "var(--text-dim)" }} title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"} onClick={() => onToggleTrackMedia?.(track.id, "audio")}>
+                      <button
+                        className={`chip${track.audio_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center" }}
+                        title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"}
+                        onClick={() => onToggleTrackMedia?.(track.id, "audio")}
+                      >
                         <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
                       </button>
                     </div>

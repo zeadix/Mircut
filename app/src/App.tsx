@@ -140,21 +140,21 @@ const panelComponents = {
           {/* 预览交互三开关(原为舞台内浮动按钮,移到顶栏) */}
           <span style={{ flex: 1 }} />
           <button
-            className={`btn icon sm float${c.autoSelect ? " on" : ""}`}
+            className={`chip${c.autoSelect ? " on" : ""}`}
             onClick={() => c.setAutoSelect(!c.autoSelect)}
             title={c.autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
           >
             <Crosshair size={14} weight={c.autoSelect ? "fill" : "regular"} />
           </button>
           <button
-            className={`btn icon sm float${c.editMode ? " on" : ""}`}
+            className={`chip${c.editMode ? " on" : ""}`}
             onClick={() => c.setEditMode(!c.editMode)}
             title={c.editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
           >
             <FrameCorners size={14} weight={c.editMode ? "fill" : "regular"} />
           </button>
           <button
-            className={`btn icon sm float${c.snapOn ? " on" : ""}`}
+            className={`chip${c.snapOn ? " on" : ""}`}
             onClick={() => c.setSnapOn(!c.snapOn)}
             title={c.snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
           >
