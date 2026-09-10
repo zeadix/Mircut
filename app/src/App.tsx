@@ -433,6 +433,121 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [dragAssetId, setDragAssetId] = useState<string | null>(null);
   // dockview:api 引用 + 隐藏面板(窗口菜单可见性)
   const dockApiRef = useRef<DockviewApi | null>(null);
+  const dockHostRef = useRef<HTMLDivElement | null>(null);
+  /// tab/组拖拽中:释放点在网格外时把面板转成独立浮动窗口。
+  const floatDragRef = useRef<{ panel: unknown; group: unknown } | null>(null);
+
+  /// 按布局真实可见性重算窗口菜单勾选态:组级显隐会同时影响同组多个面板,
+  /// 也覆盖 fromJSON 恢复的隐藏组。
+  const syncHiddenFromLayout = (api: DockviewApi) => {
+    const comp = dockComponent(api);
+    if (!comp) return;
+    setHiddenPanels(
+      PANEL_IDS.filter((id) => {
+        const p = api.getPanel(id);
+        // 面板不在布局中(被 × 关闭/工作面板未创建)= 隐藏,
+        // 否则打开任一面板后其余未创建面板被误标"可见",菜单点击变成无效的隐藏操作
+        return p ? !comp.isVisible(p.group) : true;
+      })
+    );
+  };
+  // tab/组拖拽结束:释放点在 dock 网格之外(顶栏/边缘外)时,
+  // 把被拖面板转成独立浮动窗口落在鼠标处 —— "拖出来变成独立窗口"
+  useEffect(() => {
+    const onUp = (ev: PointerEvent) => {
+      const d = floatDragRef.current;
+      floatDragRef.current = null;
+      const api = dockApiRef.current;
+      const host = dockHostRef.current;
+      if (!d || !api || !host) return;
+      const r = host.getBoundingClientRect();
+      const inside =
+        ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+      if (inside) return; // 网格内交由 dockview 正常停靠
+      const x = Math.max(8, ev.clientX - r.left - 140);
+      const y = Math.max(8, ev.clientY - r.top - 10);
+      // 等本帧 dockview 拖拽收尾后再转换,避免与内部 DnD 竞态
+      setTimeout(() => {
+        try {
+          if (d.panel) {
+            (api as unknown as { addFloatingGroup: (p: unknown, o?: object) => void }).addFloatingGroup(d.panel, { x, y, width: 480, height: 360 });
+          } else {
+            (api as unknown as { addFloatingGroup: (g: unknown, o?: object) => void }).addFloatingGroup(d.group, { x, y, width: 480, height: 360 });
+          }
+          syncHiddenFromLayout(api);
+        } catch {
+          /* 拖拽已自行结束等竞态,忽略 */
+        }
+      }, 0);
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") floatDragRef.current = null; // 取消拖拽不残留
+    };
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 浮动窗口标题栏拖动移动:dndStrategy=pointer 时 dockview 的指针拖拽源会
+  // 抢占标题栏 pointerdown(其 overlay 移动逻辑因此永远不触发)。改为捕获阶段
+  // 拦截,直接移动 overlay 元素,松手后经 addFloatingGroup 重新锚定(内部
+  // 状态/持久化同步)。Shift+拖保留给 dockview 原生行为(拖回布局入坞)。
+  useEffect(() => {
+    const onTitlebarDown = (ev: PointerEvent) => {
+      if (ev.button !== 0 || ev.shiftKey) return;
+      const target = ev.target as HTMLElement | null;
+      const titlebar = target?.closest?.(".dv-floating-titlebar") as HTMLElement | null;
+      if (!titlebar) return;
+      const container = titlebar.closest(".dv-resize-container") as HTMLElement | null;
+      const host = dockHostRef.current;
+      if (!container || !host) return;
+      ev.stopImmediatePropagation();
+      ev.preventDefault();
+      const hostRect = host.getBoundingClientRect();
+      const cRect = container.getBoundingClientRect();
+      const grabX = ev.clientX - cRect.left;
+      const grabY = ev.clientY - cRect.top;
+      const move = (e2: PointerEvent) => {
+        const x = Math.max(-40, e2.clientX - hostRect.left - grabX);
+        const y = Math.max(0, e2.clientY - hostRect.top - grabY);
+        container.style.left = `${x}px`;
+        container.style.top = `${y}px`;
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        // 重新锚定:同步 dockview 内部位置(布局持久化正确)
+        const api = dockApiRef.current;
+        if (!api) return;
+        const x = Math.max(0, parseFloat(container.style.left) || 0);
+        const y = Math.max(0, parseFloat(container.style.top) || 0);
+        const group = (api.groups as unknown as { element?: HTMLElement }[]).find((g) =>
+          g.element ? container.contains(g.element) : false
+        );
+        if (group) {
+          try {
+            (api as unknown as { addFloatingGroup: (g: unknown, o?: object) => void }).addFloatingGroup(group, {
+              x,
+              y,
+              width: cRect.width,
+              height: cRect.height,
+            });
+          } catch {
+            /* 重新锚定失败保持样式位置即可 */
+          }
+        }
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    };
+    window.addEventListener("pointerdown", onTitlebarDown, true);
+    return () => window.removeEventListener("pointerdown", onTitlebarDown, true);
+  }, []);
+
   /// 工作面板(字幕/文字/贴纸/素材包)默认不在布局中:按需经窗口菜单添加
   /// (addPanel 浮动窗口),再次点击隐藏(eof setVisible)。
   const [hiddenPanels, setHiddenPanels] = useState<string[]>([
@@ -518,7 +633,6 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     loadRecentProjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
 
   /// 以下回调一律 useCallback:PanelContext value 经 useMemo 依赖它们,
   /// 引号不稳定会让 memo 化的面板在每次渲染时全部失效。
@@ -1449,23 +1563,22 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   if (!doc) return <div style={{ color: "var(--text)", padding: 24 }}>{t("status.loading")}</div>;
 
-  /// 按布局真实可见性重算窗口菜单勾选态:组级显隐会同时影响同组多个面板,
-  /// 也覆盖 fromJSON 恢复的隐藏组。
-  const syncHiddenFromLayout = (api: DockviewApi) => {
-    const comp = dockComponent(api);
-    if (!comp) return;
-    setHiddenPanels(
-      PANEL_IDS.filter((id) => {
-        const p = api.getPanel(id);
-        // 面板不在布局中(被 × 关闭/工作面板未创建)= 隐藏,
-        // 否则打开任一面板后其余未创建面板被误标"可见",菜单点击变成无效的隐藏操作
-        return p ? !comp.isVisible(p.group) : true;
-      })
-    );
-  };
 
   const onDockReady = (e: DockviewReadyEvent) => {
     dockApiRef.current = e.api;
+    // 拖拽起始记录(dockview-react 不透传 willDrag 事件,经 component API 订阅)
+    const comp = (e.api as unknown as { component?: {
+      onWillDragPanel: (cb: (ev: { panel: unknown; group: unknown }) => void) => { dispose: () => void };
+      onWillDragGroup: (cb: (ev: { group: unknown }) => void) => { dispose: () => void };
+    } }).component;
+    if (comp) {
+      comp.onWillDragPanel((ev) => {
+        floatDragRef.current = { panel: ev.panel, group: ev.group };
+      });
+      comp.onWillDragGroup((ev) => {
+        floatDragRef.current = { panel: null, group: ev.group };
+      });
+    }
     const saved = localStorage.getItem("veditor-dock-layout");
     if (saved) {
       try {
@@ -1630,13 +1743,20 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1, minHeight: 0 }}>
           <PanelContext.Provider value={panelValue}>
-            <div className="dock-host" style={{ width: "100%", height: "100%" }}>
+            <div ref={dockHostRef} className="dock-host" style={{ width: "100%", height: "100%" }}>
               <DockviewReact
                 components={panelComponents}
                 onReady={onDockReady}
                 dndStrategy="pointer"
                 defaultTabComponent={PanelTab}
                 className={theme === "light" ? themeLight.className : themeDark.className}
+                // 浮动窗口拖拽柄 = 标题栏(tabbar 模式无移动手柄,窗口拖不动);
+                // 标签条经 CSS 压至 24px,消除默认 35px 的空白观感
+                // 根级边缘放置:拖到网格最外沿出现边缘高亮,释放即整行/整列停靠
+                dndEdges={{
+                  size: { value: 70, type: "pixels" },
+                  activationSize: { value: 24, type: "pixels" },
+                }}
               />
             </div>
           </PanelContext.Provider>

@@ -125,3 +125,72 @@ test("面板内容自适应:媒体库/属性面板铺满停靠面板宽度", asy
   expect(w.inspectorGroup).toBeGreaterThan(260);
   expect(Math.abs(w.inspectorAside - w.inspectorGroup)).toBeLessThanOrEqual(2);
 });
+
+test("拖出网格释放 → 成为独立浮动窗口;标题栏拖动移动", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+  await page.waitForTimeout(400);
+
+  // 拖 媒体库 tab 到顶栏(网格外)释放 → 独立浮动窗口
+  const tab = page.locator(".dv-tab").first();
+  const tb = await tab.boundingBox();
+  await page.mouse.move(tb.x + 30, tb.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(700, 15, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const floats = await page.locator(".dv-resize-container").count();
+  expect(floats, "拖出应产生独立浮动窗口").toBeGreaterThanOrEqual(1);
+  const fl = page.locator(".dv-resize-container").first();
+  await expect(fl).toBeVisible();
+
+  // 标题栏拖动:窗口跟随移动
+  const before = await fl.evaluate((el) => ({ x: Math.round(el.getBoundingClientRect().x), y: Math.round(el.getBoundingClientRect().y) }));
+  const bar = await fl.locator(".dv-floating-titlebar").boundingBox();
+  await page.mouse.move(bar.x + 100, bar.y + 11);
+  await page.mouse.down();
+  await page.mouse.move(bar.x + 200, bar.y + 90, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const after = await fl.evaluate((el) => ({ x: Math.round(el.getBoundingClientRect().x), y: Math.round(el.getBoundingClientRect().y) }));
+  expect(after.x, "标题栏拖动后窗口应移动").toBeGreaterThan(before.x);
+  expect(after.y, "标题栏拖动后窗口应移动").toBeGreaterThan(before.y);
+});
+
+test("拖到网格边缘:显示放置提示且整列停靠", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+  await page.waitForTimeout(400);
+
+  // 拖 属性面板 tab(右列)到最左边缘 → 左半高亮提示 + 释放成整列
+  const tabs = page.locator(".dv-tab");
+  const n = await tabs.count();
+  const tb = await tabs.nth(n - 1).boundingBox();
+  await page.mouse.move(tb.x + 30, tb.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(15, 450, { steps: 12 });
+  await page.waitForTimeout(300);
+  // 放置提示可见(accent 高亮的 drop-target 选区)
+  const visible = await page.evaluate(() =>
+    [...document.querySelectorAll(".dv-drop-target-selection")].some((el) => {
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      return r.width > 4 && r.height > 4 && st.display !== "none";
+    })
+  );
+  expect(visible, "边缘拖拽时应显示放置提示").toBe(true);
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  // 释放后:属性面板成为左侧整列(高度接近整个 dock 区)
+  const col = await page.evaluate(() => {
+    const g = [...document.querySelectorAll(".dv-groupview")].find((x) =>
+      (x.querySelector(".dv-tab")?.textContent ?? "").includes("属性面板")
+    );
+    if (!g) return null;
+    const r = g.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), h: Math.round(r.height) };
+  });
+  expect(col, "属性面板应在网格中").toBeTruthy();
+  expect(col!.x).toBeLessThanOrEqual(10);
+  expect(col!.h).toBeGreaterThan(500);
+});
