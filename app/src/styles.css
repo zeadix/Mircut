@@ -207,6 +207,36 @@ select.ti option:checked { background: var(--btn-hover); color: var(--text); }
 .dock-host {
   isolation: isolate;
 }
+
+/* dockview chrome 跟随应用主题:内置样式表是固定暗色(dockview-theme-dark
+   /abyss 类在根元素直接定义 --dv-*),继承值会被盖掉;须用更高优先级
+   选择器把 --dv-* 映射到应用 token,双主题生效 */
+.dock-host div[class*="dockview-theme-"] {
+  --dv-group-view-background-color: var(--panel);
+  --dv-tabs-and-actions-container-background-color: var(--header);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface);
+  --dv-activegroup-visiblepanel-tab-color: var(--text);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--header);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-dim);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--header);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-dim);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--header);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-dim);
+  --dv-floating-group-border: var(--border-strong);
+  --dv-floating-border: var(--border-strong);
+  --dv-floating-titlebar-background-color: var(--header);
+  --dv-icon-hover-background-color: var(--btn-hover);
+  --dv-drag-over-background-color: var(--accent-dim);
+  --dv-tabs-container-scrollbar-color: var(--border-strong) transparent;
+}
+/* 组间分隔条/浮动窗投影随主题 */
+.dock-host .dv-sash,
+.dock-host .dv-separator-border {
+  background: var(--border);
+}
+.dock-host .dv-resize-container .dv-groupview {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
 .dock-host > div {
   width: 100%;
   height: 100%;
