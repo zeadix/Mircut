@@ -48,7 +48,8 @@ test("小尺寸文字块:可选中、可拖拽移动", async ({ page }) => {
   await page.mouse.click(fb!.x + fb!.width / 2, fb!.y + fb!.height / 2);
   await page.waitForTimeout(400);
   const aside = page.locator("aside").last();
-  await expect(aside.locator("h3")).toHaveText("smallTxt", { timeout: 3000 });
+  // 信息行(ID · 轨道名 · 起始位置)首项即元素 ID
+  await expect(aside.getByText("smallTxt", { exact: true })).toBeVisible({ timeout: 3000 });
 
   // 拖拽:按住块中心移动 → rect.x 变化(提交 set_clip_fx)
   await page.mouse.move(fb!.x + fb!.width / 2, fb!.y + fb!.height / 2);

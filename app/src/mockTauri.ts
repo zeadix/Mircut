@@ -10,7 +10,7 @@ let mockDoc: Document = {
   width: 1920,
   height: 1080,
   tracks: [
-    { id: "f1", kind: "File", name: "文件轨 1", locked: false, hidden: false, muted: false },
+    { id: "f1", kind: "File", name: "图层 1", locked: false, hidden: false, muted: false },
   ],
   clips: [
     {
@@ -142,7 +142,8 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       const pos = Number(args.pos);
       const c = mockDoc.clips.find((x) => x.id === args.clipId);
       if (c && pos > c.start && pos < c.start + c.duration) {
-        const right = { ...c, id: `c${++counter}`, start: pos, duration: c.start + c.duration - pos, asset: { ...c.asset } };
+        const pfx = c.text ? "t" : c.lane === "Audio" ? "a" : (c.speed ?? 1) === 0 ? "img" : "v";
+        const right = { ...c, id: `${pfx}${++counter}`, start: pos, duration: c.start + c.duration - pos, asset: { ...c.asset } };
         c.duration = pos - c.start;
         mockDoc.clips.push(right);
       }
@@ -169,7 +170,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       const compH = mockDoc.height ?? 1080;
       const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2;
       const mk = (lane: "Video" | "Audio") => ({
-        id: `c${++counter}`,
+        id: `${isStill ? "img" : lane === "Audio" ? "a" : "v"}${++counter}`,
         track_id: tid,
         start: Number(args.start ?? 0),
         duration: isStill ? 90 : 90,
@@ -238,7 +239,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
         name: "文字",
         tags: [],
       });
-      const cid = `c${++counter}`;
+      const cid = `t${++counter}`;
       mockDoc.clips.push({
         id: cid,
         track_id: "t-text",
@@ -260,7 +261,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "add_clip":
       mockDoc.clips.push({
-        id: `c${++counter}`,
+        id: `v${++counter}`,
         track_id: mockDoc.tracks[0]?.id ?? "f1",
         start: Number(args.start ?? 0),
         duration: 90,
@@ -403,6 +404,8 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       if (tr) {
         if (args.videoOn != null) tr.video_on = !!args.videoOn;
         if (args.audioOn != null) tr.audio_on = !!args.audioOn;
+        if (args.imageOn != null) tr.image_on = !!args.imageOn;
+        if (args.textOn != null) tr.text_on = !!args.textOn;
       }
       return true;
     }

@@ -200,7 +200,7 @@ test("冒烟:文件轨双块生成 + 视频/音频开关隐藏", async ({ page }
   // 2. 轨道头'视频'开关(图标按钮,按 title 精确定位):
   // 点击关闭后 video_on=false(绘制/命中同步隐藏)
   const videoToggle = page
-    .locator("button[title*='视频参与合成'], button[title*='视频已关闭']")
+    .locator("button[title*='视频元素参与合成'], button[title*='视频元素已关闭']")
     .first();
   await expect(videoToggle).toBeVisible();
   await videoToggle.click();

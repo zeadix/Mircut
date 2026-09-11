@@ -404,13 +404,19 @@ const [url, setUrl] = useState<string | null>(null);
   const layers: Layer[] = useMemo(() => {
     if (!doc) return [];
     const t = playheadTicks;
-    // File 轨视频合成开关:video_on=false 时该轨视频块不进预览
+    // File 轨按元素类型合成开关:关闭的类型不进预览
+    // (视频 video_on/图片 image_on/文字 text_on;与导出门控同语义)
     const visible = doc.tracks.filter(
-      (tr) =>
-        (tr.kind === "Video" || tr.kind === "File") &&
-        !tr.hidden &&
-        tr.video_on !== false
+      (tr) => (tr.kind === "Video" || tr.kind === "File") && !tr.hidden
     );
+    const typeOn = (tr: (typeof doc.tracks)[number], c: (typeof doc.clips)[number]) =>
+      c.text
+        ? tr.text_on !== false
+        : c.lane === "Audio"
+          ? true // 音频层经 AudioBus 门控,预览画面不含音频
+          : (c.speed ?? 1) === 0
+            ? tr.image_on !== false
+            : tr.video_on !== false;
     // tracks 数组自上而下(上层在前);DOM 顺序底层先,故倒序
     const ordered = [...visible].reverse();
     const out: Layer[] = [];
@@ -418,6 +424,7 @@ const [url, setUrl] = useState<string | null>(null);
       for (const c of doc.clips) {
         if (c.track_id !== tr.id) continue;
         if (c.lane === "Audio") continue;
+        if (!typeOn(tr, c)) continue;
         if (!(c.start <= t && t < c.start + c.duration)) continue;
         const l = buildLayer(c, doc, t, null);
         if (l) out.push(l);

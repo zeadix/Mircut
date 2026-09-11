@@ -548,7 +548,9 @@ mod tests {
         std::fs::write(&i, b"x").unwrap();
         // separate() 的候选目录 + 兜底扫描都要能命中
         let candidates = [dir.join("htdemucs").join("song")];
-        let hit = candidates.iter().any(|b| b.join("vocals.wav").exists() && b.join("no_vocals.wav").exists());
+        let hit = candidates
+            .iter()
+            .any(|b| b.join("vocals.wav").exists() && b.join("no_vocals.wav").exists());
         assert!(hit);
         // 兜底扫描(模拟布局变化)
         let mut found = false;
@@ -559,12 +561,21 @@ mod tests {
             if let Ok(rd) = std::fs::read_dir(&d) {
                 for e in rd.flatten() {
                     let n = e.file_name().to_string_lossy().to_lowercase();
-                    if n == "vocals.wav" { v = Some(e.path()); }
-                    if n == "no_vocals.wav" { iv = Some(e.path()); }
-                    if e.path().is_dir() { stack.push(e.path()); }
+                    if n == "vocals.wav" {
+                        v = Some(e.path());
+                    }
+                    if n == "no_vocals.wav" {
+                        iv = Some(e.path());
+                    }
+                    if e.path().is_dir() {
+                        stack.push(e.path());
+                    }
                 }
             }
-            if let (Some(_), Some(_)) = (v, iv) { found = true; break; }
+            if let (Some(_), Some(_)) = (v, iv) {
+                found = true;
+                break;
+            }
         }
         assert!(found);
         let _ = std::fs::remove_dir_all(&dir);

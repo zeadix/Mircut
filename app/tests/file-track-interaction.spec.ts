@@ -50,7 +50,8 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
 
   // File 轨几何(未折叠):时间行[0,20) + 单一内容行[20,120)
   // 纯音频块波形铺满内容行;包络铺满内容行(ENV_MAX=1.5):
-  // v=1 → envY = 22+96-3-(1/1.5)×88 ≈ 56;v=0.8 → ≈ 68
+  // 层高 72(时间 12+内容 60):envLaneTop=14,envLaneH=56
+  // v=1 → envY = 14+56-3-(1/1.5)×48 ≈ 35;v=0.8 → ≈ 41
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
 
@@ -59,12 +60,13 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     page.evaluate(() => {
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
-      const img = ctx.getImageData(12, 53, 24, 6);
+      const img = ctx.getImageData(12, 32, 24, 7);
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-        // 包络线为深红强对比(与蓝色波形/浅绿底区分)
-        if (r > 140 && g < 110 && b < 130) n++;
+        // 包络线深红(190,40,70),1px 抗锯齿混浅绿底后 g≈110-140:
+        // 判据 = 红主导且压过绿(与波形蓝/渐变绿区分)
+        if (r > 150 && r > g + 40 && b < 170) n++;
       }
       return n;
     });
@@ -74,7 +76,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   const wavePixels = await page.evaluate(() => {
     const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
     const ctx = canvas.getContext("2d")!;
-    const img = ctx.getImageData(10, 30, 30, 80);
+    const img = ctx.getImageData(10, 16, 30, 50);
     let n = 0;
     for (let i = 0; i < img.data.length; i += 4) {
       const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -90,10 +92,10 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   await page.waitForTimeout(200);
   // 编辑模式下包络线出现
   expect(await whiteLinePixels(), "编辑模式应显示音量节点曲线").toBeGreaterThan(5);
-  const envY = box!.y + 56;
+  const envY = box!.y + 35;
   await page.mouse.move(midX, envY);
   await page.mouse.down();
-  await page.mouse.move(midX + 8, envY + 12, { steps: 5 });
+  await page.mouse.move(midX + 8, envY + 10, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -111,9 +113,9 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(await whiteLinePixels(), "退出编辑模式包络线应消失").toBe(0);
 
   // ===== 2. 音频区拖拽整体移动:在包络线之外(y=110)按下拖动 =====
-  await page.mouse.move(midX, box!.y + 110);
+  await page.mouse.move(midX, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(midX + 60, box!.y + 110, { steps: 8 });
+  await page.mouse.move(midX + 60, box!.y + 60, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -176,9 +178,9 @@ test("回归:抓音频区拖到视频行,lane 保持 Audio 且配对同行", asy
   expect(box).toBeTruthy();
 
   // 从音频行(y=110)抓起,拖到视频行(y=50)释放 —— lane 不得被改成 Video
-  await page.mouse.move(box!.x + 22, box!.y + 110);
+  await page.mouse.move(box!.x + 22, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 100, box!.y + 50, { steps: 8 });
+  await page.mouse.move(box!.x + 100, box!.y + 42, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -247,12 +249,12 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
   const box = await canvas.boundingBox();
   expect(box).toBeTruthy();
 
-  // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 22, 96) ≈ 68(canvas 内)
+  // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 14, 56) ≈ 41(canvas 内)
   const nodeX = box!.x + 15;
-  const nodeY = box!.y + 68;
+  const nodeY = box!.y + 41;
   await page.mouse.move(nodeX, nodeY);
   await page.mouse.down();
-  await page.mouse.move(nodeX, nodeY + 15, { steps: 5 });
+  await page.mouse.move(nodeX, nodeY + 12, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -302,7 +304,7 @@ test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ pa
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
       // 选中手柄:块左缘 x[0..6],y≈timeTop+totalH/2±6 = [54..66]
-      const img = ctx.getImageData(0, 52, 8, 16);
+      const img = ctx.getImageData(0, 28, 8, 16);
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -313,7 +315,7 @@ test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ pa
 
   const before = await yellowPixels();
   // 点击音频行中部(x=22 在块主体,y=110 在音频行)
-  await page.mouse.click(box!.x + 22, box!.y + 110);
+  await page.mouse.click(box!.x + 22, box!.y + 60);
   await page.waitForTimeout(300);
   const after = await yellowPixels();
 
@@ -374,9 +376,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 48, box!.y + 50);
+  await page.mouse.move(box!.x + 48, box!.y + 42);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 18, box!.y + 50, { steps: 8 });
+  await page.mouse.move(box!.x + 18, box!.y + 42, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   // 边缘拖拽绝不允许变成移动
@@ -406,9 +408,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 45, box!.y + 50);
+  await page.mouse.move(box!.x + 45, box!.y + 42);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 25, box!.y + 50, { steps: 6 });
+  await page.mouse.move(box!.x + 25, box!.y + 42, { steps: 6 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const trimsE = await page.evaluate(() => {
@@ -425,9 +427,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 43, box!.y + 50);
+  await page.mouse.move(box!.x + 43, box!.y + 42);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 30, box!.y + 50, { steps: 5 });
+  await page.mouse.move(box!.x + 30, box!.y + 42, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const trimsO = await page.evaluate(() => {
@@ -446,9 +448,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 87, box!.y + 50);
+  await page.mouse.move(box!.x + 87, box!.y + 42);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 117, box!.y + 50, { steps: 8 });
+  await page.mouse.move(box!.x + 117, box!.y + 42, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const movesR = await page.evaluate(() => {

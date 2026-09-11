@@ -328,6 +328,12 @@ pub struct Track {
     /// File 轨:音频块是否参与合成(关 = 静音该轨音频)。
     #[serde(default = "default_true")]
     pub audio_on: bool,
+    /// File 轨:图片(定格)块是否参与合成。
+    #[serde(default = "default_true")]
+    pub image_on: bool,
+    /// File 轨:文字块是否参与合成。
+    #[serde(default = "default_true")]
+    pub text_on: bool,
 }
 
 fn default_true() -> bool {
@@ -469,6 +475,8 @@ impl Document {
                 muted: t.muted,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
         }
         // 音频轨:并入最后一条 File 轨的 Audio lane(无 File 轨则自建一条)
@@ -480,12 +488,14 @@ impl Document {
             new_tracks.push(Track {
                 id: "f1".into(),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
         }
         for (i, at) in audio_tracks.iter().enumerate() {
@@ -507,12 +517,14 @@ impl Document {
                 new_tracks.push(Track {
                     id: target,
                     kind: TrackKind::File,
-                    name: format!("文件轨 {}", new_tracks.len() + 1),
+                    name: format!("图层 {}", new_tracks.len() + 1),
                     locked: at.locked,
                     hidden: at.hidden,
                     muted: at.muted,
                     video_on: true,
                     audio_on: true,
+                    image_on: true,
+                    text_on: true,
                 });
             }
         }
@@ -953,6 +965,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.tracks.push(Track {
             id: "a1".into(),
@@ -963,6 +977,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.clips.push(Clip {
             id: "c1".into(),
@@ -1031,6 +1047,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
         }
         let mut stack = CommandStack::new();
@@ -1126,6 +1144,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.clips.push(clip("c1", "t1", 0, 30));
         doc.assets.push(Asset {
@@ -1157,6 +1177,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.clips.push(clip("c1", "t1", 0, 30));
         doc.clips.push(clip("c2", "t1", 30, 30));
@@ -1274,6 +1296,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         let mut c = clip("c1", "t1", 0, 30);
         c.asset.source_in = 0.0;

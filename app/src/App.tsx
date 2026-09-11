@@ -1309,14 +1309,24 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   /// File 轨视频/音频合成开关(预览+导出同时生效;可撤销)。
   const onToggleTrackMedia = useCallback(
-    async (trackId: string, which: "video" | "audio") => {
+    async (trackId: string, which: "video" | "audio" | "image" | "text") => {
       const track = doc!.tracks.find((t) => t.id === trackId)!;
-      const cur = which === "video" ? track.video_on !== false : track.audio_on !== false;
+      const curOf = (w: typeof which) =>
+        w === "video"
+          ? track.video_on !== false
+          : w === "audio"
+            ? track.audio_on !== false
+            : w === "image"
+              ? track.image_on !== false
+              : track.text_on !== false;
+      const cur = curOf(which);
       try {
         await api.setTrackMedia(
           trackId,
           which === "video" ? !cur : null,
-          which === "audio" ? !cur : null
+          which === "audio" ? !cur : null,
+          which === "image" ? !cur : null,
+          which === "text" ? !cur : null
         );
       } catch (e) {
         setStatus(`切换失败: ${String(e).slice(0, 120)}`);

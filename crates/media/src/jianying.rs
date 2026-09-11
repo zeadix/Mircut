@@ -125,6 +125,8 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         for seg in &t.segments {
             let Some((_mat_id, path, dur_us)) = mats.iter().find(|m| m.0 == seg.material_id) else {

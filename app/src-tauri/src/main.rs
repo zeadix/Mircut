@@ -382,6 +382,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -441,6 +443,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             // 模拟用户当前 autosave 的重叠:c1=[1890,3356], c2=[0,1922] 重叠 32
             for (id, start) in [("c1", 1890i64), ("c2", 0i64)] {
@@ -488,12 +492,14 @@ mod tests {
             inner.doc.tracks.push(Track {
                 id: "f1".into(),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -539,7 +545,11 @@ mod tests {
             let c = inner.doc.clip("v1").unwrap();
             assert_eq!(c.start, 150, "左缘向左扩展: start");
             assert_eq!(c.duration, 450, "左缘向左扩展: duration 增大");
-            assert!((c.asset.source_in - 5.0).abs() < 1e-6, "source_in → 5s: {}", c.asset.source_in);
+            assert!(
+                (c.asset.source_in - 5.0).abs() < 1e-6,
+                "source_in → 5s: {}",
+                c.asset.source_in
+            );
 
             // 2) 左缘向右收缩:start 150 → 300(源入点 5s → 10s)
             {
@@ -556,13 +566,15 @@ mod tests {
 
             // 3) 右缘向右扩展:duration 300 → 450(源出点 20s → 25s)
             {
-                inner.exec(Box::new(veditor_core::TrimClip::new(
-                    "v1", 300, 450, 0.0,
-                )));
+                inner.exec(Box::new(veditor_core::TrimClip::new("v1", 300, 450, 0.0)));
             }
             let c = inner.doc.clip("v1").unwrap();
             assert_eq!(c.duration, 450, "右缘向右扩展");
-            assert!((c.asset.source_out - 25.0).abs() < 1e-6, "source_out → 25s: {}", c.asset.source_out);
+            assert!(
+                (c.asset.source_out - 25.0).abs() < 1e-6,
+                "source_out → 25s: {}",
+                c.asset.source_out
+            );
 
             // 4) 右缘向左收缩:duration 450 → 300(源出点 25s → 20s)
             inner.exec(Box::new(veditor_core::TrimClip::new("v1", 300, 300, 0.0)));
@@ -571,7 +583,11 @@ mod tests {
             assert!((c.asset.source_out - 20.0).abs() < 1e-6);
 
             // 块位置始终不动(start 全程 300)
-            assert_eq!(inner.doc.clip("v1").unwrap().start, 300, "修剪绝不移动块起点");
+            assert_eq!(
+                inner.doc.clip("v1").unwrap().start,
+                300,
+                "修剪绝不移动块起点"
+            );
         }
     }
 
@@ -592,6 +608,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -659,6 +677,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "mp3".into(),
@@ -684,6 +704,8 @@ mod tests {
                     muted: false,
                     video_on: true,
                     audio_on: true,
+                    image_on: true,
+                    text_on: true,
                 };
                 let id = auto.id.clone();
                 inner.exec(Box::new(AddTrack { track: auto }));
@@ -725,6 +747,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             };
             let id = track.id.clone();
             inner.exec(Box::new(AddTrack { track }));
@@ -750,6 +774,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -846,6 +872,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -961,6 +989,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "mp4".into(),
@@ -1074,12 +1104,14 @@ mod tests {
             inner.doc.tracks.push(Track {
                 id: "f1".into(),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -1121,10 +1153,7 @@ mod tests {
                 inner.doc.clips.push(mk(id, asset, lane, start));
             }
             // entries:A 双块移动到 100(与 B[90,180) C[180,270) 重叠)
-            let entries = vec![
-                ("Av", 100i64, Lane::Video),
-                ("Aa", 100, Lane::Audio),
-            ];
+            let entries = vec![("Av", 100i64, Lane::Video), ("Aa", 100, Lane::Audio)];
             // —— move_clips 内部序列 ——
             let mut sim = inner.doc.clone();
             for (id, start, lane) in &entries {
@@ -1199,12 +1228,14 @@ mod tests {
             inner.doc.tracks.push(Track {
                 id: "f1".into(),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             for a in ["a1", "amus"] {
                 inner.doc.assets.push(Asset {
@@ -1265,7 +1296,11 @@ mod tests {
             }
             // A 锚位保 90;音乐块让位到 A 末端 180(不再重叠)
             assert_eq!(inner.doc.clip("Av").unwrap().start, 90);
-            assert_eq!(inner.doc.clip("M").unwrap().start, 180, "纯音频块应被级联推挤");
+            assert_eq!(
+                inner.doc.clip("M").unwrap().start,
+                180,
+                "纯音频块应被级联推挤"
+            );
             // 音频 lane 全局无重叠
             let mut as_: Vec<(i64, i64)> = inner
                 .doc
@@ -1292,12 +1327,14 @@ mod tests {
             inner.doc.tracks.push(Track {
                 id: String::from("f1"),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -1376,12 +1413,14 @@ mod tests {
             inner.doc.tracks.push(Track {
                 id: String::from("f1"),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             let mk = |id: &str, lane: veditor_core::Lane, start: i64| Clip {
                 id: id.into(),
@@ -1487,6 +1526,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(asset.clone());
         }
@@ -1579,6 +1620,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),

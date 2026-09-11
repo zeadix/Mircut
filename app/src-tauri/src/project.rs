@@ -22,12 +22,14 @@ pub(crate) fn new_project(state: State<'_, AppState>) -> Result<Document, String
     inner.doc.tracks.push(Track {
         id: "f1".into(),
         kind: TrackKind::File,
-        name: "文件轨 1".into(),
+        name: "图层 1".into(),
         locked: false,
         hidden: false,
         muted: false,
         video_on: true,
         audio_on: true,
+        image_on: true,
+        text_on: true,
     });
     inner.project_path = None;
     inner.stack = CommandStack::new();

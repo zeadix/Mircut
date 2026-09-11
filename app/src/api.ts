@@ -222,9 +222,11 @@ export async function rollEdit(leftId: string, rightId: string, delta: number): 
 export async function setTrackMedia(
   trackId: string,
   videoOn: boolean | null,
-  audioOn: boolean | null
+  audioOn: boolean | null,
+  imageOn: boolean | null = null,
+  textOn: boolean | null = null
 ): Promise<boolean> {
-  return invoke("set_track_media", { trackId, videoOn, audioOn });
+  return invoke("set_track_media", { trackId, videoOn, audioOn, imageOn, textOn });
 }
 
 export async function rippleDelete(clipId: string): Promise<boolean> {

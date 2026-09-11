@@ -63,9 +63,16 @@ pub fn drawtext_font_opt(font: &str, bold: bool, italic: bool) -> String {
     if font.is_empty() && style.is_empty() {
         return String::new();
     }
-    let fam = if font.is_empty() { "Sans".to_string() } else { font.to_string() };
+    let fam = if font.is_empty() {
+        "Sans".to_string()
+    } else {
+        font.to_string()
+    };
     // 值内特殊字符转义(反斜杠/单引号/冒号)
-    let fam = fam.replace('\\', "\\\\").replace('\'', "\\'").replace(':', "\\:");
+    let fam = fam
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace(':', "\\:");
     if style.is_empty() {
         format!(":font='{fam}'")
     } else {
@@ -409,11 +416,7 @@ fn anim_fade_filters(c: &veditor_core::Clip, dur_secs: f64, vis: f64) -> String 
 
 /// 入场/出场 Zoom 的缩放因子表达式(乘以基础尺寸;1 = 原尺寸)。
 /// t = 时间轴秒(与 PiP/overlay 路径的 setpts 后表达式一致);vis/end = 可旋窗口。
-fn anim_scale_factor_expr(
-    c: &veditor_core::Clip,
-    vis: f64,
-    end: f64,
-) -> Option<String> {
+fn anim_scale_factor_expr(c: &veditor_core::Clip, vis: f64, end: f64) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if let Some(a) = &c.fx.enter {
         let d = a.dur_secs.clamp(0.05, 5.0);
@@ -484,15 +487,28 @@ fn anim_slide_expr(
         None
     } else {
         Some((
-            if dx.is_empty() { "0.0".into() } else { dx.join("+") },
-            if dy.is_empty() { "0.0".into() } else { dy.join("+") },
+            if dx.is_empty() {
+                "0.0".into()
+            } else {
+                dx.join("+")
+            },
+            if dy.is_empty() {
+                "0.0".into()
+            } else {
+                dy.join("+")
+            },
         ))
     }
 }
 
 /// 文字 drawtext 出入场表达式:返回 (alpha_suffix, x_expr_offset, y_expr_offset, fontsize_factor)。
 /// 时间变量 t 为时间轴秒;vis/end 为可见窗口。None 分量表示不修改。
-type TextAnimExprs = (Option<String>, Option<String>, Option<String>, Option<String>);
+type TextAnimExprs = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 fn text_anim_exprs(
     enter: Option<&veditor_core::ClipAnim>,
@@ -534,7 +550,13 @@ fn text_anim_exprs(
             veditor_core::ClipAnimKind::ZoomOut => zf.push(format!("({rem}+0.3*{q})")),
         }
     }
-    let join = |v: Vec<String>| if v.is_empty() { None } else { Some(v.join("*")) };
+    let join = |v: Vec<String>| {
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.join("*"))
+        }
+    };
     (join(alpha), join(dx), join(dy), join(zf))
 }
 
@@ -805,19 +827,31 @@ fn speed_segments(c: &veditor_core::Clip, tb: &veditor_core::Timebase) -> Vec<Sp
 }
 
 /// 编译单条 FFmpeg 命令(整条时间轴,顺序 concat 方案)。
+/// File 轨按元素类型的合成开关:片段类型与轨开关都命中才参与合成
+/// (视频 v / 音频 a / 图片 img / 文字 t;关闭 = 预览不显示、导出不合成)。
+pub fn clip_type_enabled(track: &veditor_core::Track, clip: &veditor_core::Clip) -> bool {
+    if clip.text.is_some() {
+        track.text_on
+    } else if clip.lane == Some(veditor_core::Lane::Audio) {
+        track.audio_on
+    } else if (clip.speed - 0.0).abs() < 1e-3 {
+        track.image_on
+    } else {
+        track.video_on
+    }
+}
+
 /// 输入策略:每个消费片段一个独立 -i(ffmpeg 4.x 同输入拆多路 trim 会
 /// 共享解码状态导致 concat 时长错误,独立输入实测精确)。
 pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> {
     let mut args: Vec<String> = vec!["-y".into()];
 
-    // 视频轨:全部非隐藏视频轨,自下而上;主轨(最下)全尺寸,上层 overlay
-    // File 轨视频/音频合成开关:video_on=false 时该轨视频块不参与合成
+    // 视频轨:全部非隐藏视频轨,自下而上;主轨(最下)全尺寸,上层 overlay。
+    // 类型开关(video/image/text_on)在逐片段收集时判定(轨保留:其余类型仍可能参与)
     let video_tracks: Vec<String> = doc
         .tracks
         .iter()
-        .filter(|t| {
-            (t.kind == TrackKind::Video || t.kind == TrackKind::File) && !t.hidden && t.video_on
-        })
+        .filter(|t| (t.kind == TrackKind::Video || t.kind == TrackKind::File) && !t.hidden)
         .map(|t| t.id.clone())
         .collect();
     // 合成底 = 自下而上(数组末位起)第一条含视频片段的轨。
@@ -833,8 +867,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             .find(|vt| !doc.clips_on_lane(vt, veditor_core::Lane::Video).is_empty())
             .cloned()
     };
-                                                    // 音频轨:所有轨
-                                                    // audio_on=false 时该轨音频块不参与混音(含 File 轨音频块)
+    // 音频轨:所有轨
+    // audio_on=false 时该轨音频块不参与混音(含 File 轨音频块)
     // GIF 动图无音频:音频轨清空,音频链(amix)不编译(悬空输出会导致整图失败)
     let is_gif = resolve_format(params) == "gif" && !params.audio_only;
     let audio_tracks: Vec<String> = if is_gif {
@@ -861,9 +895,14 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         if params.audio_only {
             continue;
         }
+        let Some(vtr) = doc.track(vt) else { continue };
         for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
             // 文字片段无源素材(text://),走 drawtext,不占输入
             if c.text.is_some() {
+                continue;
+            }
+            // 按元素类型门控:图片(image_on)/视频(video_on)关闭的块不合成
+            if !clip_type_enabled(vtr, c) {
                 continue;
             }
             if let Some(a) = doc.asset(&c.asset.asset_id) {
@@ -905,8 +944,12 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             .clips_on_lane(vt, veditor_core::Lane::Video)
             .into_iter()
             .filter(|c| c.text.is_none())
+            .filter(|c| doc.track(vt).is_some_and(|tr| clip_type_enabled(tr, c)))
             .collect();
-        if !clips.is_empty() || doc.clips.iter().any(|c| c.text.is_some()) {
+        let text_enabled_here = |c: &veditor_core::Clip| {
+            c.text.is_some() && doc.track(vt).is_some_and(|tr| clip_type_enabled(tr, c))
+        };
+        if !clips.is_empty() || doc.clips.iter().any(|c| text_enabled_here(c)) {
             let mut chain_parts: Vec<String> = Vec::new();
             for (i, c) in clips.iter().enumerate() {
                 let input_idx = input_of(&c.id);
@@ -1186,8 +1229,13 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         ));
                         vlabel = nv;
                     }
-                    let slide =
-                        anim_slide_expr(c, tl_start, end, params.width as f64, params.height as f64);
+                    let slide = anim_slide_expr(
+                        c,
+                        tl_start,
+                        end,
+                        params.width as f64,
+                        params.height as f64,
+                    );
                     let ov_pos = match &slide {
                         Some((dx, dy)) => format!(
                             "overlay=x='(main_w-overlay_w)/2+({dx})':y='(main_h-overlay_h)/2+({dy})'"
@@ -1254,9 +1302,14 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
     };
     upper_layers.reverse(); // 自下而上
     for vt in upper_layers {
+        let vt_ref = doc.track(vt);
         for c in doc.clips_on_lane(vt, veditor_core::Lane::Video) {
             if c.text.is_some() {
                 continue; // 文字片段走 drawtext,不进 PiP 链
+            }
+            // 按元素类型门控(图片/视频关闭的块不进 PiP)
+            if vt_ref.is_some_and(|tr| !clip_type_enabled(tr, c)) {
+                continue;
             }
             let input_idx = input_of(&c.id);
             let st = c.start as f64 / fps_tb;
@@ -1352,9 +1405,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 // 否则 eof_action=pass 会让画面只显示 1 帧
                 if c.speed.abs() < 1e-3 {
                     let dur = doc.timebase.secs(c.duration);
-                    head.push_str(&format!(
-                        ",tpad=stop_mode=clone:stop_duration={dur:.3}"
-                    ));
+                    head.push_str(&format!(",tpad=stop_mode=clone:stop_duration={dur:.3}"));
                 }
                 head.push(',');
                 head
@@ -1605,7 +1656,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     chain.push_str(&format!(",volume={vol:.3}{label}"));
                 }
                 // 定位:adelay 到 (start - pre + max(0, offset))
-                let need_delay_ms = ((tl_start - a_pre + a_offset.max(0.0)) * 1000.0).round() as i64;
+                let need_delay_ms =
+                    ((tl_start - a_pre + a_offset.max(0.0)) * 1000.0).round() as i64;
                 if need_delay_ms > 1 {
                     chain.push_str(&format!(",adelay={need_delay_ms}:all=1"));
                 }
@@ -1705,11 +1757,12 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         let st = doc.timebase.secs(c.start);
         let en = doc.timebase.secs(c.start + c.duration);
         let dur = (en - st).max(0.05);
-        let (rx, ry, rw, rh) = c
-            .fx
-            .rect
-            .map(|r| (r.x, r.y, r.w, r.h))
-            .unwrap_or((0.5, 0.5, 0.8, (tc.font_size as f64 / 1080.0).clamp(0.02, 0.9)));
+        let (rx, ry, rw, rh) = c.fx.rect.map(|r| (r.x, r.y, r.w, r.h)).unwrap_or((
+            0.5,
+            0.5,
+            0.8,
+            (tc.font_size as f64 / 1080.0).clamp(0.02, 0.9),
+        ));
         let rw_px = (rw * params.width as f64).round().max(8.0) as u32;
         let rh_px = (rh * params.height as f64).round().max(8.0) as u32;
         let deg = c.fx.rotate.value_at(0).unwrap_or(0.0);
@@ -1758,7 +1811,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
         args.push(src);
         // 链:rotate(绕框中心)→ overlay 到 rect 中心 + 时间窗;
         // 出入场:fade(alpha)/slide(overlay xy)/zoom(scale 表达式)
-                let (_alpha, dx, dy, zf) = text_anim_exprs(
+        let (_alpha, dx, dy, zf) = text_anim_exprs(
             c.fx.enter.as_ref(),
             c.fx.exit.as_ref(),
             st,
@@ -1766,7 +1819,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             params.width as f64,
             params.height as f64,
         );
-        let mut chain = format!("[{idx}:v]format=rgba,rotate={deg:.3}*PI/180:c=black@0:ow=rotw(iw):oh=roth(ih)");
+        let mut chain = format!(
+            "[{idx}:v]format=rgba,rotate={deg:.3}*PI/180:c=black@0:ow=rotw(iw):oh=roth(ih)"
+        );
         if let Some(z) = &zf {
             chain.push_str(&format!(
                 ",scale=w='trunc({rw_px}*({z})+0.5)':h='trunc({rh_px}*({z})+0.5)':force_original_aspect_ratio=decrease:eval=frame"
@@ -1816,6 +1871,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 .value_at(0)
                 .map(|d| d.abs() <= 0.05)
                 .unwrap_or(true)
+            // 文字类型开关关闭的轨道不烧录
+            && doc.track(&c.track_id).is_some_and(|tr| clip_type_enabled(tr, c))
     });
     let has_texts = has_video_out && (!doc.text_overlays.is_empty() || has_text_clips);
     if has_subs || has_texts {
@@ -1876,11 +1933,12 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 continue;
             }
             let tc = c.text.as_ref().unwrap();
-            let (rx, ry, rw, rh) = c
-                .fx
-                .rect
-                .map(|r| (r.x, r.y, r.w, r.h))
-                .unwrap_or((0.5, 0.5, 0.8, (tc.font_size as f64 / 1080.0).clamp(0.02, 0.9)));
+            let (rx, ry, rw, rh) = c.fx.rect.map(|r| (r.x, r.y, r.w, r.h)).unwrap_or((
+                0.5,
+                0.5,
+                0.8,
+                (tc.font_size as f64 / 1080.0).clamp(0.02, 0.9),
+            ));
             text_draws.push(TextDraw {
                 start: doc.timebase.secs(c.start),
                 end: doc.timebase.secs(c.start + c.duration),
@@ -1975,7 +2033,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 params.height as f64,
             );
             let font_opt = drawtext_font_opt(td.font, td.bold, td.italic);
-            let mut dt = format!("{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}{font_opt}");
+            let mut dt = format!(
+                "{sep}drawtext=text='{text}':fontcolor=0x{color}:fontsize={font_px}{font_opt}"
+            );
             // 位置:x/y 按 align_h/align_v 锚定到框;有位移动画的轴输出表达式(含对齐)
             let canvas_w = params.width as f64;
             let canvas_h = params.height as f64;
@@ -2235,13 +2295,16 @@ pub fn summarize_ffmpeg_error(stderr: &str) -> String {
             "MFX session",
             "QSV 硬件不可用(无 Intel 核显或驱动缺失),请改用 NVENC 或软件编码",
         ),
-        ("NVENC has been initialized", "NVENC 会话数已达上限,请关闭其他占用显存的程序后重试"),
         (
-            "CUDA error",
-            "NVENC 初始化失败(CUDA 错误),请改用软件编码",
+            "NVENC has been initialized",
+            "NVENC 会话数已达上限,请关闭其他占用显存的程序后重试",
         ),
+        ("CUDA error", "NVENC 初始化失败(CUDA 错误),请改用软件编码"),
         ("Permission denied", "输出路径无写入权限,请更换保存位置"),
-        ("No such file or directory", "输入/输出路径不存在,请检查素材与保存位置"),
+        (
+            "No such file or directory",
+            "输入/输出路径不存在,请检查素材与保存位置",
+        ),
         ("No space left on device", "磁盘空间不足,请清理后重试"),
     ];
     for (needle, msg) in patterns {
@@ -2249,7 +2312,11 @@ pub fn summarize_ffmpeg_error(stderr: &str) -> String {
             return msg.to_string();
         }
     }
-    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     let start = lines.len().saturating_sub(3);
     let joined = lines[start..].join(" | ");
     if joined.chars().count() > 400 {
@@ -2373,6 +2440,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.tracks.push(Track {
             id: "t2".into(),
@@ -2383,6 +2452,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.assets.push(Asset {
             id: "a1".into(),
@@ -2548,6 +2619,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             },
         );
         d.clips.push(Clip {
@@ -2585,12 +2658,14 @@ mod tests {
             d.tracks.push(Track {
                 id: tid.into(),
                 kind: TrackKind::File,
-                name: "文件轨".into(),
+                name: "图层".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
         }
         let params = ExportParams {
@@ -2610,10 +2685,16 @@ mod tests {
         assert!(mapped.starts_with('['), "map 应指向滤镜标签, got {mapped}");
         // 真机导出 + 验证音视频流
         let cancel = Arc::new(AtomicBool::new(false));
-        run_export_tracked(&args, 1.0, &|_| {}, cancel)
-            .unwrap_or_else(|e| panic!("导出失败: {e}"));
+        run_export_tracked(&args, 1.0, &|_| {}, cancel).unwrap_or_else(|e| panic!("导出失败: {e}"));
         let probe = Command::new("ffprobe")
-            .args(["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0"])
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+            ])
             .arg(dir.join("out.mp4"))
             .output()
             .unwrap();
@@ -2800,7 +2881,14 @@ mod tests {
 
         let probe_streams = |out: &std::path::Path| -> (usize, usize) {
             let probe = Command::new("ffprobe")
-                .args(["-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0"])
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_type",
+                    "-of",
+                    "csv=p=0",
+                ])
                 .arg(out)
                 .output()
                 .unwrap();
@@ -2815,7 +2903,10 @@ mod tests {
             run_export_tracked(&compile_ffmpeg_cmd(&d, params), 1.0, &|_| {}, cancel)
                 .unwrap_or_else(|e| panic!("{name} 导出失败: {e}"));
             let out = params.out_path.clone();
-            assert!(out.exists() && out.metadata().unwrap().len() > 0, "{name} 无输出");
+            assert!(
+                out.exists() && out.metadata().unwrap().len() > 0,
+                "{name} 无输出"
+            );
             out
         };
         let base = |out: std::path::PathBuf, vcodec: &str, format: &str| ExportParams {
@@ -2843,7 +2934,10 @@ mod tests {
             let p = base(path_of(&format!("v_{vcodec}_{format}")), vcodec, format);
             let out = run(&format!("{vcodec}/{format}"), &p);
             let (v, a) = probe_streams(&out);
-            assert!(v >= 1 && a >= 1, "{vcodec}/{format} 应含视频+音频流, got v={v} a={a}");
+            assert!(
+                v >= 1 && a >= 1,
+                "{vcodec}/{format} 应含视频+音频流, got v={v} a={a}"
+            );
         }
 
         // GIF:调色板管线,无音频流
@@ -2858,7 +2952,10 @@ mod tests {
             p.audio_only = true;
             let out = run(&format!("audio/{format}"), &p);
             let (v, a) = probe_streams(&out);
-            assert!(v == 0 && a >= 1, "仅音频 {format} 应只有音频流, got v={v} a={a}");
+            assert!(
+                v == 0 && a >= 1,
+                "仅音频 {format} 应只有音频流, got v={v} a={a}"
+            );
         }
 
         let _ = std::fs::remove_dir_all(dir);
@@ -3013,8 +3110,14 @@ mod tests {
             .map(|(_, b)| b.clone())
             .unwrap();
         // 入场淡入从 0 开始;出场淡出在 dur-d=0.2s;premultiply 淡到黑(基础层)
-        assert!(fc.contains("fade=t=in:st=0.000:d=0.500:alpha=1"), "fc = {fc}");
-        assert!(fc.contains("fade=t=out:st=0.200:d=0.800:alpha=1"), "fc = {fc}");
+        assert!(
+            fc.contains("fade=t=in:st=0.000:d=0.500:alpha=1"),
+            "fc = {fc}"
+        );
+        assert!(
+            fc.contains("fade=t=out:st=0.200:d=0.800:alpha=1"),
+            "fc = {fc}"
+        );
         assert!(fc.contains("premultiply=inplace=1"), "fc = {fc}");
     }
 
@@ -3035,7 +3138,10 @@ mod tests {
             .unwrap();
         // overlay 路径:黑底画布 + 滑动偏移表达式(从画布外滑入)
         assert!(fc.contains("[vblack]"), "fc = {fc}");
-        assert!(fc.contains("(1-min(1,max(0,(t-0.000)/0.500)))*1920"), "fc = {fc}");
+        assert!(
+            fc.contains("(1-min(1,max(0,(t-0.000)/0.500)))*1920"),
+            "fc = {fc}"
+        );
         assert!(fc.contains("overlay=x='(main_w-overlay_w)/2+"), "fc = {fc}");
         assert!(!fc.contains("concat=n="), "fc = {fc}");
     }
@@ -3055,6 +3161,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             },
         );
         d.clips.push(Clip {
@@ -3140,7 +3248,10 @@ mod tests {
         // 无字体无粗斜 = 不加选项
         assert_eq!(drawtext_font_opt("", false, false), "");
         // 仅族名
-        assert_eq!(drawtext_font_opt("Noto Sans CJK SC", false, false), ":font='Noto Sans CJK SC'");
+        assert_eq!(
+            drawtext_font_opt("Noto Sans CJK SC", false, false),
+            ":font='Noto Sans CJK SC'"
+        );
         // 粗/斜/粗斜组合(值内冒号必须 \: 转义,否则 drawtext 报 Option 'style' not found)
         assert_eq!(
             drawtext_font_opt("Noto Sans CJK SC", true, false),
@@ -3155,9 +3266,15 @@ mod tests {
             ":font='Noto Sans CJK SC\\:style=Bold Italic'"
         );
         // 仅有粗斜无族名:用 fontconfig 默认 Sans
-        assert_eq!(drawtext_font_opt("", true, true), ":font='Sans\\:style=Bold Italic'");
+        assert_eq!(
+            drawtext_font_opt("", true, true),
+            ":font='Sans\\:style=Bold Italic'"
+        );
         // 族名内特殊字符转义
-        assert_eq!(drawtext_font_opt("Fo'nt:x", false, false), ":font='Fo\\'nt\\:x'");
+        assert_eq!(
+            drawtext_font_opt("Fo'nt:x", false, false),
+            ":font='Fo\\'nt\\:x'"
+        );
     }
 
     #[test]
@@ -3174,6 +3291,8 @@ mod tests {
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             },
         );
         d.assets.push(Asset {
@@ -3302,7 +3421,12 @@ mod tests {
     #[test]
     fn container_muxer_names_map_to_ffmpeg() {
         // ffmpeg 复用器名与扩展名不同:mkv->matroska,m4a->ipod(-f mkv 会直接报错)
-        for (format, muxer) in [("mkv", "matroska"), ("m4a", "ipod"), ("mp4", "mp4"), ("webm", "webm")] {
+        for (format, muxer) in [
+            ("mkv", "matroska"),
+            ("m4a", "ipod"),
+            ("mp4", "mp4"),
+            ("webm", "webm"),
+        ] {
             let mut p = ExportParams::default();
             p.format = Some(format.into());
             if format == "m4a" {
@@ -3320,8 +3444,13 @@ mod tests {
             summarize_ffmpeg_error("xxx\nUnknown encoder 'libsvtav1'\nmore"),
             "本机 ffmpeg 未编译该编码器,请改用其他编码器(软件编码 libx264 永远可用)"
         );
-        assert!(summarize_ffmpeg_error("Failed to initialise VAAPI connection: -1").contains("VAAPI"));
-        assert!(summarize_ffmpeg_error("Error initializing an internal MFX session: unsupported (-3)").contains("QSV"));
+        assert!(
+            summarize_ffmpeg_error("Failed to initialise VAAPI connection: -1").contains("VAAPI")
+        );
+        assert!(summarize_ffmpeg_error(
+            "Error initializing an internal MFX session: unsupported (-3)"
+        )
+        .contains("QSV"));
         // 无模式命中:取末 3 行
         let s = summarize_ffmpeg_error("l1\nl2\nl3\nl4");
         assert!(s.contains("l2") && s.contains("l4") && !s.contains("l1"));
@@ -3366,7 +3495,10 @@ mod tests {
             ..Default::default()
         };
         let args = compile_ffmpeg_cmd(&doc(), &params);
-        let pos = args.iter().position(|a| a == "-global_quality").expect("gq");
+        let pos = args
+            .iter()
+            .position(|a| a == "-global_quality")
+            .expect("gq");
         assert_eq!(args[pos + 1], "19");
         // amf:rc cqp + qp_i
         let params = ExportParams {
@@ -3398,7 +3530,9 @@ mod tests {
             ..Default::default()
         };
         let args = compile_ffmpeg_cmd(&doc(), &params);
-        assert!(args.contains(&"-movflags".to_string()) && args.contains(&"+faststart".to_string()));
+        assert!(
+            args.contains(&"-movflags".to_string()) && args.contains(&"+faststart".to_string())
+        );
         // format 未传时按扩展名推断
         let params = ExportParams {
             out_path: PathBuf::from("/tmp/x.mkv"),
@@ -3451,7 +3585,10 @@ mod tests {
         // 右片段前借源窗口 + 提前 0.5s 淡入
         assert!(fc.contains("trim=start=0.500:duration=1.000"), "fc = {fc}");
         assert!(fc.contains("setpts=PTS+0.500/TB"), "fc = {fc}");
-        assert!(fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(
+            fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"),
+            "fc = {fc}"
+        );
         // 左片段尾部淡出(出点前 0.5s)
         assert!(
             fc.contains("fade=t=out:st=0.500:d=0.500:alpha=1"),
@@ -3585,6 +3722,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         d.clips.push(Clip {
             id: "cpip".into(),
@@ -3797,7 +3936,10 @@ mod tests {
             .unwrap();
         // 新结构不再用 xfade;转场类型统一淡入淡出近似(方向效果留批次 4)
         assert!(!fc.contains("xfade="), "fc = {fc}");
-        assert!(fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"), "fc = {fc}");
+        assert!(
+            fc.contains("fade=t=in:st=0.500:d=0.500:alpha=1"),
+            "fc = {fc}"
+        );
     }
     #[test]
     fn trim_ts_no_trailing_zero() {
@@ -4085,6 +4227,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         d.clips[1].track_id = "v2".into();
         d.clips[1].start = 0;
@@ -4378,6 +4522,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         // 主轨 t1: 0-1s;上层 v2: 0.2-1.2s(重叠窗口)
         d.clips[1].track_id = "v2".into();
@@ -4563,12 +4709,14 @@ mod audio_offset_tests {
         doc.tracks.push(Track {
             id: "f1".into(),
             kind: TrackKind::File,
-            name: "文件轨 1".into(),
+            name: "图层 1".into(),
             locked: false,
             hidden: false,
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc.assets.push(Asset {
             id: "a1".into(),
@@ -4623,7 +4771,10 @@ mod audio_offset_tests {
     /// 时差 0:与既有行为一致(adelay=1000ms 即 start 定位,无裁头)。
     #[test]
     fn audio_offset_zero_unchanged() {
-        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(0.0), &ExportParams::default()));
+        let fc = audio_chain(&compile_ffmpeg_cmd(
+            &doc_with_pair(0.0),
+            &ExportParams::default(),
+        ));
         assert!(fc.contains("adelay=1000:all=1"), "fc = {fc}");
         assert!(!fc.contains("atrim=start=1."), "不应有额外裁头: {fc}");
     }
@@ -4631,14 +4782,20 @@ mod audio_offset_tests {
     /// 时差 +0.5(延后):adelay 增量(1000 → 1500ms)。
     #[test]
     fn audio_offset_positive_delays() {
-        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(0.5), &ExportParams::default()));
+        let fc = audio_chain(&compile_ffmpeg_cmd(
+            &doc_with_pair(0.5),
+            &ExportParams::default(),
+        ));
         assert!(fc.contains("adelay=1500:all=1"), "fc = {fc}");
     }
 
     /// 时差 -0.5(提前):素材窗口右移(atrim start +0.5)裁头,adelay 不变。
     #[test]
     fn audio_offset_negative_trims_head() {
-        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(-0.5), &ExportParams::default()));
+        let fc = audio_chain(&compile_ffmpeg_cmd(
+            &doc_with_pair(-0.5),
+            &ExportParams::default(),
+        ));
         assert!(fc.contains("atrim=start=0.500"), "应裁头 0.5s: {fc}");
         assert!(fc.contains("adelay=1000:all=1"), "fc = {fc}");
     }

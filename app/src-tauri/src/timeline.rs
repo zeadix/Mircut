@@ -1,13 +1,13 @@
 //! 时间轴:片段/轨道/标记/撤销重做/拖放/修剪命令(自动拆分自 main.rs)。
-use crate::state::{AppState, Inner, file_track_fixup_commands};
+use crate::state::{file_track_fixup_commands, AppState, Inner};
+use crate::util::uuid_of;
 use tauri::State;
 use veditor_core::{
     AddClip, AddMarker, AddTrack, Asset, AssetRef, Clip, Command, Compound, DetachAudio, Document,
     FreezeFrame, Marker, RemoveClip, RemoveMarker, RemoveTrack, ReorderTrack, RippleDelete,
-    SetClipAudio, SetSpeed, SetTrackFlags, SplitClip, Ticks, TextClipData, Track, TrackKind,
+    SetClipAudio, SetSpeed, SetTrackFlags, SplitClip, TextClipData, Ticks, Track, TrackKind,
 };
 use veditor_render::Renderer;
-use crate::util::uuid_of;
 
 #[tauri::command]
 pub(crate) fn get_document(state: State<'_, AppState>) -> Document {
@@ -83,7 +83,7 @@ pub(crate) fn add_clip(
     };
     let mut seq = inner.doc.clips.len();
     let clip = Clip {
-        id: next_clip_id(&inner.doc, &mut seq),
+        id: next_typed_clip_id(&inner.doc, "v", &mut seq),
         track_id: track_id.clone(),
         start: effective_start,
         duration,
@@ -184,7 +184,13 @@ fn split_siblings(doc: &Document, clip_id: &str) -> Vec<String> {
 
 /// 场景分割:按秒时间点从后往前切分,File 轨配对块同步分割。
 /// 提取为独立函数供单测(不需要真实 ffmpeg)。
-fn apply_scene_splits(inner: &mut crate::state::Inner, clip_id: &str, start: i64, duration: i64, times: Vec<f64>) -> usize {
+fn apply_scene_splits(
+    inner: &mut crate::state::Inner,
+    clip_id: &str,
+    start: i64,
+    duration: i64,
+    times: Vec<f64>,
+) -> usize {
     let tb_num = inner.doc.timebase.num as f64 / inner.doc.timebase.den as f64;
     let mut count = 0;
     for t in times.into_iter().rev() {
@@ -344,7 +350,11 @@ pub(crate) fn move_clip(
     }
     cmds.push(Box::new(cmd));
     if is_file_target {
-        cmds.extend(file_track_fixup_commands(&sim, &new_track_id, &[clip_id.clone()]));
+        cmds.extend(file_track_fixup_commands(
+            &sim,
+            &new_track_id,
+            &[clip_id.clone()],
+        ));
     }
     inner.exec(Box::new(veditor_core::Compound::new("移动片段", cmds)));
     if !is_file_target {
@@ -418,9 +428,33 @@ pub(crate) struct MoveEntry {
 /// 生成不与现有片段冲突的新片段 id。
 /// (旧实现 `len+n` 在删除片段后会撞号:两个 clip 同 id 导致前端配对/命中错乱)
 fn next_clip_id(doc: &veditor_core::Document, seq: &mut usize) -> String {
+    next_typed_clip_id(doc, "c", seq)
+}
+
+/// 片段类型(决定 ID 前缀与类型开关):
+/// 文字 t / 音频半区 a / 图片(定格)img / 视频 v。
+pub(crate) fn clip_type_prefix(clip: &veditor_core::Clip) -> &'static str {
+    if clip.text.is_some() {
+        "t"
+    } else if clip.lane == Some(veditor_core::Lane::Audio) {
+        "a"
+    } else if (clip.speed - 0.0).abs() < 1e-3 {
+        "img"
+    } else {
+        "v"
+    }
+}
+
+/// 类型前缀 + 递增数字的片段 ID(保证不重名):
+/// 视频 v3 / 音频 a5 / 图片 img2 / 文字 t1。
+pub(crate) fn next_typed_clip_id(
+    doc: &veditor_core::Document,
+    prefix: &str,
+    seq: &mut usize,
+) -> String {
     loop {
         *seq += 1;
-        let id = format!("c{}", seq);
+        let id = format!("{prefix}{seq}");
         if doc.clip(&id).is_none() {
             return id;
         }
@@ -447,12 +481,14 @@ fn fresh_file_track(doc: &veditor_core::Document, seq: &mut usize) -> Track {
     Track {
         id,
         kind: TrackKind::File,
-        name: format!("文件轨 {n}"),
+        name: format!("图层 {n}"),
         locked: false,
         hidden: false,
         muted: false,
         video_on: true,
         audio_on: true,
+        image_on: true,
+        text_on: true,
     }
 }
 
@@ -531,7 +567,7 @@ pub(crate) fn drop_text(start: Ticks, state: State<'_, AppState>) -> Result<Stri
         stretch: false,
     });
     let clip = Clip {
-        id: next_clip_id(&inner.doc, &mut seq),
+        id: next_typed_clip_id(&inner.doc, "t", &mut seq),
         track_id,
         start: start.max(0),
         duration: 3 * tps,
@@ -688,11 +724,19 @@ pub(crate) fn drop_asset(
             }
             fx
         },
-           text: None,
+        text: None,
     };
     let mut clips_to_add: Vec<Clip> = Vec::new();
     for l in &lanes_needed {
-        let id = next_clip_id(&inner.doc, &mut seq);
+        // 类型前缀:视频 v / 音频 a / 图片(定格)img
+        let prefix = if is_still {
+            "img"
+        } else if *l == veditor_core::Lane::Audio {
+            "a"
+        } else {
+            "v"
+        };
+        let id = next_typed_clip_id(&inner.doc, prefix, &mut seq);
         clips_to_add.push(mk(*l, id));
     }
 
@@ -750,7 +794,7 @@ pub(crate) fn duplicate_clip(
         None
     };
     let mut seq = inner.doc.clips.len();
-    let new_id = next_clip_id(&inner.doc, &mut seq);
+    let new_id = next_typed_clip_id(&inner.doc, clip_type_prefix(&src), &mut seq);
     let mut dup = Clip {
         id: new_id.clone(),
         track_id: track_id.clone(),
@@ -768,7 +812,7 @@ pub(crate) fn duplicate_clip(
     dup.asset.source_out = src.asset.source_out;
     let mut cmds: Vec<Box<dyn Command>> = vec![Box::new(AddClip { clip: dup })];
     if let Some(s) = sib {
-        let sib_id = next_clip_id(&inner.doc, &mut seq);
+        let sib_id = next_typed_clip_id(&inner.doc, clip_type_prefix(&s), &mut seq);
         let mut sib_dup = Clip {
             id: sib_id.clone(),
             track_id: track_id.clone(),
@@ -1092,6 +1136,8 @@ pub(crate) fn add_track(
         muted: false,
         video_on: true,
         audio_on: true,
+        image_on: true,
+        text_on: true,
     };
     inner.exec(Box::new(AddTrack {
         track: track.clone(),
@@ -1121,17 +1167,19 @@ pub(crate) fn set_track_flags(
     true
 }
 
-/// File 轨视频/音频合成开关(预览+导出同时生效;可撤销)。
+/// File 轨按元素类型的合成开关(视频/音频/图片/文字;预览+导出同时生效;可撤销)。
 #[tauri::command]
 pub(crate) fn set_track_media(
     track_id: String,
     video_on: Option<bool>,
     audio_on: Option<bool>,
+    image_on: Option<bool>,
+    text_on: Option<bool>,
     state: State<'_, AppState>,
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
-    inner.exec(Box::new(veditor_core::SetTrackMedia::new(
-        track_id, video_on, audio_on,
+    inner.exec(Box::new(veditor_core::SetTrackMedia::with_types(
+        track_id, video_on, audio_on, image_on, text_on,
     )));
     true
 }
@@ -1194,9 +1242,10 @@ pub(crate) fn freeze_frame(
 ) -> bool {
     let mut inner = state.inner.lock().unwrap();
     // 文字块定格会把文字内容剥掉(残留 text:// 怪块),音频块定格无意义
-    let bad = inner.doc.clip(&clip_id).is_some_and(|c| {
-        c.text.is_some() || c.lane == Some(veditor_core::Lane::Audio)
-    });
+    let bad = inner
+        .doc
+        .clip(&clip_id)
+        .is_some_and(|c| c.text.is_some() || c.lane == Some(veditor_core::Lane::Audio));
     if bad {
         return false;
     }
@@ -1209,26 +1258,31 @@ pub(crate) fn freeze_frame(
 #[cfg(test)]
 mod block_arrange_tests {
     use super::*;
-    use crate::state::{FileFixup, file_track_fixup};
+    use crate::state::{file_track_fixup, FileFixup};
 
     fn file_doc() -> Document {
         let mut doc = Document::default();
         doc.tracks.push(Track {
             id: "f1".into(),
             kind: TrackKind::File,
-            name: "文件轨 1".into(),
+            name: "图层 1".into(),
             locked: false,
             hidden: false,
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         doc
     }
 
     /// 添加双块(v+a)于 start,duration=90
     fn add_dual(doc: &mut Document, id: &str, asset: &str, start: i64) {
-        for (suffix, lane) in [("v", veditor_core::Lane::Video), ("a", veditor_core::Lane::Audio)] {
+        for (suffix, lane) in [
+            ("v", veditor_core::Lane::Video),
+            ("a", veditor_core::Lane::Audio),
+        ] {
             doc.clips.push(Clip {
                 id: format!("{id}{suffix}"),
                 track_id: "f1".into(),
@@ -1263,12 +1317,14 @@ mod block_arrange_tests {
         doc.tracks.push(Track {
             id: "f3".into(),
             kind: TrackKind::File,
-            name: "文件轨 3".into(),
+            name: "图层 3".into(),
             locked: false,
             hidden: false,
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         let mut seq = doc.tracks.len(); // 旧实现:len+1 = 3 → "f3" 撞号
         let id = fresh_track_id(&doc, "f", &mut seq);
@@ -1285,7 +1341,10 @@ mod block_arrange_tests {
         add_dual(&mut doc, "A", "a1", 0);
         // 插入点 0:块 A(视频+音频)整体右移 90
         let shifts = block_insert_push(&doc, "f1", 0, 90);
-        assert_eq!(sorted(shifts), sorted(vec![("Av".into(), 90), ("Aa".into(), 90)]));
+        assert_eq!(
+            sorted(shifts),
+            sorted(vec![("Av".into(), 90), ("Aa".into(), 90)])
+        );
     }
 
     #[test]
@@ -1308,9 +1367,12 @@ mod block_arrange_tests {
         assert_eq!(
             sorted(shifts),
             sorted(vec![
-                ("Av".into(), 90), ("Aa".into(), 90),
-                ("Bv".into(), 180), ("Ba".into(), 180),
-                ("Cv".into(), 270), ("Ca".into(), 270),
+                ("Av".into(), 90),
+                ("Aa".into(), 90),
+                ("Bv".into(), 180),
+                ("Ba".into(), 180),
+                ("Cv".into(), 270),
+                ("Ca".into(), 270),
             ])
         );
     }
@@ -1323,11 +1385,19 @@ mod block_arrange_tests {
         add_dual(&mut doc, "A", "a1", 0);
         // 人为错位:音频起点/时长漂移
         doc.clips.iter_mut().find(|c| c.id == "Aa").unwrap().start = 5;
-        doc.clips.iter_mut().find(|c| c.id == "Aa").unwrap().duration = 80;
+        doc.clips
+            .iter_mut()
+            .find(|c| c.id == "Aa")
+            .unwrap()
+            .duration = 80;
         let fixups = file_track_fixup(&mut doc, "f1", &[]);
         // 音频对齐视频:start=0, duration=90
-        assert!(fixups.iter().any(|f| matches!(f, FileFixup::Move { id, start: 0 } if id == "Aa")));
-        assert!(fixups.iter().any(|f| matches!(f, FileFixup::Trim { id, duration: 90, .. } if id == "Aa")));
+        assert!(fixups
+            .iter()
+            .any(|f| matches!(f, FileFixup::Move { id, start: 0 } if id == "Aa")));
+        assert!(fixups
+            .iter()
+            .any(|f| matches!(f, FileFixup::Trim { id, duration: 90, .. } if id == "Aa")));
         let a = doc.clip("Aa").unwrap();
         assert_eq!(a.start, 0);
         assert_eq!(a.duration, 90);
@@ -1344,9 +1414,12 @@ mod block_arrange_tests {
         assert_eq!(doc.clip("Ba").unwrap().start, 90);
         assert_eq!(doc.clip("Ba").unwrap().duration, 90);
         // 应用后无重叠
-        let mut vs: Vec<(i64, i64)> = doc.clips.iter()
+        let mut vs: Vec<(i64, i64)> = doc
+            .clips
+            .iter()
             .filter(|c| c.lane == Some(veditor_core::Lane::Video))
-            .map(|c| (c.start, c.start + c.duration)).collect();
+            .map(|c| (c.start, c.start + c.duration))
+            .collect();
         vs.sort();
         for w in vs.windows(2) {
             assert!(w[0].1 <= w[1].0, "视频 lane 重叠: {vs:?}");
@@ -1390,12 +1463,14 @@ mod inspector_target_tests {
             inner.doc.tracks.push(Track {
                 id: "f1".into(),
                 kind: TrackKind::File,
-                name: "文件轨 1".into(),
+                name: "图层 1".into(),
                 locked: false,
                 hidden: false,
                 muted: false,
                 video_on: true,
                 audio_on: true,
+                image_on: true,
+                text_on: true,
             });
             inner.doc.assets.push(Asset {
                 id: "a1".into(),
@@ -1474,8 +1549,18 @@ mod inspector_target_tests {
             let mut doc = std::mem::take(&mut inner.doc);
             inner.stack.undo(&mut doc);
             inner.doc = doc;
-            let v2 = inner.doc.clips.iter().filter(|c| c.lane == Some(Lane::Video)).count();
-            let a2 = inner.doc.clips.iter().filter(|c| c.lane == Some(Lane::Audio)).count();
+            let v2 = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Video))
+                .count();
+            let a2 = inner
+                .doc
+                .clips
+                .iter()
+                .filter(|c| c.lane == Some(Lane::Audio))
+                .count();
             assert_eq!((v2, a2), (2, 2), "撤销一刀后回到 2+2");
         }
     }

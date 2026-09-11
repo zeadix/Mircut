@@ -31,6 +31,8 @@ fn bench_doc(n_tracks: usize, clips_per_track: usize) -> Document {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         for i in 0..clips_per_track {
             doc.clips.push(Clip {

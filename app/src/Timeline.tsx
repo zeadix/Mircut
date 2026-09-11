@@ -4,7 +4,7 @@ import { snapToEdges, cascadePushBlocks, buildFileBlocks } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
-import { Lock, LockOpen, Eye, EyeSlash, SpeakerHigh, SpeakerLow, SpeakerSlash, Video, VideoCameraSlash, X } from "@phosphor-icons/react";
+import { Lock, LockOpen, Eye, EyeSlash, Image as ImageIcon, SpeakerHigh, SpeakerLow, SpeakerSlash, TextAa, Video, VideoCameraSlash, X } from "@phosphor-icons/react";
 
 interface Props {
   doc: Document;
@@ -38,7 +38,7 @@ interface Props {
   onClipTrim?: (clipId: string, edge: "left" | "right", newStart: number, newDuration: number, ripple: boolean) => void;
   onToggleTrack?: (trackId: string, flag: "hidden" | "muted" | "locked") => void;
   /// File 轨视频/音频合成开关(预览+导出生效)。
-  onToggleTrackMedia?: (trackId: string, which: "video" | "audio") => void;
+  onToggleTrackMedia?: (trackId: string, which: "video" | "audio" | "image" | "text") => void;
   /// 时间轴左上角显示屏蔽(仅影响时间轴显示,不改合成)。
   onToggleLaneView?: (lane: "video" | "audio", on: boolean) => void;
   waveforms?: Record<string, number[]>;
@@ -87,9 +87,9 @@ const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 /// 音量包络显示上限(增益 >1.5 钳到顶部)。
 const ENV_MAX = 1.5;
 /// File 轨道三行高度
-const TIME_ROW_H = 20;  // 时间行高度
-const VIDEO_ROW_H = 60; // 视频行高度
-const AUDIO_ROW_H = 40; // 音频行高度
+const TIME_ROW_H = 12;  // 时间行高度(层高整体 -40%:120 → 72)
+const VIDEO_ROW_H = 36; // 视频行高度
+const AUDIO_ROW_H = 24; // 音频行高度
 
 type DragSession =
   | { kind: "move"; clipId: string; startX: number; origStart: number; grabTicks: number; fromRow: number; rightBtn: boolean }
@@ -725,6 +725,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       ctx.fillStyle = "rgba(128, 128, 128, 0.85)";
       ctx.font = "9px sans-serif";
       ctx.fillText("♪×", x + cw - 22, videoTop + 12);
+    }
+
+    // 块左下角:元素 ID(类型前缀+数字;与属性面板标题一致)
+    if (cw > 26) {
+      ctx.fillStyle = "rgba(30, 33, 40, 0.78)";
+      ctx.font = "9px sans-serif";
+      ctx.fillText(clip.id, x + 4, timeTop + totalH - 3);
     }
 
     // 5. 选中时绘制调整手柄(黄色,修剪/移动触发区提示)
@@ -1460,8 +1467,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     for (const c of candidates) {
       // 合成开关关闭的 lane 不可命中(与视觉隐藏一致)
       const cTrack = docIndex.trackById.get(c.track_id);
-      if (cTrack && c.lane === "Video" && cTrack.video_on === false) continue;
-      if (cTrack && c.lane === "Audio" && cTrack.audio_on === false) continue;
+      if (cTrack) {
+        // 按元素类型门控:关闭的类型不可命中(与视觉/合成一致)
+        if (c.text && cTrack.text_on === false) continue;
+        if (c.lane === "Audio" && cTrack.audio_on === false) continue;
+        if (c.lane !== "Audio" && !c.text && (c.speed ?? 1) === 0 && cTrack.image_on === false) continue;
+        if (c.lane !== "Audio" && !c.text && (c.speed ?? 1) !== 0 && cTrack.video_on === false) continue;
+      }
       if (laneFilter !== undefined) {
         const cLane = c.lane ?? null;
         if (laneFilter === "__TOP__") {
@@ -2467,26 +2479,41 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                       <div style={{ width: 20, flexShrink: 0 }} />
                       <div style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}>
                         <span style={{ fontSize: 9, color: "var(--text-dim)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          音视频
+                          共{(docIndex.fileBlocks.get(track.id) ?? []).length}个元素
                         </span>
                       </div>
-                      {/* 视频合成开关:关闭 = 只合成音频 */}
+                      {/* 按元素类型的合成开关:关闭的类型不在预览显示/不导出 */}
                       <button
                         className={`chip${track.video_on !== false ? " on" : ""}`}
                         style={{ alignSelf: "center" }}
-                        title={track.video_on !== false ? "视频参与合成(点击关闭:只合成音频)" : "视频已关闭(点击开启)"}
+                        title={track.video_on !== false ? "视频元素参与合成(点击关闭)" : "视频元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "video")}
                       >
                         {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
                       </button>
-                      {/* 音频合成开关:关闭 = 只合成视频 */}
                       <button
                         className={`chip${track.audio_on !== false ? " on" : ""}`}
                         style={{ alignSelf: "center" }}
-                        title={track.audio_on !== false ? "音频参与合成(点击关闭:只合成视频)" : "音频已关闭(点击开启)"}
+                        title={track.audio_on !== false ? "音频元素参与合成(点击关闭)" : "音频元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "audio")}
                       >
                         <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
+                      </button>
+                      <button
+                        className={`chip${track.image_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center" }}
+                        title={track.image_on !== false ? "图片元素参与合成(点击关闭)" : "图片元素已关闭(点击开启)"}
+                        onClick={() => onToggleTrackMedia?.(track.id, "image")}
+                      >
+                        <ImageIcon size={12} weight={track.image_on !== false ? "fill" : "light"} />
+                      </button>
+                      <button
+                        className={`chip${track.text_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center" }}
+                        title={track.text_on !== false ? "文字元素参与合成(点击关闭)" : "文字元素已关闭(点击开启)"}
+                        onClick={() => onToggleTrackMedia?.(track.id, "text")}
+                      >
+                        <TextAa size={12} weight={track.text_on !== false ? "fill" : "light"} />
                       </button>
                     </div>
                   );

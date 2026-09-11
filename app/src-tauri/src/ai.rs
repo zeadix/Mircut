@@ -46,14 +46,24 @@ pub(crate) fn tts_synthesize(
                 .iter()
                 .flat_map(|h| {
                     [
-                        std::path::PathBuf::from(h).join(".veditor/voices").join(format!("{v}.onnx")),
-                        std::path::PathBuf::from(h).join(".veditor/models").join(format!("{v}.onnx")),
+                        std::path::PathBuf::from(h)
+                            .join(".veditor/voices")
+                            .join(format!("{v}.onnx")),
+                        std::path::PathBuf::from(h)
+                            .join(".veditor/models")
+                            .join(format!("{v}.onnx")),
                     ]
                 })
                 .collect::<Vec<_>>();
-            candidates.into_iter().find(|p| p.exists()).map(Some).unwrap_or_else(|| {
-                Some(std::path::PathBuf::from(format!("~/.veditor/voices/{v}.onnx")))
-            })
+            candidates
+                .into_iter()
+                .find(|p| p.exists())
+                .map(Some)
+                .unwrap_or_else(|| {
+                    Some(std::path::PathBuf::from(format!(
+                        "~/.veditor/voices/{v}.onnx"
+                    )))
+                })
         }
         None => None,
     };

@@ -52,28 +52,31 @@ pub(crate) fn export_video(
             .clone()
             .unwrap_or_else(|| inner.doc.clone());
         let vcodec = req.vcodec.unwrap_or_else(|| "libx264".into());
-        let format = req
-            .format
-            .clone()
-            .unwrap_or_else(|| {
-                PathBuf::from(&req.out_path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.to_ascii_lowercase())
-                    .unwrap_or_else(|| "mp4".into())
-            });
+        let format = req.format.clone().unwrap_or_else(|| {
+            PathBuf::from(&req.out_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase())
+                .unwrap_or_else(|| "mp4".into())
+        });
         veditor_export::validate_format(&vcodec, &format)?;
         // 导出前预检:编码器试编不可用直接报错(不渲染到一半才失败)
         if !req.audio_only {
             ensure_encoder_usable(&vcodec)?;
         }
         // 质量 1-100 -> 编码数值(q50 ≈ crf20;显式 crf 兼容旧调用)
-        let crf = req.crf.unwrap_or_else(|| veditor_export::quality_to_value(req.quality));
+        let crf = req
+            .crf
+            .unwrap_or_else(|| veditor_export::quality_to_value(req.quality));
         // 合成分辨率:请求未显式指定(0)时用工程画布尺寸 —— 预览分辨率即导出分辨率
         let params = veditor_export::ExportParams {
             out_path: PathBuf::from(&req.out_path),
             width: if req.width > 0 { req.width } else { doc.width },
-            height: if req.height > 0 { req.height } else { doc.height },
+            height: if req.height > 0 {
+                req.height
+            } else {
+                doc.height
+            },
             fps: req.fps,
             crf,
             vcodec,
@@ -214,9 +217,7 @@ fn vaapi_render_node() -> Option<String> {
         })
         .collect();
     nodes.sort();
-    nodes
-        .first()
-        .map(|p| p.to_string_lossy().to_string())
+    nodes.first().map(|p| p.to_string_lossy().to_string())
 }
 
 /// 试编一帧的完整 ffmpeg 参数(不含 "ffmpeg" 本身)。
@@ -311,10 +312,7 @@ pub(crate) fn ensure_encoder_usable(vcodec: &str) -> Result<(), String> {
         Some(ok) => ok,
         None => {
             let ok = probe_encoder(vcodec);
-            probe_cache()
-                .lock()
-                .unwrap()
-                .insert(vcodec.to_string(), ok);
+            probe_cache().lock().unwrap().insert(vcodec.to_string(), ok);
             ok
         }
     };
@@ -374,9 +372,8 @@ pub(crate) fn detect_encoders() -> DetectedEncoders {
         .map(|h| h.join().unwrap_or_else(|_| ("?".into(), false)))
         .collect();
     cache_put(&results);
-    let (usable, unavailable): (Vec<(String, bool)>, Vec<(String, bool)>) = results
-        .into_iter()
-        .partition(|(_, ok)| *ok);
+    let (usable, unavailable): (Vec<(String, bool)>, Vec<(String, bool)>) =
+        results.into_iter().partition(|(_, ok)| *ok);
     let is_hw = |id: &str| {
         id.ends_with("nvenc") || id.ends_with("qsv") || id.ends_with("vaapi") || id.ends_with("amf")
     };
@@ -420,7 +417,9 @@ pub(crate) fn preview_export_cmd(req: ExportRequest, state: State<'_, AppState>)
         height: req.height,
         fps: req.fps,
         // 预览与实际导出同源:此前丢弃 vcodec 导致预览命令失真(bug 修复)
-        crf: req.crf.unwrap_or_else(|| veditor_export::quality_to_value(req.quality)),
+        crf: req
+            .crf
+            .unwrap_or_else(|| veditor_export::quality_to_value(req.quality)),
         vcodec,
         format: Some(format),
         audio_only: req.audio_only,

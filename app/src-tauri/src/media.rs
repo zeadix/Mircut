@@ -87,11 +87,7 @@ impl PreviewFx {
 
 /// 层帧预览:fx(抠像/调色/LUT)直接烧进帧,预览即所见;输出 PNG(抠像保留 alpha)。
 #[tauri::command(async)]
-pub(crate) fn preview_asset_frame(
-    path: String,
-    secs: f64,
-    fx: Option<PreviewFx>,
-) -> SeekResult {
+pub(crate) fn preview_asset_frame(path: String, secs: f64, fx: Option<PreviewFx>) -> SeekResult {
     let fx = fx.unwrap_or_default();
     let dir = std::env::temp_dir().join("veditor-render-cache/asset");
     let _ = std::fs::create_dir_all(&dir);

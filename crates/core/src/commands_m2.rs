@@ -204,7 +204,9 @@ impl Command for SetSpeed {
         // 冻结片段(speed=0,时长任意)与同速设置不缩放;其余按比例缩放
         let rescale = c.speed > 0.0 && (c.speed - self.speed).abs() > 1e-9;
         let new_duration = if rescale {
-            ((c.duration as f64) * c.speed / self.speed).round().max(1.0) as i64
+            ((c.duration as f64) * c.speed / self.speed)
+                .round()
+                .max(1.0) as i64
         } else {
             c.duration
         };
@@ -355,7 +357,9 @@ pub struct SetTrackMedia {
     /// None = 不变。
     pub video_on: Option<bool>,
     pub audio_on: Option<bool>,
-    old: Option<(bool, bool)>,
+    pub image_on: Option<bool>,
+    pub text_on: Option<bool>,
+    old: Option<(bool, bool, bool, bool)>,
 }
 
 impl SetTrackMedia {
@@ -364,10 +368,23 @@ impl SetTrackMedia {
         video_on: Option<bool>,
         audio_on: Option<bool>,
     ) -> Self {
+        Self::with_types(track_id, video_on, audio_on, None, None)
+    }
+
+    /// 全类型构造(视频/音频/图片/文字;None = 不变)。
+    pub fn with_types(
+        track_id: impl Into<String>,
+        video_on: Option<bool>,
+        audio_on: Option<bool>,
+        image_on: Option<bool>,
+        text_on: Option<bool>,
+    ) -> Self {
         Self {
             track_id: track_id.into(),
             video_on,
             audio_on,
+            image_on,
+            text_on,
             old: None,
         }
     }
@@ -379,20 +396,28 @@ impl Command for SetTrackMedia {
     }
     fn apply(&mut self, doc: &mut Document) {
         if let Some(t) = doc.tracks.iter_mut().find(|t| t.id == self.track_id) {
-            self.old = Some((t.video_on, t.audio_on));
+            self.old = Some((t.video_on, t.audio_on, t.image_on, t.text_on));
             if let Some(v) = self.video_on {
                 t.video_on = v;
             }
             if let Some(a) = self.audio_on {
                 t.audio_on = a;
             }
+            if let Some(i) = self.image_on {
+                t.image_on = i;
+            }
+            if let Some(x) = self.text_on {
+                t.text_on = x;
+            }
         }
     }
     fn undo(&mut self, doc: &mut Document) {
-        if let Some((v, a)) = self.old.take() {
+        if let Some((v, a, i, x)) = self.old.take() {
             if let Some(t) = doc.tracks.iter_mut().find(|t| t.id == self.track_id) {
                 t.video_on = v;
                 t.audio_on = a;
+                t.image_on = i;
+                t.text_on = x;
             }
         }
     }
@@ -1009,6 +1034,8 @@ mod tests {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         };
         stack.execute(&mut doc, Box::new(AddTrack { track }));
         stack.execute(
@@ -1085,12 +1112,14 @@ mod tests {
         doc.tracks.push(Track {
             id: "f1".into(),
             kind: TrackKind::File,
-            name: "文件轨".into(),
+            name: "图层".into(),
             locked: false,
             hidden: false,
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         });
         let mut stack = CommandStack::new();
         let mut v = clip("c1", "f1", 0, 300);

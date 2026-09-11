@@ -2,9 +2,9 @@
 //! 与 plugin.json 滤镜包互补:素材包面向"素材条目"(贴纸/模板),插件面向"预设参数"。
 
 use crate::state::AppState;
+use crate::util::uuid_of;
 use tauri::State;
 use veditor_core::{AddClip, AssetRef, Clip, Lane, SetSubtitleStyle, SubtitleStyle};
-use crate::util::uuid_of;
 
 /// 素材包清单(veditor-pack.json 顶层)。
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -261,7 +261,9 @@ pub(crate) fn apply_pack_item(
             let path_str = path.to_string_lossy().to_string();
             let (asset_id, dims) = crate::migrate::ensure_image_asset(&mut inner.doc, &path_str);
             let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "贴纸");
-            let rect_h = dims.map(|(aw, ah)| 0.3 * ah as f64 / aw as f64).unwrap_or(0.3);
+            let rect_h = dims
+                .map(|(aw, ah)| 0.3 * ah as f64 / aw as f64)
+                .unwrap_or(0.3);
             let mut fx = veditor_core::ClipFx::default();
             fx.rect = Some(veditor_core::FxRect {
                 x: 0.5,
@@ -271,7 +273,7 @@ pub(crate) fn apply_pack_item(
                 stretch: false,
             });
             let clip = Clip {
-                id: format!("stc{}", uuid_of(&format!("{}@{}", file, t))),
+                id: format!("img{}", uuid_of(&format!("{}@{}", file, t))),
                 track_id,
                 start: t,
                 duration: dur.max(1),
@@ -299,7 +301,10 @@ pub(crate) fn apply_pack_item(
                 .and_then(|s| s.as_str())
                 .unwrap_or("标题文字")
                 .to_string();
-            let font_size = style.get("font_size").and_then(|v| v.as_f64()).unwrap_or(64.0);
+            let font_size = style
+                .get("font_size")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(64.0);
             let color = style
                 .get("color")
                 .and_then(|v| v.as_str())
@@ -335,7 +340,7 @@ pub(crate) fn apply_pack_item(
                 dur_secs: 0.5,
             });
             let clip = Clip {
-                id: format!("txt{}", uuid_of(&format!("{}-{}", pack_id, t))),
+                id: format!("t{}", uuid_of(&format!("{}-{}", pack_id, t))),
                 track_id,
                 start: t,
                 duration: dur.max(1),
@@ -360,8 +365,8 @@ pub(crate) fn apply_pack_item(
                     bg_color: None,
                     align_h: "center".into(),
                     align_v: "middle".into(),
-                font: String::new(),
-                italic: false,
+                    font: String::new(),
+                    italic: false,
                 }),
             };
             inner.exec(Box::new(AddClip { clip }));

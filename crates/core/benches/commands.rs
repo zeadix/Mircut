@@ -19,6 +19,8 @@ fn bench_doc(n_clips: usize) -> Document {
         muted: false,
         video_on: true,
         audio_on: true,
+        image_on: true,
+        text_on: true,
     });
     doc.assets.push(Asset {
         id: "a1".into(),

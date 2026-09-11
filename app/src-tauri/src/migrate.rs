@@ -64,7 +64,7 @@ fn migrate_text_overlays(doc: &mut Document) {
         };
         let _ = tps;
         doc.clips.push(Clip {
-            id: format!("txt{}", uuid_of(&format!("{}@{}", o.id, o.start))),
+            id: format!("t{}", uuid_of(&format!("{}@{}", o.id, o.start))),
             track_id: track_id.clone(),
             start: o.start,
             duration: (o.end - o.start).max(1),
@@ -117,6 +117,8 @@ pub(crate) fn ensure_overlay_track(doc: &mut Document, name: &str) -> String {
             muted: false,
             video_on: true,
             audio_on: true,
+            image_on: true,
+            text_on: true,
         },
     );
     id
@@ -188,7 +190,7 @@ fn migrate_image_overlays(doc: &mut Document) {
             };
         }
         doc.clips.push(Clip {
-            id: format!("stc{}", uuid_of(&format!("{}@{}", o.id, o.start))),
+            id: format!("img{}", uuid_of(&format!("{}@{}", o.id, o.start))),
             track_id: track_id.clone(),
             start: o.start,
             duration: (o.end - o.start).max(1),

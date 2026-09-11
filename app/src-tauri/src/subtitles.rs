@@ -15,8 +15,8 @@ pub(crate) struct AsrResult {
 pub(crate) fn transcribe(path: String, state: State<'_, AppState>) -> Result<AsrResult, String> {
     // 优先 whisper-cli:自动选用已下载的 ggml 模型(small 质量优先),
     // 都没有则降级静音切分
-    let models_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join(".veditor/models");
+    let models_dir =
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".veditor/models");
     let model = ["ggml-small.bin", "ggml-base.bin"]
         .iter()
         .map(|n| models_dir.join(n))

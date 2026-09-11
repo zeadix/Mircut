@@ -487,7 +487,26 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
 
   return (
     <div style={{ padding: 12, fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-      <h3 style={{ margin: 0, fontSize: 13 }}>{clip.id}</h3>
+      <div
+        style={{
+          margin: 0,
+          fontSize: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+        }}
+        title={`${clip.id} · ${doc.tracks.find((t) => t.id === clip.track_id)?.name ?? clip.track_id} · 起点 ${(clip.start / tps).toFixed(2)}s`}
+      >
+        <span style={{ fontWeight: 700 }}>{clip.id}</span>
+        <span style={{ color: "var(--text-dim)" }}>·</span>
+        <span style={{ color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {doc.tracks.find((t) => t.id === clip.track_id)?.name ?? clip.track_id}
+        </span>
+        <span style={{ color: "var(--text-dim)" }}>·</span>
+        <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>起点 {(clip.start / tps).toFixed(2)}s</span>
+      </div>
 
       {showVideoOnly && (
       <fieldset style={{ borderColor: "var(--border)" }}>

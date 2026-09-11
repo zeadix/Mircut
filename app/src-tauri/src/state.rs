@@ -62,8 +62,15 @@ pub(crate) fn push_recent(path: &str) {
 /// File 轨块级修正项。
 #[derive(Debug, Clone)]
 pub(crate) enum FileFixup {
-    Move { id: String, start: i64 },
-    Trim { id: String, start: i64, duration: i64 },
+    Move {
+        id: String,
+        start: i64,
+    },
+    Trim {
+        id: String,
+        start: i64,
+        duration: i64,
+    },
 }
 
 /// File 轨块级修正(就地应用到 doc):
@@ -119,7 +126,10 @@ pub(crate) fn file_track_fixup(
             if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
                 a.start = v_start;
             }
-            fixups.push(FileFixup::Move { id: aid.clone(), start: v_start });
+            fixups.push(FileFixup::Move {
+                id: aid.clone(),
+                start: v_start,
+            });
         }
         if a_dur != v_dur {
             if let Some(a) = doc.clips.iter_mut().find(|c| c.id == *aid) {
@@ -157,9 +167,11 @@ pub(crate) fn file_track_fixup(
         blocks.push((Some(vid.clone()), aid, v_start, v_dur));
     }
     // 纯音频块:未被任何视频配对占用的音频 clip(视频块列表之外的独立块)
-    for a in doc.clips.iter().filter(|c| {
-        c.track_id == track_id && c.lane == Some(veditor_core::Lane::Audio)
-    }) {
+    for a in doc
+        .clips
+        .iter()
+        .filter(|c| c.track_id == track_id && c.lane == Some(veditor_core::Lane::Audio))
+    {
         if !used_audio.contains(&a.id) {
             blocks.push((None, Some(a.id.clone()), a.start, a.duration));
         }
@@ -199,7 +211,9 @@ pub(crate) fn file_track_fixup(
         }
         let ns = (*st).max(placed_end);
         if ns != *st {
-            if let Some(v) = vid.as_deref().and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
+            if let Some(v) = vid
+                .as_deref()
+                .and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
             {
                 v.start = ns;
                 fixups.push(FileFixup::Move {
@@ -207,7 +221,9 @@ pub(crate) fn file_track_fixup(
                     start: ns,
                 });
             }
-            if let Some(a) = aid.as_deref().and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
+            if let Some(a) = aid
+                .as_deref()
+                .and_then(|id| doc.clips.iter_mut().find(|c| c.id == id))
             {
                 a.start = ns;
                 fixups.push(FileFixup::Move {
@@ -237,12 +253,13 @@ pub(crate) fn file_track_fixup_commands(
                 Box::new(veditor_core::MoveClip::new(id, start, track_id.to_string()))
                     as Box<dyn Command>
             }
-            FileFixup::Trim { id, start, duration } => Box::new(veditor_core::TrimClip::new(
+            FileFixup::Trim {
                 id,
                 start,
                 duration,
-                0.0,
-            )) as Box<dyn Command>,
+            } => {
+                Box::new(veditor_core::TrimClip::new(id, start, duration, 0.0)) as Box<dyn Command>
+            }
         })
         .collect()
 }
@@ -250,7 +267,8 @@ pub(crate) fn file_track_fixup_commands(
 impl Inner {
     /// 磁吸推挤:对指定轨道消重叠(moved 保位),生成追加 MoveClip 命令。
     /// 返回是否有变更。
-    pub(crate) fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {        // File 轨按 lane 分别调度(视频块/音频块各自时序独立)
+    pub(crate) fn schedule_track(&mut self, track_id: &str, moved_id: Option<&str>) -> bool {
+        // File 轨按 lane 分别调度(视频块/音频块各自时序独立)
         let moved_lane = moved_id
             .and_then(|id| self.doc.clip(id))
             .and_then(|c| c.lane);
@@ -416,12 +434,14 @@ impl Inner {
                 self.doc.tracks.push(Track {
                     id: String::from("f1"),
                     kind: TrackKind::File,
-                    name: "文件轨 1".into(),
+                    name: "图层 1".into(),
                     locked: false,
                     hidden: false,
                     muted: false,
                     video_on: true,
                     audio_on: true,
+                    image_on: true,
+                    text_on: true,
                 });
             }
             let r = ProxyRenderer::new(
