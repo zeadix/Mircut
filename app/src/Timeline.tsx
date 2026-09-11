@@ -87,7 +87,7 @@ const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 /// 音量包络显示上限(增益 >1.5 钳到顶部)。
 const ENV_MAX = 1.5;
 /// File 轨道三行高度
-const TIME_ROW_H = 50;  // 层标题行高度(固定,不随轨高滑条)
+const TIME_ROW_H = 30;  // 层标题行高度(固定,不随轨高滑条)
 const VIDEO_ROW_H = 36; // 视频行高度
 const AUDIO_ROW_H = 24; // 音频行高度
 

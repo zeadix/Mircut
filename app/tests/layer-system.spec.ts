@@ -125,7 +125,7 @@ test("类型开关:关闭后该类块置灰、预览不合成、不可命中", a
     const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
     const ctx = canvas.getContext("2d")!;
     // 图片块中心 x≈65, 内容行中心 y≈42
-    const img = ctx.getImageData(60, 60, 12, 24);
+    const img = ctx.getImageData(60, 40, 12, 24);
     let grayish = 0;
     for (let i = 0; i < img.data.length; i += 4) {
       const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -139,7 +139,7 @@ test("类型开关:关闭后该类块置灰、预览不合成、不可命中", a
   // 不可命中:点击图片块位置不会选中它(选中态仍是视频块或无选中)
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
-  await page.mouse.click(cb!.x + 65, cb!.y + 80);
+  await page.mouse.click(cb!.x + 65, cb!.y + 60);
   await page.waitForTimeout(300);
   const selected = await page.evaluate(() => {
     const d = window.__veditorMock.doc;

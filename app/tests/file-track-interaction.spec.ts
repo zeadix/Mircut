@@ -50,8 +50,8 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
 
   // File 轨几何(未折叠):时间行[0,20) + 单一内容行[20,120)
   // 纯音频块波形铺满内容行;包络铺满内容行(ENV_MAX=1.5):
-  // 层高 110(标题 50+内容 60):envLaneTop=52,envLaneH=56
-  // v=1 → envY = 52+56-3-(1/1.5)×48 ≈ 73;v=0.8 → ≈ 79
+  // 层高 90(标题 30+内容 60):envLaneTop=32,envLaneH=56
+  // v=1 → envY = 32+56-3-(1/1.5)×48 ≈ 53;v=0.8 → ≈ 59
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
 
@@ -60,7 +60,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     page.evaluate(() => {
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
-      const img = ctx.getImageData(12, 70, 24, 8);
+      const img = ctx.getImageData(12, 50, 24, 8);
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -76,7 +76,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   const wavePixels = await page.evaluate(() => {
     const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
     const ctx = canvas.getContext("2d")!;
-    const img = ctx.getImageData(10, 54, 30, 50);
+    const img = ctx.getImageData(10, 34, 30, 50);
     let n = 0;
     for (let i = 0; i < img.data.length; i += 4) {
       const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -92,7 +92,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   await page.waitForTimeout(200);
   // 编辑模式下包络线出现
   expect(await whiteLinePixels(), "编辑模式应显示音量节点曲线").toBeGreaterThan(5);
-  const envY = box!.y + 73;
+  const envY = box!.y + 53;
   await page.mouse.move(midX, envY);
   await page.mouse.down();
   await page.mouse.move(midX + 8, envY + 10, { steps: 5 });
@@ -113,9 +113,9 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(await whiteLinePixels(), "退出编辑模式包络线应消失").toBe(0);
 
   // ===== 2. 音频区拖拽整体移动:在包络线之外(y=110)按下拖动 =====
-  await page.mouse.move(midX, box!.y + 95);
+  await page.mouse.move(midX, box!.y + 78);
   await page.mouse.down();
-  await page.mouse.move(midX + 60, box!.y + 95, { steps: 8 });
+  await page.mouse.move(midX + 60, box!.y + 78, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -178,9 +178,9 @@ test("回归:抓音频区拖到视频行,lane 保持 Audio 且配对同行", asy
   expect(box).toBeTruthy();
 
   // 从音频行(y=110)抓起,拖到视频行(y=50)释放 —— lane 不得被改成 Video
-  await page.mouse.move(box!.x + 22, box!.y + 95);
+  await page.mouse.move(box!.x + 22, box!.y + 78);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 100, box!.y + 80, { steps: 8 });
+  await page.mouse.move(box!.x + 100, box!.y + 60, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
 
@@ -251,7 +251,7 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
 
   // 节点:t=30 → x=15px;v=0.8 → envY(0.8, 14, 56) ≈ 41(canvas 内)
   const nodeX = box!.x + 15;
-  const nodeY = box!.y + 79;
+  const nodeY = box!.y + 59;
   await page.mouse.move(nodeX, nodeY);
   await page.mouse.down();
   await page.mouse.move(nodeX, nodeY + 12, { steps: 5 });
@@ -304,7 +304,7 @@ test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ pa
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
       // 选中手柄:块左缘 x[0..6],y≈timeTop+totalH/2±6 = [54..66]
-      const img = ctx.getImageData(0, 73, 8, 14);
+      const img = ctx.getImageData(0, 53, 8, 14);
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
@@ -315,7 +315,7 @@ test("回归:点击音频行即选中整个文件块(黄色手柄)", async ({ pa
 
   const before = await yellowPixels();
   // 点击音频行中部(x=22 在块主体,y=110 在音频行)
-  await page.mouse.click(box!.x + 22, box!.y + 95);
+  await page.mouse.click(box!.x + 22, box!.y + 78);
   await page.waitForTimeout(300);
   const after = await yellowPixels();
 
@@ -376,9 +376,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 48, box!.y + 80);
+  await page.mouse.move(box!.x + 48, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 18, box!.y + 80, { steps: 8 });
+  await page.mouse.move(box!.x + 18, box!.y + 60, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   // 边缘拖拽绝不允许变成移动
@@ -408,9 +408,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 45, box!.y + 80);
+  await page.mouse.move(box!.x + 45, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 25, box!.y + 80, { steps: 6 });
+  await page.mouse.move(box!.x + 25, box!.y + 60, { steps: 6 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const trimsE = await page.evaluate(() => {
@@ -427,9 +427,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 43, box!.y + 80);
+  await page.mouse.move(box!.x + 43, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 30, box!.y + 80, { steps: 5 });
+  await page.mouse.move(box!.x + 30, box!.y + 60, { steps: 5 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const trimsO = await page.evaluate(() => {
@@ -448,9 +448,9 @@ test("回归:左缘向左拖=向左修剪(非移动);右缘同理", async ({ pag
   await page.evaluate(() => {
     (window as unknown as { __calls?: unknown[] }).__calls!.length = 0;
   });
-  await page.mouse.move(box!.x + 87, box!.y + 80);
+  await page.mouse.move(box!.x + 87, box!.y + 60);
   await page.mouse.down();
-  await page.mouse.move(box!.x + 117, box!.y + 80, { steps: 8 });
+  await page.mouse.move(box!.x + 117, box!.y + 60, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(400);
   const movesR = await page.evaluate(() => {
