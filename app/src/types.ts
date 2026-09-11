@@ -125,6 +125,8 @@ export interface ClipFx {
   enter?: ClipAnim;
   /// 出场动画(片段结尾 dur_secs 内)。
   exit?: ClipAnim;
+  /** 音频时差(秒;正=延后,负=提前;视频块上,配对音频按此平移)。 */
+  audio_offset_secs?: number;
 }
 
 /// 文字片段内容与样式(字号为 1080p 画布基准像素)。

@@ -107,10 +107,19 @@ test("视频块:音量重定向到配对音频块", async ({ page }) => {
 
   await selectFirstBlock(page);
   const aside = rightAside(page);
-  // 视频块:全套(智能分割/调色/音量/变速)
+  // 视频块:全套画面区 + 简单音频区(音量/静音/淡入淡出/时差)
   await expect(aside.locator("legend").filter({ hasText: "智能分割" })).toBeVisible();
   await expect(aside.locator("legend").filter({ hasText: "调色" })).toBeVisible();
   await expect(aside.getByText("音量:")).toBeVisible();
+  await expect(aside.locator("legend").filter({ hasText: "音频(本块内)" })).toBeVisible();
+  await expect(aside.getByText("静音本块音频")).toBeVisible();
+  await expect(aside.getByText(/淡出\(s\)/)).toBeVisible();
+  await expect(aside.getByText(/音频时差/)).toBeVisible();
+  // 高级音频项隐藏(纯音频块专属)
+  await expect(aside.locator("legend").filter({ hasText: "音频滤镜" })).toHaveCount(0);
+  await expect(aside.getByText("变声(半音)")).toHaveCount(0);
+  await expect(aside.getByRole("button", { name: /AI 人声分离/ })).toHaveCount(0);
+  await expect(aside.getByText("降噪")).toHaveCount(0);
 
   // 音量调 2:写入配对音频块,视频半区 volume 不变
   const vol = aside.locator("label:has-text('音量:') input");

@@ -22,6 +22,8 @@ interface BusClip {
   fxVolume?: Animatable;
   fxSpeed?: Animatable;
   fade: { in: number; out: number };
+  /// 音频时差(秒;来自配对视频块 fx.audio_offset_secs)。正=延后,负=提前。
+  offset: number;
 }
 
 /// 与导出混音语义对齐的激活音频片段:Audio lane / Audio 轨(与 clips_on_lane 一致)。
@@ -37,13 +39,26 @@ function audioClipsAt(doc: Document, t: number): BusClip[] {
       // lane 语义与 core clips_on_lane 相同:File 轨缺省视为视频块
       const isAudio = c.lane === "Audio" || (c.lane == null && tr.kind === "Audio");
       if (!isAudio) continue;
-      if (!(c.start <= t && t < c.start + c.duration)) continue;
+      // 音频时差:配对视频块 fx.audio_offset_secs(同轨同素材同几何);
+      // 激活窗口与素材 seek 均按偏移平移(与导出 adelay/裁头语义一致)
+      const pairOffset = tr.kind === "File"
+        ? (doc.clips.find(
+            (v) =>
+              v.track_id === c.track_id &&
+              v.lane === "Video" &&
+              v.asset.asset_id === c.asset.asset_id &&
+              v.start === c.start &&
+              v.duration === c.duration
+          )?.fx?.audio_offset_secs ?? 0)
+        : 0;
+      const aStart = c.start + Math.round(pairOffset * tps);
+      if (!(aStart <= t && t < aStart + c.duration)) continue;
       const asset = doc.assets.find((a) => a.id === c.asset.asset_id);
       if (!asset?.has_audio) continue;
       out.push({
         id: c.id,
         path: asset.path,
-        start: c.start,
+        start: aStart,
         durSecs: c.duration / tps,
         sourceIn: c.asset.source_in,
         speed: c.speed || 1,
@@ -52,6 +67,7 @@ function audioClipsAt(doc: Document, t: number): BusClip[] {
         fxVolume: c.fx?.volume,
         fxSpeed: c.fx?.speed,
         fade: { in: c.fx?.audio_fx?.fade_in ?? 0, out: c.fx?.audio_fx?.fade_out ?? 0 },
+        offset: pairOffset,
       });
     }
   }
@@ -109,7 +125,10 @@ export default function AudioBus({ doc, playing, playheadRef }: Props) {
         }
         const localTicks = t - c.start;
         const local = localTicks / tps;
-        const expected = c.sourceIn + sourceSecsAt(c.speed, c.fxSpeed?.keyframes, tps, 1, localTicks);
+        // 提前(负偏移)时素材窗口右移:本地时间 + |提前量| 对应素材位置
+        const expected =
+          c.sourceIn - c.offset +
+          sourceSecsAt(c.speed, c.fxSpeed?.keyframes, tps, 1, localTicks);
         const kfV = valueAt(c.fxVolume?.keyframes, local) ?? 1;
         let fade = 1;
         if (c.fade.in > 0 && local < c.fade.in) fade *= local / c.fade.in;

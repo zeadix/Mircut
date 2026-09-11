@@ -345,6 +345,11 @@ pub struct ClipFx {
     /// 出场动画(片段结尾 dur_secs 内的预设动画;None = 无)。
     #[serde(default)]
     pub exit: Option<ClipAnim>,
+    /// 音频时差(秒;正 = 音频延后,负 = 提前)。存在视频块上,
+    /// 配对音频块几何保持对齐,由导出/预览按偏移平移音频,
+    /// 不破坏 fixup/split/move 的配对识别。
+    #[serde(default)]
+    pub audio_offset_secs: f64,
 }
 
 /// 片段入场/出场动画种类。

@@ -25,8 +25,14 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
           w.__calls!.push({ cmd, args: args ?? {} });
           return orig(cmd, args);
         };
-        const v = w.__mockDoc.clips[0];
-        w.__mockDoc.clips.push({ ...structuredClone(v), id: "cAudio", lane: "Audio" });
+        // 文档替换为仅纯音频块(音乐素材 a2):包络/淡入淡出只属纯音频块,
+        // 且避免与视频块同位重叠(hitTest 命中视频代表导致编辑被拒)
+        w.__mockDoc.clips = [{
+          id: "cAudio", track_id: "f1", start: 0, duration: 90,
+          asset: { asset_id: "a2", source_in: 0, source_out: 2 },
+          speed: 1, volume: 1, muted: false, lane: "Audio",
+          fx: undefined, text: undefined,
+        }];
       }
     }, 5);
   });
@@ -43,7 +49,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(box).toBeTruthy();
 
   // File 轨几何(未折叠):时间行[0,20) + 单一内容行[20,120)
-  // 波形带(有视频部分)= [75,120);包络铺满内容行(ENV_MAX=1.5):
+  // 纯音频块波形铺满内容行;包络铺满内容行(ENV_MAX=1.5):
   // v=1 → envY = 22+96-3-(1/1.5)×88 ≈ 56;v=0.8 → ≈ 68
   // 音频块 x: start=0 dur=90ticks @0.5px/tick = 45px;主体中部 x=22(避开 ±10px 边缘区)
   const midX = box!.x + 22;
@@ -53,24 +59,26 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     page.evaluate(() => {
       const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
       const ctx = canvas.getContext("2d")!;
-      const img = ctx.getImageData(12, 53, 24, 6); // 避开 x≈39 的缩略图接缝浅色竖条
+      const img = ctx.getImageData(12, 53, 24, 6);
       let n = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-        if (r > 200 && g > 200 && b > 200) n++; // 白线压在亮绿缩略图上,抗锯齿后单行 alpha≈0.64
+        // 包络线为深红强对比(与蓝色波形/浅绿底区分)
+        if (r > 140 && g < 110 && b < 130) n++;
       }
       return n;
     });
 
   // ===== 0. 普通模式:波形可见(深蓝),包络线不显示 =====
+  // 纯音频块波形铺满内容行 [20,120):探测行拓宽
   const wavePixels = await page.evaluate(() => {
     const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
     const ctx = canvas.getContext("2d")!;
-    const img = ctx.getImageData(10, 82, 30, 36);
+    const img = ctx.getImageData(10, 30, 30, 80);
     let n = 0;
     for (let i = 0; i < img.data.length; i += 4) {
       const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-      if (b > 120 && b > r + 30 && g < 160) n++; // 深蓝波形色
+      if (b > 180 && b > g && b > r) n++; // 波形蓝主导(浅色渐变底上抗锯齿混色)
     }
     return n;
   });
@@ -118,7 +126,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   });
   expect(moveCall).toBeTruthy();
 
-  // 整体移动:提交条目必须同时包含音频块与视频兄弟块
+  // 纯音频块移动:提交条目为该音频块
   const movedIds = await page.evaluate(() => {
     const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
     const mc = calls.filter((c) => c.cmd === "move_clips").pop();
@@ -126,10 +134,7 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     const entries = mc.args.entries as { clip_id: string }[];
     return entries.map((e) => e.clip_id).sort();
   });
-  if (movedIds) {
-    expect(movedIds).toContain("cAudio");
-    expect(movedIds).toContain("c1");
-  }
+  expect(movedIds).toContain("cAudio");
 });
 
 test("回归:抓音频区拖到视频行,lane 保持 Audio 且配对同行", async ({ page }) => {
@@ -211,17 +216,20 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
           w.__calls!.push({ cmd, args: args ?? {} });
           return orig(cmd, args);
         };
-        const v = w.__mockDoc.clips[0];
-        const audio = {
-          ...structuredClone(v),
+        // 文档替换为仅纯音频块(带音量节点):包络编辑仅纯音频块
+        w.__mockDoc.clips = [{
           id: "cAudio",
+          track_id: "f1",
+          start: 0,
+          duration: 90,
+          asset: { asset_id: "a2", source_in: 0, source_out: 2 },
+          speed: 1,
+          volume: 1,
+          muted: false,
           lane: "Audio",
-          fx: {
-            ...((v.fx as Record<string, unknown>) ?? {}),
-            volume: { keyframes: [{ t: 30, value: 0.8, interp: "Smooth" }] },
-          },
-        };
-        w.__mockDoc.clips.push(audio);
+          fx: { volume: { keyframes: [{ t: 30, value: 0.8, interp: "Smooth" }] } },
+          text: undefined,
+        }];
       }
     }, 5);
   });

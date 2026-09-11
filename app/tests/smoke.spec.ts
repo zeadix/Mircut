@@ -91,20 +91,21 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await expect(subPanel.getByText("Whisper base")).toBeVisible();
   await expect(subPanel.getByRole("button", { name: "下载" }).first()).toBeVisible();
 
-  // 2. 右栏属性(选中带配对的视频块):AI 抠像按钮 + 音频滤镜 + AI 人声分离(引擎状态提示)。
-  //    注入干净音视频配对(初始 c1 无音频半区,自适应面板会隐藏音频滤镜)
+  // 2. 右栏属性:视频块 = AI 抠像 + 简单音频区(音量/时差;高级音频项隐藏);
+  //    音乐纯音频块 = AI 人声分离(高级音频编辑专属)。
   await page.addInitScript(() => {
     const timer = setInterval(() => {
       const w = window as unknown as { __mockDoc?: { clips: unknown[] } };
       if (w.__mockDoc) {
         clearInterval(timer);
-        const mk = (id: string, lane: string) => ({
-          id, track_id: "f1", start: 0, duration: 90,
-          asset: { asset_id: "a1", source_in: 0, source_out: 3 },
+        const mk = (id: string, lane: string, asset: string, start: number) => ({
+          id, track_id: "f1", start, duration: 90,
+          asset: { asset_id: asset, source_in: 0, source_out: 3 },
           speed: 1, volume: 1, muted: false, lane,
           fx: undefined, text: undefined,
         });
-        w.__mockDoc.clips = [mk("vSel", "Video"), mk("aSel", "Audio")];
+        // 视频配对(0-90)+ 音乐纯音频块(90-180,不重叠)
+        w.__mockDoc.clips = [mk("vSel", "Video", "a1", 0), mk("aSel", "Audio", "a1", 0), mk("mSel", "Audio", "a2", 90)];
       }
     }, 5);
   });
@@ -114,18 +115,27 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await page.waitForTimeout(500);
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cbox = await canvas.boundingBox();
+  const rightAside = page.locator("aside").last();
+
+  // 视频块(0-90 ticks = 0-45px):抠像 + 简单音频区;高级音频不显示
   await page.mouse.click(cbox.x + 20, cbox.y + 60);
   await page.waitForTimeout(300);
-  const rightAside = page.locator("aside").last();
   await expect(
     rightAside.getByRole("button", { name: /AI 人像抠像/ })
   ).toBeVisible();
-  await expect(
-    rightAside.getByRole("button", { name: /AI 人声分离/ })
-  ).toBeVisible();
+  await expect(rightAside.getByText(/音频时差/)).toBeVisible();
+  await expect(rightAside.locator("legend").filter({ hasText: "音频滤镜" })).toHaveCount(0);
   // 抠像滑条存在(时序平滑 + 边缘精修)
   await expect(rightAside.getByText(/时序平滑 \d+ 帧/)).toBeVisible();
   await expect(rightAside.getByText(/边缘精修 \d+\.\d/)).toBeVisible();
+
+  // 音乐纯音频块(90-180 ticks = 45-90px):AI 人声分离(高级音频专属)
+  await page.mouse.click(cbox.x + 60, cbox.y + 60);
+  await page.waitForTimeout(300);
+  await expect(
+    rightAside.getByRole("button", { name: /AI 人声分离/ })
+  ).toBeVisible();
+  await expect(rightAside.locator("legend").filter({ hasText: "音频滤镜" })).toBeVisible();
 
   // 3. 文字工作面板:音色下拉(piper 多音色)
   await page.getByRole("button", { name: "窗口", exact: true }).click();

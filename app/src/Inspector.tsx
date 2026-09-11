@@ -346,9 +346,11 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
   const assetOf = doc.assets.find((a) => a.id === clip.asset.asset_id);
   const kind = clipKindOf(clip, assetOf);
   const audioSibling = kind === "video" ? siblingAudioOf(clip, doc) : null;
-  /// 音量/音频滤镜/人声分离的写入目标:音频块自身;视频块 -> 配对音频块;无音频则隐藏。
+  /// 音频写入目标:音频块自身;视频块 -> 配对音频块;无音频则隐藏音频区。
   const audioTarget = kind === "audio" ? clip : audioSibling;
-  const showAudio = !!audioTarget; // 音量 + 音频滤镜 + 人声分离
+  /// 视频块:简单音频区(音量/静音/淡入淡出/时差);高级项只给纯音频块。
+  const showSimpleAudio = kind === "video" && !!audioSibling;
+  const showAudio = kind === "audio"; // 音频滤镜全套 + 人声分离(纯音频块专属)
   const showVisual = kind === "video" || kind === "image"; // LUT/画中画/蒙版/调色/抠像
   const showSpeedTrim = kind === "video" || kind === "audio"; // 截取范围 + 变速
   const showVideoOnly = kind === "video"; // 智能分割/分离音频/定格帧/转场
@@ -569,7 +571,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       </label>
       )}
 
-      {showAudio && (
+      {(showAudio || showSimpleAudio) && (
       <label title={audioSibling ? "作用于整个文件块(写入音频部分)" : undefined}>
         音量:{" "}
         <NumInput
@@ -583,6 +585,69 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           title="音量倍率(键入即时生效;按住左右拖拽调值)"
         />
       </label>
+      )}
+
+      {showSimpleAudio && audioTarget && (
+      <fieldset style={{ borderColor: "var(--border)" }}>
+        <legend>音频(本块内)</legend>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+          <input
+            type="checkbox"
+            checked={!!audioTarget.muted}
+            onChange={(e) => {
+              api.setClipAudio(audioTarget!.id, null, e.target.checked).then(onRefresh);
+            }}
+          />
+          静音本块音频
+        </label>
+        <label style={{ display: "block", marginBottom: 3 }}>
+          淡入(s): {afx.fade_in}
+          <input
+            type="range"
+            min={0}
+            max={3}
+            step={0.1}
+            value={afx.fade_in}
+            onChange={(e) => setAfx({ ...afx, fade_in: parseFloat(e.target.value) })}
+            onMouseUp={applyAudioFx}
+            onTouchEnd={applyAudioFx}
+            style={{ width: "100%" }}
+          />
+        </label>
+        <label style={{ display: "block", marginBottom: 3 }}>
+          淡出(s): {afx.fade_out}
+          <input
+            type="range"
+            min={0}
+            max={3}
+            step={0.1}
+            value={afx.fade_out}
+            onChange={(e) => setAfx({ ...afx, fade_out: parseFloat(e.target.value) })}
+            onMouseUp={applyAudioFx}
+            onTouchEnd={applyAudioFx}
+            style={{ width: "100%" }}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          音频时差(秒)
+          <NumInput
+            width={64}
+            value={clip.fx?.audio_offset_secs ?? 0}
+            step={0.1}
+            min={-5}
+            max={5}
+            digits={2}
+            onCommit={(v) => {
+              const fx = clip.fx ?? emptyFx();
+              if (fx.audio_offset_secs === v) return;
+              fx.audio_offset_secs = v;
+              invokeSetFx(clip.id, fx).then(onRefresh);
+            }}
+            title="音频相对视频的时间偏移:正 = 延后,负 = 提前(键入即时生效;按住左右拖拽调值)"
+          />
+          <span style={{ color: "var(--text-dim)", fontSize: 10 }}>正=延后 负=提前</span>
+        </label>
+      </fieldset>
       )}
 
       {showVideoOnly && (
@@ -615,7 +680,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {(showVisual
             ? ["电影感", "复古", "黑白"]
-            : showAudio
+            : kind === "audio"
               ? ["音频降噪", "平滑淡入淡出"]
               : []
           ).map((n) => (
@@ -1047,9 +1112,9 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           onRefresh={onRefresh}
         />
         )}
-        {showKfVolume && (
+        {showKfVolume && audioTarget && (
         <KeyframeEditor
-          clipId={audioTarget!.id}
+          clipId={audioTarget.id}
           prop="volume"
           label="音量"
           keyframes={audioTarget.fx?.volume.keyframes ?? []}

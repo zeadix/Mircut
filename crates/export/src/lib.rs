@@ -1512,6 +1512,21 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             let input_idx = input_of(&c.id);
             let src = format!("[{}:a]", input_idx);
             let label = format!("[a{ti}_{i}]");
+            // 音频时差:配对视频块 fx.audio_offset_secs(同轨同素材同起点
+            // 的 Video 半区)。正 = 延后(adelay),负 = 提前(素材窗口右移
+            // |offset| 即裁头)。音频块几何不动,配对识别不受影响。
+            let a_offset = doc
+                .clips
+                .iter()
+                .find(|v| {
+                    v.track_id == c.track_id
+                        && v.lane == Some(veditor_core::Lane::Video)
+                        && v.asset.asset_id == c.asset.asset_id
+                        && v.start == c.start
+                        && v.duration == c.duration
+                })
+                .map(|v| v.fx.audio_offset_secs)
+                .unwrap_or(0.0);
             // 轨道静音与片段静音等效(预览 AudioBus 同语义)
             let track_muted = doc.track(at).is_some_and(|t| t.muted);
             let vol = if c.muted || track_muted {
@@ -1558,6 +1573,13 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     seg_labels.concat(),
                     seg_labels.len()
                 );
+                // 负偏移(提前):拼接后裁头 |offset|(此前该路径缺 adelay,一并补齐)
+                if a_offset < -1e-3 {
+                    chain.push_str(&format!(
+                        ",atrim=start={:.3},asetpts=PTS-STARTPTS",
+                        -a_offset
+                    ));
+                }
                 if !c.fx.audio_fx.is_noop() {
                     for f in c.fx.audio_fx.to_ffmpeg_chain(doc.timebase.secs(c.duration)) {
                         chain.push(',');
@@ -1582,13 +1604,20 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 } else {
                     chain.push_str(&format!(",volume={vol:.3}{label}"));
                 }
+                // 定位:adelay 到 (start - pre + max(0, offset))
+                let need_delay_ms = ((tl_start - a_pre + a_offset.max(0.0)) * 1000.0).round() as i64;
+                if need_delay_ms > 1 {
+                    chain.push_str(&format!(",adelay={need_delay_ms}:all=1"));
+                }
+                chain.push_str(&label);
                 filters.push(chain);
                 audio_labels.push(label);
                 continue;
             }
             let mut chain = format!(
                 "{src}atrim=start={:.3}:duration={:.3},asetpts=PTS-STARTPTS",
-                c.asset.source_in - a_pre,
+                // 负偏移(提前):素材窗口右移 |offset|(开头被跳过)
+                c.asset.source_in - a_pre + (-a_offset).max(0.0),
                 c.source_span_secs(&doc.timebase)
             );
             // 音频变速(atempo 支持 0.5-2.0,范围外链式;M2 直接夹取)
@@ -1606,7 +1635,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     doc.timebase.secs(c.duration) - a_out_fade
                 ));
             }
-            let need_delay = tl_start - a_pre;
+            let need_delay = tl_start - a_pre + a_offset.max(0.0);
             if need_delay > 1e-6 {
                 let ms = (need_delay * 1000.0).round() as i64;
                 chain.push_str(&format!(",adelay={ms}:all=1"));
@@ -4518,5 +4547,99 @@ mod tests {
         assert!(out.status.success());
         let codec = String::from_utf8_lossy(&out.stdout).trim().to_string();
         assert_eq!(codec, "h264", "导出文件应含 h264 视频流");
+    }
+}
+
+#[cfg(test)]
+mod audio_offset_tests {
+    use super::*;
+    use veditor_core::{Asset, AssetRef, Clip, Lane, Timebase, Track, TrackKind};
+
+    fn doc_with_pair(offset: f64) -> Document {
+        let mut doc = Document {
+            timebase: Timebase { num: 30, den: 1 },
+            ..Default::default()
+        };
+        doc.tracks.push(Track {
+            id: "f1".into(),
+            kind: TrackKind::File,
+            name: "文件轨 1".into(),
+            locked: false,
+            hidden: false,
+            muted: false,
+            video_on: true,
+            audio_on: true,
+        });
+        doc.assets.push(Asset {
+            id: "a1".into(),
+            path: "/tmp/fixture.mp4".into(),
+            duration_secs: 10.0,
+            has_video: true,
+            has_audio: true,
+            width: None,
+            height: None,
+            name: None,
+            fps: None,
+            tags: vec![],
+        });
+        let mk = |lane: Lane| Clip {
+            id: format!("c_{}", if lane == Lane::Video { "v" } else { "a" }),
+            track_id: "f1".into(),
+            start: 30,
+            duration: 90,
+            asset: AssetRef {
+                asset_id: "a1".into(),
+                source_in: 0.0,
+                source_out: 3.0,
+            },
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            lane: Some(lane),
+            fx: {
+                let mut fx = veditor_core::ClipFx::default();
+                fx.audio_offset_secs = offset;
+                fx
+            },
+            text: None,
+        };
+        doc.clips.push(mk(Lane::Video));
+        doc.clips.push(mk(Lane::Audio));
+        doc
+    }
+
+    fn audio_chain(args: &[String]) -> String {
+        args.iter()
+            .zip(args.iter().skip(1))
+            .find(|(a, _)| a == &"-filter_complex")
+            .map(|(_, b)| b.clone())
+            .unwrap()
+            .split(';')
+            .find(|f| f.contains("[a0_0]"))
+            .map(|s| s.to_string())
+            .unwrap()
+    }
+
+    /// 时差 0:与既有行为一致(adelay=1000ms 即 start 定位,无裁头)。
+    #[test]
+    fn audio_offset_zero_unchanged() {
+        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(0.0), &ExportParams::default()));
+        assert!(fc.contains("adelay=1000:all=1"), "fc = {fc}");
+        assert!(!fc.contains("atrim=start=1."), "不应有额外裁头: {fc}");
+    }
+
+    /// 时差 +0.5(延后):adelay 增量(1000 → 1500ms)。
+    #[test]
+    fn audio_offset_positive_delays() {
+        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(0.5), &ExportParams::default()));
+        assert!(fc.contains("adelay=1500:all=1"), "fc = {fc}");
+    }
+
+    /// 时差 -0.5(提前):素材窗口右移(atrim start +0.5)裁头,adelay 不变。
+    #[test]
+    fn audio_offset_negative_trims_head() {
+        let fc = audio_chain(&compile_ffmpeg_cmd(&doc_with_pair(-0.5), &ExportParams::default()));
+        assert!(fc.contains("atrim=start=0.500"), "应裁头 0.5s: {fc}");
+        assert!(fc.contains("adelay=1000:all=1"), "fc = {fc}");
     }
 }

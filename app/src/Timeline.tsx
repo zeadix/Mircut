@@ -584,8 +584,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       }
     }
 
-    // 4. 绘制音频块（详细模式：波形 + 音量包络 + 淡入淡出）
-    if (audioH > 0) {
+    // 4. 音频渲染:仅纯音频块(音乐等独立音频)。
+    //    视频块的音频层不再显示(波形/包络/淡入淡出只属纯音频块),
+    //    其音频经属性面板「音频」区简单调节;audio_on 关闭时画静音角标。
+    if (audioH > 0 && !hasVideoPart) {
       const audioClip = blockClips.find(c => c.lane === "Audio")?.clip;
 
       // 检查 audio_on 开关(灰罩/渐变只覆盖波带,不遮缩略图)
@@ -673,7 +675,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             const envLaneH = videoH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
-            ctx.strokeStyle = "rgba(255,255,255,0.95)";
+            // 深红强对比:纯音频块浅绿底,白/蓝线均不可见(蓝与波形混淆)
+            ctx.strokeStyle = "rgba(190,40,70,0.95)";
             ctx.beginPath();
             const ex0 = Math.max(x, vx0);
             const ex1 = Math.min(x + cw, vx1);
@@ -717,6 +720,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           ctx.fillText("无音频", x + 6, waveTop + waveH / 2 + 3);
         }
       }
+    } else if (hasVideoPart && clipTrack.audio_on === false && audioH > 0) {
+      // 视频块音频被轨头关闭:右上角静音角标提示(波带已不显示)
+      ctx.fillStyle = "rgba(128, 128, 128, 0.85)";
+      ctx.font = "9px sans-serif";
+      ctx.fillText("♪×", x + cw - 22, videoTop + 12);
     }
 
     // 5. 选中时绘制调整手柄(黄色,修剪/移动触发区提示)
@@ -1499,21 +1507,17 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const clip = docIndex.clipsById.get(hit.clipId)!;
       const track = docIndex.trackById.get(clip.track_id);
       if (track?.locked) return;
-      // 音频块交互分区:
-      // 编辑模式 → 音频区专司曲线编辑(拖节点/点线上创建节点);
-      // 普通模式 → 内容区整体选中/移动块(仅顶边小手柄调淡入淡出)。
-      // 单一内容区:块命中返回视频代表,曲线/淡入淡出的编辑目标是音频兄弟块
-      let envClip = clip;
-      if (track?.kind === "File" && clip.lane !== "Audio") {
-        envClip = siblingClip(clip) ?? clip;
-      }
-      const isAudioBlock = envClip.lane === "Audio" || track?.kind === "Audio";
-      const row = clipRow(envClip);
-      const laneGeo = row ? clipLaneGeo(row, envClip) : null;
+      // 音频块交互分区(仅纯音频块):
+      // 编辑模式 → 拖节点/点线建点调音量曲线;普通模式 → 顶边小手柄调淡入淡出。
+      // 视频块(块命中返回视频代表,lane=Video)不重定向到音频兄弟:
+      // 其音频不可在时间轴编辑,只经属性面板「音频」区简单调节。
+      const isAudioBlock = clip.lane === "Audio" || track?.kind === "Audio";
+      const row = clipRow(clip);
+      const laneGeo = row ? clipLaneGeo(row, clip) : null;
       const inAudioRow = row ? yIn >= row.audioTop && yIn < row.audioTop + row.audioH : false;
       if (audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow) {
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
-        const kfs = envClip.fx?.volume?.keyframes ?? [];
+        const kfs = clip.fx?.volume?.keyframes ?? [];
         // 1) 节点命中(±6px):拖拽既有节点(仅调值)
         let hitKf: (typeof kfs)[number] | null = null;
         for (const k of kfs) {
@@ -1525,39 +1529,39 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           }
         }
         if (hitKf) {
-          onClipClick(envClip.id, false);
-          dragRef.current = { kind: "envelope", clipId: envClip.id, fixedT: hitKf.t };
-          setEnvLive({ clipId: envClip.id, tLocal: hitKf.t, v: hitKf.value });
+          onClipClick(clip.id, false);
+          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: hitKf.t };
+          setEnvLive({ clipId: clip.id, tLocal: hitKf.t, v: hitKf.value });
           return;
         }
         // 2) 音量线上点击(±8px):创建新节点并进入拖拽(提交在 pointerup)
-        const vAt = valueAt(kfs, t - envClip.start) ?? envClip.volume;
+        const vAt = valueAt(kfs, t - clip.start) ?? clip.volume;
         if (Math.abs(yIn - envY(vAt, laneGeo.laneTop, laneGeo.h)) <= 8) {
-          onClipClick(envClip.id, false);
-          const tLocal = Math.max(0, Math.min(envClip.duration, t - envClip.start));
-          dragRef.current = { kind: "envelope", clipId: envClip.id, fixedT: tLocal };
-          setEnvLive({ clipId: envClip.id, tLocal, v: envValFromY(yIn, laneGeo.laneTop, laneGeo.h) });
+          onClipClick(clip.id, false);
+          const tLocal = Math.max(0, Math.min(clip.duration, t - clip.start));
+          dragRef.current = { kind: "envelope", clipId: clip.id, fixedT: tLocal };
+          setEnvLive({ clipId: clip.id, tLocal, v: envValFromY(yIn, laneGeo.laneTop, laneGeo.h) });
           return;
         }
         // 3) 编辑模式下音频区其余点击:仅选中(防误移动)
-        onClipClick(envClip.id, false);
+        onClipClick(clip.id, false);
         return;
       }
       if (!audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow && yIn - laneGeo.laneTop <= 7) {
         // 淡入/淡出手柄:波带顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
-        const maxFade = (envClip.duration / tps) * 0.9;
-        const afx = envClip.fx?.audio_fx;
-        const finX = envClip.start * pxPerTick + Math.max(Math.min(maxFade, afx?.fade_in ?? 0) * tps * pxPerTick, 8);
-        const foutX = (envClip.start + envClip.duration) * pxPerTick - Math.max(Math.min(maxFade, afx?.fade_out ?? 0) * tps * pxPerTick, 8);
+        const maxFade = (clip.duration / tps) * 0.9;
+        const afx = clip.fx?.audio_fx;
+        const finX = clip.start * pxPerTick + Math.max(Math.min(maxFade, afx?.fade_in ?? 0) * tps * pxPerTick, 8);
+        const foutX = (clip.start + clip.duration) * pxPerTick - Math.max(Math.min(maxFade, afx?.fade_out ?? 0) * tps * pxPerTick, 8);
         if (Math.abs(px - finX) <= 6) {
-          dragRef.current = { kind: "fade", clipId: envClip.id, edge: "in" };
-          setFadeLive({ clipId: envClip.id, edge: "in", secs: afx?.fade_in ?? 0 });
+          dragRef.current = { kind: "fade", clipId: clip.id, edge: "in" };
+          setFadeLive({ clipId: clip.id, edge: "in", secs: afx?.fade_in ?? 0 });
           return;
         }
         if (Math.abs(px - foutX) <= 6) {
-          dragRef.current = { kind: "fade", clipId: envClip.id, edge: "out" };
-          setFadeLive({ clipId: envClip.id, edge: "out", secs: afx?.fade_out ?? 0 });
+          dragRef.current = { kind: "fade", clipId: clip.id, edge: "out" };
+          setFadeLive({ clipId: clip.id, edge: "out", secs: afx?.fade_out ?? 0 });
           return;
         }
       }
@@ -2288,7 +2292,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           <input type="checkbox" checked={clickSeek} onChange={(e) => setClickSeek(e.target.checked)} /> 点击定位
         </label>
         <label
-          title="音频曲线编辑:开启后点击/拖拽文件块音频区的音量线与节点调整曲线;关闭时音频区点击=选中/移动整块"
+          title="音频曲线编辑(仅纯音频块):开启后点击/拖拽音频块的音量线与节点调整曲线;视频块的音频经属性面板调节"
           style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: audioEditMode ? "var(--accent)" : undefined }}
         >
           <input type="checkbox" checked={audioEditMode} onChange={(e) => setAudioEditMode(e.target.checked)} /> 编辑音频
