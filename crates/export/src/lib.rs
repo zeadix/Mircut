@@ -1051,7 +1051,11 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 }
                 chain_parts.push(chain);
             }
-            let has_text_only = clips.is_empty() && doc.clips.iter().any(|c| c.text.is_some());
+            let has_text_only = clips.is_empty()
+                && doc.clips.iter().any(|c| {
+                    c.text.is_some()
+                        && doc.track(&c.track_id).is_some_and(|tr| clip_type_enabled(tr, c))
+                });
             let use_overlay = has_text_only
                 || (clips.len() > 1 && !doc.transitions.is_empty())
                 || clips.iter().any(|c| clip_has_motion_anim(c));
@@ -1749,6 +1753,8 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                         .value_at(0)
                         .map(|d| d.abs() > 0.05)
                         .unwrap_or(false)
+                    // 文字类型开关关闭的轨道不合成
+                    && doc.track(&c.track_id).is_some_and(|tr| clip_type_enabled(tr, c))
             })
             .collect()
     };

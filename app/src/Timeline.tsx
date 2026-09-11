@@ -727,6 +727,22 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       ctx.fillText("♪×", x + cw - 22, videoTop + 12);
     }
 
+    // 块级类型置灰:该块类型的合成开关关闭时整块盖灰罩
+    // (预览不显示/导出不合成/不可命中的视觉表达)
+    {
+      const typeOff = clip.text
+        ? clipTrack.text_on === false
+        : clip.lane === "Audio"
+          ? clipTrack.audio_on === false
+          : (clip.speed ?? 1) === 0
+            ? clipTrack.image_on === false
+            : clipTrack.video_on === false;
+      if (typeOff) {
+        ctx.fillStyle = "rgba(110, 116, 128, 0.55)";
+        ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), totalH - 2);
+      }
+    }
+
     // 块左下角:元素 ID(类型前缀+数字;与属性面板标题一致)
     if (cw > 26) {
       ctx.fillStyle = "rgba(30, 33, 40, 0.78)";
