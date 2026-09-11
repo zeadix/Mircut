@@ -87,7 +87,7 @@ const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 /// 音量包络显示上限(增益 >1.5 钳到顶部)。
 const ENV_MAX = 1.5;
 /// File 轨道三行高度
-const TIME_ROW_H = 12;  // 时间行高度(层高整体 -40%:120 → 72)
+const TIME_ROW_H = 50;  // 层标题行高度(固定,不随轨高滑条)
 const VIDEO_ROW_H = 36; // 视频行高度
 const AUDIO_ROW_H = 24; // 音频行高度
 
@@ -270,8 +270,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragSession | null>(null);
   const [trackH, setTrackH] = useState(56);
-  /// File 轨三行高度随轨高滑条缩放(默认 56 → 20/60/40,与既有几何一致)
-  const timeRowH = Math.round((trackH * TIME_ROW_H) / 56);
+  /// 标题行固定高度;内容行随轨高滑条缩放(默认 56 → 内容 60)
+  const timeRowH = TIME_ROW_H;
   const videoRowH = Math.round((trackH * VIDEO_ROW_H) / 56);
   const audioRowH = Math.round((trackH * AUDIO_ROW_H) / 56);
   const [snap, setSnap] = useState(true);
@@ -459,11 +459,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     const hasVideoPart = blockClips.some((c) => c.lane === "Video");
     const waveTop = hasVideoPart ? videoTop + Math.round(videoH * 0.55) : videoTop;
     const waveH = videoTop + videoH - waveTop;
+    // 时间信息仅视频/音频块显示(图片/文字块标题行留空)
+    const showTimeInfo = !clip.text && (clip.speed ?? 1) !== 0;
 
     // 文字片段:整块紫底 + 内容文本(与视频块同几何,拖拽/裁剪/命中通用)
     if (clip.text) {
-      ctx.fillStyle = clipTrack.video_on === false ? "rgba(107, 74, 138, 0.3)" : "#6b4a8a";
-      ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 2), totalH - 2);
+      ctx.fillStyle = clipTrack.text_on === false ? "rgba(107, 74, 138, 0.3)" : "#6b4a8a";
+      ctx.fillRect(x + 1, videoTop + 1, Math.max(cw - 2, 2), videoH - 2);
       const borderColor = selected ? "#0071e3" : (hovered ? "#5a5a5a" : "rgba(255,255,255,0.28)");
       const shadowBlur = selected ? 8 : (hovered ? 4 : 0);
       ctx.strokeStyle = borderColor;
@@ -472,20 +474,20 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         ctx.shadowColor = "rgba(0, 113, 227, 0.3)";
         ctx.shadowBlur = shadowBlur;
       }
-      ctx.strokeRect(x, timeTop, Math.max(cw, 2), totalH);
+      ctx.strokeRect(x, videoTop, Math.max(cw, 2), videoH);
       ctx.shadowBlur = 0;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(x, timeTop, Math.max(cw, 2), totalH);
+      ctx.rect(x, videoTop, Math.max(cw, 2), videoH);
       ctx.clip();
       ctx.fillStyle = "#f3ebfa";
-      ctx.font = `${Math.min(11, Math.max(9, totalH - 8))}px sans-serif`;
-      ctx.fillText(`T ${clip.text.content.slice(0, Math.max(2, Math.floor(cw / 10)))}`, x + 5, timeTop + totalH / 2 + 4);
+      ctx.font = `${Math.min(11, Math.max(9, videoH - 8))}px sans-serif`;
+      ctx.fillText(`T ${clip.text.content.slice(0, Math.max(2, Math.floor(cw / 10)))}`, x + 5, videoTop + videoH / 2 + 4);
       ctx.restore();
       if (selected) {
         ctx.fillStyle = "#ffd75e";
-        ctx.fillRect(x - 1, timeTop + totalH / 2 - 6, 6, 12);
-        ctx.fillRect(x + cw - 5, timeTop + totalH / 2 - 6, 6, 12);
+        ctx.fillRect(x - 1, videoTop + videoH / 2 - 6, 6, 12);
+        ctx.fillRect(x + cw - 5, videoTop + videoH / 2 - 6, 6, 12);
       }
       return;
     }
@@ -501,16 +503,15 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
 
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = selected ? 2 : 1;
-    ctx.strokeRect(x, timeTop, Math.max(cw, 2), totalH);
+    ctx.strokeRect(x, videoTop, Math.max(cw, 2), videoH);
     ctx.shadowBlur = 0;
 
-    // 2. 绘制时间块（详细模式：入点 + 出点 + 时长）
-    if (timeH > 0) {
+    // 2. 绘制时间块（详细模式：入点 + 出点 + 时长;仅视频/音频块）
+    if (timeH > 0 && showTimeInfo) {
       ctx.fillStyle = "#f5f5f7";
       ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), timeH - 2);
 
-      // 时间文字:始/终 = 素材内截取区间(与属性面板"截取范围"同语义),
-      // 总时长 = 终 - 始(只随修剪变化;移动块/变速都不影响,块宽本身 = 时间轴时长)
+      // 时间文字:始/终 = 素材内截取区间,总时长 = 终 - 始
       const videoClip = blockClips.find(c => c.lane === "Video")?.clip ?? blockClips[0].clip;
       const srcIn = videoClip.asset.source_in ?? 0;
       const srcOut = videoClip.asset.source_out ?? 0;
@@ -739,7 +740,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             : clipTrack.video_on === false;
       if (typeOff) {
         ctx.fillStyle = "rgba(110, 116, 128, 0.55)";
-        ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), totalH - 2);
+        ctx.fillRect(x + 1, videoTop + 1, Math.max(cw - 2, 0), videoH - 2);
       }
     }
 
@@ -747,16 +748,16 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     if (cw > 26) {
       ctx.fillStyle = "rgba(30, 33, 40, 0.78)";
       ctx.font = "9px sans-serif";
-      ctx.fillText(clip.id, x + 4, timeTop + totalH - 3);
+      ctx.fillText(clip.id, x + 4, videoTop + videoH - 3);
     }
 
     // 5. 选中时绘制调整手柄(黄色,修剪/移动触发区提示)
     if (selected) {
       ctx.fillStyle = "#ffd75e";
       // 左手柄
-      ctx.fillRect(x - 1, timeTop + totalH / 2 - 6, 6, 12);
+      ctx.fillRect(x - 1, videoTop + videoH / 2 - 6, 6, 12);
       // 右手柄
-      ctx.fillRect(x + cw - 5, timeTop + totalH / 2 - 6, 6, 12);
+      ctx.fillRect(x + cw - 5, videoTop + videoH / 2 - 6, 6, 12);
     }
   }
 
@@ -1133,10 +1134,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       }
 
       if (trackAtRow?.kind === "File") {
-        // File 轨两行(时间+单一内容区);此前按旧三行模型取 +3,把下一条
-        // 轨道的时间行也圈进虚影 -> 盖住轨道标题区
-        gy = geo.tops[trackFirstRow] ?? trackFirstRow * (timeRowH + videoRowH + audioRowH);
-        gh = geo.rowH.slice(trackFirstRow, trackFirstRow + 2).reduce((a, b) => a + b, 0) - 2;
+        // File 轨:块 = 内容行(标题行是独立信息条,块不入侵);幽灵与块同几何
+        const tH0 = geo.rowH[trackFirstRow] ?? timeRowH;
+        gy = (geo.tops[trackFirstRow] ?? 0) + tH0;
+        gh = geo.rowH.slice(trackFirstRow, trackFirstRow + 2).reduce((a, b) => a + b, 0) - tH0 - 2;
       } else {
         // 普通/音频轨:trackIdx 是 canvas 行号,上方 File 轨是 3 行不等高,
         // 不能按统一 trackH 相乘(行多时虚影 Y 累积漂移到很远的位置)
@@ -2165,18 +2166,16 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       for (let ti = 0; ti < doc.tracks.length; ti++) {
         const tr = doc.tracks[ti];
         if (tr.id === target.trackId) {
-          hy = geo.tops[acc] ?? 0;
-          hh = tr.kind === "File"
-            ? (collapsed[tr.id]?.time ? 0 : timeRowH) + videoRowH + audioRowH
-            : trackH;
+          hy = (geo.tops[acc] ?? 0) + (tr.kind === "File" && !collapsed[tr.id]?.time ? timeRowH : 0);
+          hh = tr.kind === "File" ? videoRowH + audioRowH : trackH;
           break;
         }
         acc += tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
       }
     } else if (target.trackId === "__newlayer__") {
-      // 新建轨道:在末尾追加,高亮完整新块高度
-      hy = geo.totalH;
-      hh = timeRowH + videoRowH + audioRowH;
+      // 新建轨道:在末尾追加,高亮其内容行
+      hy = geo.totalH + timeRowH;
+      hh = videoRowH + audioRowH;
     }
     setDropHint({
       x: target.start * pxPerTick,
@@ -2307,6 +2306,19 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       onDrop={onDrop}
     >
       <div style={{ display: "flex", fontSize: 10, color: "var(--text-dim)", padding: "2px 8px", gap: 10, alignItems: "center" }}>
+        <button
+          className="btn"
+          style={{ padding: "1px 8px", fontSize: 10 }}
+          title="创建新图层(空白文件轨,可拖入任意元素)"
+          onClick={() => {
+            import("./api")
+              .then((m) => m.createFileTrack())
+              .then(() => import("./store").then((st) => st.useEditor.getState().refresh()))
+              .catch(() => {});
+          }}
+        >
+          + 图层
+        </button>
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
         </label>
@@ -3049,7 +3061,7 @@ function RulerBar({
           left: x,
           bottom: 0,
           width: 1,
-          height: s % 2 === 0 ? 10 : 5,
+          height: s % 2 === 0 ? 34 : 17,
           background: "var(--border-strong)",
         }}
       />
@@ -3060,9 +3072,9 @@ function RulerBar({
           key={`l${s}`}
           style={{
             position: "absolute",
-            left: x + 3,
-            bottom: 1,
-            fontSize: 9,
+            left: x + 4,
+            bottom: 3,
+            fontSize: 10,
             color: "var(--text-dim)",
             userSelect: "none",
           }}
@@ -3078,7 +3090,7 @@ function RulerBar({
       style={{
         position: "relative",
         width: "100%",
-        height: 18,
+        height: 60,
         background: "var(--header)",
         overflow: "hidden",
         cursor: onSeekTicks ? "ew-resize" : undefined,
