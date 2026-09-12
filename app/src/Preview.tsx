@@ -15,6 +15,9 @@ interface Props {
   autoSelect?: boolean;
   editMode?: boolean;
   snapOn?: boolean;
+  onToggleAutoSelect?: () => void;
+  onToggleEditMode?: () => void;
+  onToggleSnap?: () => void;
   renderMode: "proxy" | "realtime";
   /// 素材直读预览(媒体库单击):非空时优先于时间轴取帧。
   assetPreview: { path: string; secs: number } | null;
@@ -250,6 +253,9 @@ function PreviewInner({
   autoSelect: autoSelectProp,
   editMode: editModeProp,
   snapOn: snapOnProp,
+  onToggleAutoSelect,
+  onToggleEditMode,
+  onToggleSnap,
   playheadTicks,
   fps,
   playing,
@@ -1336,6 +1342,40 @@ const [url, setUrl] = useState<string | null>(null);
               )}
             </div>
           )}
+
+          {/* 自动选取/变换/磁吸:浮动按钮组,画布右上角 */}
+          <div
+            style={{
+              position: "absolute",
+              right: 8,
+              top: 8,
+              zIndex: 10,
+              display: "flex",
+              gap: 4,
+            }}
+          >
+            <button
+              className={`chip${autoSelect ? " on" : ""}`}
+              onClick={() => onToggleAutoSelect?.()}
+              title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
+            >
+              <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
+            </button>
+            <button
+              className={`chip${editMode ? " on" : ""}`}
+              onClick={() => onToggleEditMode?.()}
+              title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
+            >
+              <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
+            </button>
+            <button
+              className={`chip${snapOn ? " on" : ""}`}
+              onClick={() => onToggleSnap?.()}
+              title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
+            >
+              <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
+            </button>
+          </div>
 
           {/* 磁吸辅助线 */}
           {guides && (guides.x !== null || guides.y !== null) && (

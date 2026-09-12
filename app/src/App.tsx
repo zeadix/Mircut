@@ -111,11 +111,22 @@ const panelComponents = {
     );
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "var(--panel)" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto 1fr",
+            alignItems: "center",
+            gap: 8,
+            padding: "4px 8px",
+            background: "var(--panel)",
+          }}
+        >
           {/* 分辨率:最左贴边 */}
+          <div style={{ justifySelf: "start" }}>
           <ResPresetSelect width={docW} height={docH} onApply={applyCompSize} />
+          </div>
           {/* 居中:倍速 + 播放控制组(三键常显,按状态置灰) */}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
             <select
               className="ti"
               value={String(Math.abs(c.playSpeed))}
@@ -168,6 +179,8 @@ const panelComponents = {
               </button>
             </div>
           </div>
+          {/* 引擎:最右贴边 */}
+          <div style={{ justifySelf: "end" }}>
           <select
             className="ti"
             value={c.renderMode}
@@ -177,29 +190,7 @@ const panelComponents = {
             <option value="proxy">{t("play.proxy")}</option>
             <option value="realtime">{t("play.realtime")}</option>
           </select>
-          {/* 预览交互三开关(原为舞台内浮动按钮,移到顶栏) */}
-          <span style={{ flex: 1 }} />
-          <button
-            className={`chip${c.autoSelect ? " on" : ""}`}
-            onClick={() => c.setAutoSelect(!c.autoSelect)}
-            title={c.autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
-          >
-            <Crosshair size={14} weight={c.autoSelect ? "fill" : "regular"} />
-          </button>
-          <button
-            className={`chip${c.editMode ? " on" : ""}`}
-            onClick={() => c.setEditMode(!c.editMode)}
-            title={c.editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
-          >
-            <FrameCorners size={14} weight={c.editMode ? "fill" : "regular"} />
-          </button>
-          <button
-            className={`chip${c.snapOn ? " on" : ""}`}
-            onClick={() => c.setSnapOn(!c.snapOn)}
-            title={c.snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
-          >
-            <Magnet size={14} weight={c.snapOn ? "fill" : "regular"} />
-          </button>
+          </div>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <Preview
@@ -219,6 +210,9 @@ const panelComponents = {
             autoSelect={c.autoSelect}
             editMode={c.editMode}
             snapOn={c.snapOn}
+            onToggleAutoSelect={() => c.setAutoSelect(!c.autoSelect)}
+            onToggleEditMode={() => c.setEditMode(!c.editMode)}
+            onToggleSnap={() => c.setSnapOn(!c.snapOn)}
           />
         </div>
         <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
