@@ -2361,9 +2361,22 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(contentEndTick, tps)}
         </span>
       </div>
-      {/* 顶部刻度尺(固定在轨道列表上边缘) */}
+      {/* 顶部刻度尺行(图层区上方):左侧创建图层按钮 + 右侧刻度 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)" }} />
+        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px" }}>
+          <button
+            className="btn"
+            style={{ padding: "1px 8px", fontSize: 10 }}
+            title="创建新图层(空白图层,可拖入任意元素)"
+            onClick={() => {
+              Promise.all([import("./api"), import("./store")])
+                .then(([{ createFileTrack }, { useEditor }]) => createFileTrack().then(() => useEditor.getState().refresh()))
+                .catch(() => {});
+            }}
+          >
+            + 图层
+          </button>
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
@@ -3051,7 +3064,7 @@ function RulerBar({
           left: x,
           ...(hang ? { top: 0 } : { bottom: 0 }),
           width: 1,
-          height: s % 2 === 0 ? 34 : 17,
+          height: s % 2 === 0 ? 16 : 8,
           background: "var(--border-strong)",
         }}
       />
@@ -3063,7 +3076,7 @@ function RulerBar({
           style={{
             position: "absolute",
             left: x + 4,
-            bottom: 3,
+            ...(hang ? { top: 20 } : { bottom: 20 }),
             fontSize: 10,
             color: "var(--text-dim)",
             userSelect: "none",
@@ -3080,7 +3093,7 @@ function RulerBar({
       style={{
         position: "relative",
         width: "100%",
-        height: 60,
+        height: 30,
         background: "var(--header)",
         overflow: "hidden",
         cursor: onSeekTicks ? "ew-resize" : undefined,

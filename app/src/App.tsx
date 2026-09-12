@@ -9,7 +9,6 @@ import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
 import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, Play, Pause, Stop } from "@phosphor-icons/react";
-import TransportBar from "./TransportBar";
 import TimecodeScrub from "./TimecodeScrub";
 import {
   DockviewReact,
@@ -239,12 +238,6 @@ const panelComponents = {
     const c = usePanel();
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* 图层传输栏:左标题/右创建图层/中时间码(播放控制已移至预览工具条) */}
-        <TransportBar
-          onCreateTrack={() => {
-            api.createFileTrack().then(c.refresh).catch(() => {});
-          }}
-        />
         <ErrorBoundary label="时间轴">
           <Timeline
             doc={c.doc}

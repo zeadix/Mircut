@@ -530,7 +530,23 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "import_jianying":
       return mockDoc;
-    case "create_file_track":
+    case "create_file_track": {
+      // 真实新建"图层 N"轨(与后端 fresh_file_track 同语义)
+      let maxF = 0;
+      for (const t of mockDoc.tracks) {
+        const m = /^f(\d+)$/.exec(t.id);
+        if (m) maxF = Math.max(maxF, Number(m[1]));
+      }
+      mockDoc.tracks.push({
+        id: `f${maxF + 1}`,
+        kind: "File",
+        name: `图层 ${mockDoc.tracks.filter((t) => t.kind === "File").length + 1}`,
+        locked: false,
+        hidden: false,
+        muted: false,
+      });
+      return true;
+    }
     case "add_track":
     case "remove_track":
       return true;
