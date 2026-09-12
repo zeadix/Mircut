@@ -10,6 +10,7 @@ import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
 import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, Play, Pause, Stop } from "@phosphor-icons/react";
 import TransportBar from "./TransportBar";
+import TimecodeScrub from "./TimecodeScrub";
 import {
   DockviewReact,
   DockviewDefaultTab,
@@ -146,6 +147,15 @@ const panelComponents = {
               <button
                 className="btn"
                 style={{ borderRadius: "var(--radius-ctl) 0 0 var(--radius-ctl)" }}
+                disabled={c.playing}
+                onClick={() => c.setPlaying(true)}
+                title="播放(空格)"
+              >
+                <Play size={14} weight="fill" />
+              </button>
+              <button
+                className="btn"
+                style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}
                 disabled={!c.playing}
                 onClick={() => {
                   c.setPlayhead(c.playheadRef.current);
@@ -157,7 +167,7 @@ const panelComponents = {
               </button>
               <button
                 className="btn"
-                style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}
+                style={{ borderRadius: "0 var(--radius-ctl) var(--radius-ctl) 0" }}
                 disabled={!c.playing}
                 onClick={() => {
                   c.setPlaying(false);
@@ -168,15 +178,17 @@ const panelComponents = {
               >
                 <Stop size={14} weight="fill" />
               </button>
-              <button
-                className="btn"
-                style={{ borderRadius: "0 var(--radius-ctl) var(--radius-ctl) 0" }}
-                disabled={c.playing}
-                onClick={() => c.setPlaying(true)}
-                title="播放(空格)"
-              >
-                <Play size={14} weight="fill" />
-              </button>
+              <TimecodeScrub
+                playhead={c.playhead}
+                tps={c.tps}
+                fps={c.fps}
+                onSeek={(t) => {
+                  c.playheadRef.current = t;
+                  c.setPlayhead(t);
+                }}
+                fmtTimecode={c.fmtTimecode}
+                parseTimecode={c.parseTimecode}
+              />
             </div>
           </div>
           {/* 引擎:最右贴边 */}
@@ -229,18 +241,9 @@ const panelComponents = {
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* 图层传输栏:左标题/右创建图层/中时间码(播放控制已移至预览工具条) */}
         <TransportBar
-          playhead={c.playhead}
-          tps={c.tps}
-          fps={c.fps}
           onCreateTrack={() => {
             api.createFileTrack().then(c.refresh).catch(() => {});
           }}
-          onSeek={(t) => {
-            c.playheadRef.current = t;
-            c.setPlayhead(t);
-          }}
-          fmtTimecode={c.fmtTimecode}
-          parseTimecode={c.parseTimecode}
         />
         <ErrorBoundary label="时间轴">
           <Timeline

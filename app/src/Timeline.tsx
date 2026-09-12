@@ -2371,6 +2371,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
+            hang
             onSeekTicks={onSeek}
           />
         </div>
@@ -3018,6 +3019,8 @@ function RulerBar({
   scrollX,
   viewW,
   contentW,
+  /// 刻度线从顶边垂下(上方刻度尺;默认从底边向上)。
+  hang,
   onSeekTicks,
 }: {
   num: number;
@@ -3025,7 +3028,7 @@ function RulerBar({
   scrollX: number;
   viewW: number;
   contentW: number;
-  /// 时间帧交互:单击/拖拽连续 seek(刻度尺是播放头唯一操作区)。
+  hang?: boolean;
   onSeekTicks?: (t: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
@@ -3046,7 +3049,7 @@ function RulerBar({
         style={{
           position: "absolute",
           left: x,
-          bottom: 0,
+          ...(hang ? { top: 0 } : { bottom: 0 }),
           width: 1,
           height: s % 2 === 0 ? 34 : 17,
           background: "var(--border-strong)",
