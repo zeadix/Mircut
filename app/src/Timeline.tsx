@@ -2686,7 +2686,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           <div style={{ position: "relative", width: contentW, height: canvasH }}>
             <canvas
               ref={canvasRef}
-              style={{ display: "block" }}
+              style={{ display: "block", width: contentW, height: canvasH }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
