@@ -1250,12 +1250,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     if (!wrap) return;
     const headPx = playheadTicks * pxPerTick;
     const margin = 24;
-    (window as unknown as { __dbgFollow?: unknown }).__dbgFollow = {
-      headPx,
-      scrollLeft: wrap.scrollLeft,
-      clientW: wrap.clientWidth,
-      scrollW: wrap.scrollWidth,
-    };
     if (headPx < wrap.scrollLeft + margin) {
       wrap.scrollLeft = Math.max(0, headPx - margin);
     } else if (headPx > wrap.scrollLeft + wrap.clientWidth - margin) {
