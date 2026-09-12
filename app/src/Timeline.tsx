@@ -1246,6 +1246,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const playheadRef = useRef(playheadTicks);
   playheadRef.current = playheadTicks;
   const rafRef = useRef(0);
+  /// 播放头拖拽中(6px 触发区抓取后)。
+  const playheadDragRef = useRef<{ active: boolean } | null>(null);
 
   useEffect(() => {
     const canvas = overlayRef.current;
@@ -1520,6 +1522,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     target.setPointerCapture?.(e.pointerId);
     const t = ticksFromClientX(e.clientX);
     const yIn = e.clientY - canvasRef.current!.getBoundingClientRect().top;
+    // 播放头拖拽(触发宽度 6px):按住播放头线即可左右拖动时间针
+    if (Math.abs(t - playheadRef.current) * pxPerTick <= 3) {
+      playheadDragRef.current = { active: true };
+      return;
+    }
     // 标记菱形(顶部 12px):单击定位到标记
     if (yIn <= 12) {
       const near = (doc.markers ?? []).find(
@@ -1672,6 +1679,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    // 播放头拖拽(6px 触发区抓取):拖到哪 seek 到哪
+    if (playheadDragRef.current?.active) {
+      onSeek(ticksFromClientX(e.clientX));
+      return;
+    }
     const d = dragRef.current;
     if (d?.kind === "marquee") {
       setMarquee((m) => (m ? { ...m, x1: e.clientX, y1: e.clientY } : m));
@@ -1900,6 +1912,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    if (playheadDragRef.current?.active) {
+      playheadDragRef.current = null;
+      return;
+    }
     const d = dragRef.current;
     dragRef.current = null;
     setGhost(null);
@@ -2385,6 +2401,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             viewW={viewWRef.current}
             contentW={contentW}
             hang
+            playheadTicks={playheadTicks}
             onSeekTicks={onSeek}
           />
         </div>
@@ -2759,6 +2776,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
+            playheadTicks={playheadTicks}
             onSeekTicks={onSeek}
           />
         </div>
@@ -3034,6 +3052,8 @@ function RulerBar({
   contentW,
   /// 刻度线从顶边垂下(上方刻度尺;默认从底边向上)。
   hang,
+  /// 播放头(ticks):绘制红色指示器(画在刻度之上)。
+  playheadTicks,
   onSeekTicks,
 }: {
   num: number;
@@ -3042,6 +3062,7 @@ function RulerBar({
   viewW: number;
   contentW: number;
   hang?: boolean;
+  playheadTicks?: number;
   onSeekTicks?: (t: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
@@ -3086,6 +3107,42 @@ function RulerBar({
         </span>
       );
     }
+  }
+  // 播放头指示器:红竖线贯穿 + 指向刻度的三角,画在刻度之上(不被遮盖)
+  const headPx = playheadTicks != null ? playheadTicks * pxPerTick - scrollX : -1;
+  if (headPx >= -6 && headPx <= viewW + 6) {
+    ticks.push(
+      <div
+        key="playhead-line"
+        style={{
+          position: "absolute",
+          left: headPx - 1,
+          top: 0,
+          width: 2,
+          height: "100%",
+          background: "#ff5f5f",
+          zIndex: 3,
+          pointerEvents: "none",
+        }}
+      />,
+      <div
+        key="playhead-tri"
+        style={{
+          position: "absolute",
+          left: headPx - 5,
+          ...(hang ? { top: 0 } : { bottom: 0 }),
+          width: 0,
+          height: 0,
+          borderLeft: "5px solid transparent",
+          borderRight: "5px solid transparent",
+          ...(hang
+            ? { borderTop: "6px solid #ff5f5f" }
+            : { borderBottom: "6px solid #ff5f5f" }),
+          zIndex: 3,
+          pointerEvents: "none",
+        }}
+      />
+    );
   }
   return (
     <div

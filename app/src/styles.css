@@ -231,6 +231,9 @@ select.ti option:checked { background: var(--btn-hover); color: var(--text); }
   --dv-drag-over-border: 1px solid var(--accent);
   --dv-drag-over-border-color: var(--accent);
   --dv-tabs-container-scrollbar-color: var(--border-strong) transparent;
+  /* 所有面板 tab 高度 -40%(默认 35 → 21) */
+  --dv-tabs-and-actions-container-height: 21px;
+  --dv-tabs-and-actions-container-font-size: 10px;
 }
 /* 组间分隔条/浮动窗投影随主题 */
 .dock-host .dv-sash,
