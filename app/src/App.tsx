@@ -8,7 +8,7 @@ import Preview, { fitRect, nativeRect, rectsEq } from "./Preview";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
-import { FilmSlate, Export, Crosshair, FrameCorners, Magnet } from "@phosphor-icons/react";
+import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, Play, Pause, Stop } from "@phosphor-icons/react";
 import TransportBar from "./TransportBar";
 import {
   DockviewReact,
@@ -111,23 +111,63 @@ const panelComponents = {
     );
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", background: "var(--panel)" }}>
-          <select
-            className="ti"
-            value={String(Math.abs(c.playSpeed))}
-            onChange={(e) => c.setPlaySpeed(parseFloat(e.target.value))}
-            title={t("play.speed")}
-          >
-            <option value="0.25">0.25x</option>
-            <option value="0.5">0.5x</option>
-            <option value="1">1x</option>
-            <option value="1.5">1.5x</option>
-            <option value="2">2x</option>
-            <option value="4">4x</option>
-            <option value="8">8x</option>
-            <option value="16">16x</option>
-          </select>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "var(--panel)" }}>
+          {/* 分辨率:最左贴边 */}
           <ResPresetSelect width={docW} height={docH} onApply={applyCompSize} />
+          {/* 居中:倍速 + 播放控制组(三键常显,按状态置灰) */}
+          <div style={{ flex: 1, display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
+            <select
+              className="ti"
+              value={String(Math.abs(c.playSpeed))}
+              onChange={(e) => c.setPlaySpeed(parseFloat(e.target.value))}
+              title={t("play.speed")}
+            >
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1">1x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+              <option value="8">8x</option>
+              <option value="16">16x</option>
+            </select>
+            <div style={{ display: "flex" }}>
+              <button
+                className="btn"
+                style={{ borderRadius: "var(--radius-ctl) 0 0 var(--radius-ctl)" }}
+                disabled={!c.playing}
+                onClick={() => {
+                  c.setPlayhead(c.playheadRef.current);
+                  c.setPlaying(false);
+                }}
+                title="暂停(停留当前帧,空格)"
+              >
+                <Pause size={14} weight="fill" />
+              </button>
+              <button
+                className="btn"
+                style={{ borderRadius: 0, borderLeft: "none", borderRight: "none" }}
+                disabled={!c.playing}
+                onClick={() => {
+                  c.setPlaying(false);
+                  c.playheadRef.current = 0;
+                  c.setPlayhead(0);
+                }}
+                title="停止(回到第一帧)"
+              >
+                <Stop size={14} weight="fill" />
+              </button>
+              <button
+                className="btn"
+                style={{ borderRadius: "0 var(--radius-ctl) var(--radius-ctl) 0" }}
+                disabled={c.playing}
+                onClick={() => c.setPlaying(true)}
+                title="播放(空格)"
+              >
+                <Play size={14} weight="fill" />
+              </button>
+            </div>
+          </div>
           <select
             className="ti"
             value={c.renderMode}
@@ -189,23 +229,13 @@ const panelComponents = {
     const c = usePanel();
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* 播放控制传输栏(原在预览面板顶栏;位于时间轴左上、轨道操作区上方) */}
+        {/* 图层传输栏:左标题/右创建图层/中时间码(播放控制已移至预览工具条) */}
         <TransportBar
-          playing={c.playing}
           playhead={c.playhead}
           tps={c.tps}
           fps={c.fps}
-          onTogglePlay={() => {
-            if (c.playing) {
-              // 暂停先回写播放头真值(rAF 直写领先 store,否则回跳)
-              c.setPlayhead(c.playheadRef.current);
-            }
-            c.setPlaying(!c.playing);
-          }}
-          onStop={() => {
-            c.setPlaying(false);
-            c.playheadRef.current = 0;
-            c.setPlayhead(0);
+          onCreateTrack={() => {
+            api.createFileTrack().then(c.refresh).catch(() => {});
           }}
           onSeek={(t) => {
             c.playheadRef.current = t;

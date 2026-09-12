@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, Stop } from "@phosphor-icons/react";
 
 /**
  * 播放控制传输栏:播放/暂停/停止 + 时间码框。
@@ -9,15 +8,13 @@ import { Play, Pause, Stop } from "@phosphor-icons/react";
  */
 
 interface Props {
-  playing: boolean;
   /** 播放头(ticks)。 */
   playhead: number;
   /** 每秒 ticks(与 fps 配合换算一帧的 tick 数)。 */
   tps: number;
   fps: number;
-  onTogglePlay: () => void;
-  /** 停止:暂停 + 回第一帧。 */
-  onStop: () => void;
+  /** 创建新图层(右键按钮)。 */
+  onCreateTrack: () => void;
   onSeek: (ticks: number) => void;
   fmtTimecode: (secs: number) => string;
   parseTimecode: (s: string) => number;
@@ -26,12 +23,10 @@ interface Props {
 const SCRUB_THRESHOLD_PX = 3;
 
 function TransportBarInner({
-  playing,
   playhead,
   tps,
   fps,
-  onTogglePlay,
-  onStop,
+  onCreateTrack,
   onSeek,
   fmtTimecode,
   parseTimecode,
@@ -112,20 +107,9 @@ function TransportBarInner({
         flexShrink: 0,
       }}
     >
-      {playing ? (
-        <>
-          <button className="btn icon sm" onClick={onTogglePlay} title="暂停(停留当前帧,空格)">
-            <Pause size={14} weight="fill" />
-          </button>
-          <button className="btn icon sm" onClick={onStop} title="停止(回到第一帧)">
-            <Stop size={14} weight="fill" />
-          </button>
-        </>
-      ) : (
-        <button className="btn icon sm" onClick={onTogglePlay} title="播放(空格)">
-          <Play size={14} weight="fill" />
-        </button>
-      )}
+      {/* 左:图层标题(本传输栏即图层区控制条) */}
+      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>图层</span>
+      <span style={{ flex: 1 }} />
       <input
         ref={inputRef}
         className="ti"
@@ -156,6 +140,15 @@ function TransportBarInner({
         }}
         title="时间码:回车跳转(12.5 / 1:05 / 1:02.5);按住左右拖拽逐帧调整(Shift ×10,Alt 微调)"
       />
+      <span style={{ flex: 1 }} />
+      <button
+        className="btn"
+        style={{ padding: "1px 8px", fontSize: 10 }}
+        title="创建新图层(空白图层,可拖入任意元素)"
+        onClick={onCreateTrack}
+      >
+        + 图层
+      </button>
     </div>
   );
 }

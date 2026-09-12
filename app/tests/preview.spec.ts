@@ -211,21 +211,29 @@ test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) 
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  // 默认只有播放按钮(播放控制已移到时间轴面板顶部的传输栏)
+  // 播放控制组移入预览工具条,三键常显、按状态置灰(预览工具条居中)
+  const group = page.locator("div:has(> button[title^='暂停'])");
   const playBtn = page.locator("button[title^='播放']");
   const stopBtn = page.locator("button[title^='停止']");
   const pauseBtn = page.locator("button[title^='暂停']");
-  await expect(playBtn).toBeVisible();
-  await expect(stopBtn).toHaveCount(0);
+  for (const b of [playBtn, stopBtn, pauseBtn]) {
+    await expect(b).toBeVisible();
+  }
+  // 未播放:播放可用,暂停/停止置灰
+  await expect(playBtn).toBeEnabled();
+  await expect(pauseBtn).toBeDisabled();
+  await expect(stopBtn).toBeDisabled();
 
-  // 播放 → 暂停 + 停止
+  // 播放 → 播放置灰,暂停/停止可用
   await playBtn.click();
-  await expect(pauseBtn).toBeVisible();
-  await expect(playBtn).toHaveCount(0);
+  await expect(playBtn).toBeDisabled();
+  await expect(pauseBtn).toBeEnabled();
+  await expect(stopBtn).toBeEnabled();
 
-  // 停止 → 回到第一帧,恢复仅播放按钮
+  // 停止 → 回到第一帧,恢复播放可用
   await stopBtn.click();
-  await expect(playBtn).toBeVisible();
+  await expect(playBtn).toBeEnabled();
+  await expect(pauseBtn).toBeDisabled();
   const tc = page.locator("input[title^='时间码']");
   await expect(tc).toHaveValue("00:00.00");
 
@@ -233,7 +241,7 @@ test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) 
   await playBtn.click();
   await page.waitForTimeout(700);
   await pauseBtn.click();
-  await expect(playBtn).toBeVisible();
+  await expect(playBtn).toBeEnabled();
   const v = await tc.inputValue();
   expect(v).not.toBe("00:00.00");
 });

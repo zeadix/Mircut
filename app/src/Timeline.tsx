@@ -2306,19 +2306,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       onDrop={onDrop}
     >
       <div style={{ display: "flex", fontSize: 10, color: "var(--text-dim)", padding: "2px 8px", gap: 10, alignItems: "center" }}>
-        <button
-          className="btn"
-          style={{ padding: "1px 8px", fontSize: 10 }}
-          title="创建新图层(空白文件轨,可拖入任意元素)"
-          onClick={() => {
-            import("./api")
-              .then((m) => m.createFileTrack())
-              .then(() => import("./store").then((st) => st.useEditor.getState().refresh()))
-              .catch(() => {});
-          }}
-        >
-          + 图层
-        </button>
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
         </label>
