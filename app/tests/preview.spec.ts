@@ -103,6 +103,47 @@ test("双击视频层:原始分辨率 ↔ 铺满画布 切换", async ({ page })
   await expect.poll(layerW, { timeout: 10000 }).toBeCloseTo(100 * (320 / 1920), 2);
 });
 
+test("预览画布:滚轮缩放,超出可视区出滚动条,双击空白复位", async ({ page }) => {
+  await addAssetToTimeline(page);
+
+  const host = page.locator("[data-veditor-comp-host]");
+  const frame = page.locator("[data-veditor-comp-frame]");
+  await expect(frame).toBeVisible();
+
+  // 初始(适应窗口):内容不超出,无滚动
+  const fitBox = (await frame.boundingBox())!;
+  const scroll0 = await host.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
+  expect(scroll0.sw).toBeLessThanOrEqual(scroll0.cw + 1);
+
+  // 光标置于画布中心,滚轮向上连续放大(矮面板下画布宽 241px、host 宽 880:
+  // 需放大数倍后横向才溢出;1.15^12 ≈ 5.35)
+  await page.mouse.move(fitBox.x + fitBox.width / 2, fitBox.y + fitBox.height / 2);
+  for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -120);
+
+  // 画布呈现尺寸放大;横纵双向超出可视区 → 滚动条可用,且以光标为锚(中心滚动)
+  await expect.poll(async () => (await frame.boundingBox())!.width).toBeGreaterThan(fitBox.width * 4);
+  const zoomed = await host.evaluate((el) => ({
+    sw: el.scrollWidth, cw: el.clientWidth, sh: el.scrollHeight, ch: el.clientHeight,
+    sl: el.scrollLeft, st: el.scrollTop,
+  }));
+  expect(zoomed.sw).toBeGreaterThan(zoomed.cw);
+  expect(zoomed.sh).toBeGreaterThan(zoomed.ch);
+  expect(zoomed.sl).toBeGreaterThan(0);
+  expect(zoomed.st).toBeGreaterThan(0);
+
+  // 缩放徽标显示倍率
+  await expect(page.locator("button[title^='画布缩放']")).toContainText(/5\d\d%/);
+
+  // 滚轮缩小到远小于可视区 → 居中;双击空白(host 角落)复位为 100%
+  for (let i = 0; i < 20; i++) await page.mouse.wheel(0, 120);
+  const hb = (await host.boundingBox())!;
+  await page.mouse.dblclick(hb.x + 6, hb.y + 6);
+  await expect
+    .poll(async () => (await frame.boundingBox())!.width, { timeout: 5000 })
+    .toBeCloseTo(fitBox.width, 0);
+  await expect(page.locator("button[title^='画布缩放']")).toHaveCount(0);
+});
+
 test("播放倍速:可选 16x 且生效", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();

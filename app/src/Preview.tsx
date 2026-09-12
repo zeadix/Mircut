@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChromaKey, Clip, ClipAnimKind, ColorGrade, Document, FxRect, LutApply, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
@@ -345,6 +345,8 @@ const [url, setUrl] = useState<string | null>(null);
   /// 画布在宿主内的像素尺寸 = 最大内接矩形(保持合成比例,黑边留白)。
   const frameHostRef = useRef<HTMLDivElement>(null);
   const [framePx, setFramePx] = useState<{ w: number; h: number } | null>(null);
+  /// 宿主可视尺寸(判断缩放后内容是否超出:超出出滚动条,否则居中)。
+  const [hostSize, setHostSize] = useState({ w: 0, h: 0 });
   useEffect(() => {
     const el = frameHostRef.current;
     if (!el) return;
@@ -356,12 +358,57 @@ const [url, setUrl] = useState<string | null>(null);
       // 保留浮点尺寸:双向独立取整会破坏宽高比(误差可达 1/h,矮面板下
       // 16:9 断言翻车);DOM 舞台接受亚像素尺寸
       setFramePx({ w: compW * s, h: compH * s });
+      setHostSize((prev) => (prev.w === cw && prev.h === ch ? prev : { w: cw, h: ch }));
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [compW, compH]);
+
+  /// 预览画布缩放(滚轮;1 = 适应面板)。层坐标全部归一化(百分比 +
+  /// getBoundingClientRect 比例),CSS scale 对交互/命中完全透明。
+  const [stageZoom, setStageZoom] = useState(1);
+  const stageZoomRef = useRef(1);
+  /// 滚轮锚点:缩放后保持光标下的内容点不动(scroll 补偿)。
+  const zoomAnchorRef = useRef<{ mx: number; my: number; prev: number } | null>(null);
+  const resetStageZoom = useCallback(() => {
+    stageZoomRef.current = 1;
+    setStageZoom(1);
+  }, []);
+  /// 合成分辨率变化时复位缩放(画布语义变了)。
+  useEffect(() => {
+    stageZoomRef.current = 1;
+    setStageZoom(1);
+  }, [compW, compH]);
+  /// 滚轮缩放(非被动监听,拦截默认滚动;缩放即滚动语义的替代)。
+  useEffect(() => {
+    const host = frameHostRef.current;
+    if (!host) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.deltaY) return;
+      e.preventDefault();
+      const prev = stageZoomRef.current;
+      const next = Math.min(6, Math.max(0.25, prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      if (next === prev) return;
+      const rect = host.getBoundingClientRect();
+      zoomAnchorRef.current = { mx: e.clientX - rect.left, my: e.clientY - rect.top, prev };
+      stageZoomRef.current = next;
+      setStageZoom(next);
+    };
+    host.addEventListener("wheel", onWheel, { passive: false });
+    return () => host.removeEventListener("wheel", onWheel);
+  }, [composing]);
+  /// 缩放生效后按锚点补偿滚动位置(布局更新后、绘制前)。
+  useLayoutEffect(() => {
+    const host = frameHostRef.current;
+    const a = zoomAnchorRef.current;
+    zoomAnchorRef.current = null;
+    if (!host || !a || stageZoom === a.prev) return;
+    const k = stageZoom / a.prev;
+    host.scrollLeft = (host.scrollLeft + a.mx) * k - a.mx;
+    host.scrollTop = (host.scrollTop + a.my) * k - a.my;
+  }, [stageZoom]);
 
   /// 单个片段 -> 合成层(取出帧时刻与全部视觉属性)。
   const buildLayer = useCallback(
@@ -1083,6 +1130,17 @@ const [url, setUrl] = useState<string | null>(null);
           />
         </div>
       )}
+      {/* 画布缩放徽标:滚轮缩放的当前倍率 + 点击复位(不随内容滚动) */}
+      {composing && stageZoom !== 1 && (
+        <button
+          className="chip"
+          style={{ position: "absolute", right: 8, bottom: 24, zIndex: 12, fontSize: 10, padding: "0 6px" }}
+          onClick={resetStageZoom}
+          title="画布缩放:在画布上滚动滚轮(以光标为中心);双击画布空白或点击此处复位为适应窗口"
+        >
+          {Math.round(stageZoom * 100)}%
+        </button>
+      )}
       {/* 素材直读 / 单层兜底 */}
       {!composing && url && (
         <img
@@ -1098,36 +1156,62 @@ const [url, setUrl] = useState<string | null>(null);
         </span>
       )}
 
-      {/* 多层合成舞台:画布按合成分辨率等比呈现,居中(黑边区域不参与层坐标) */}
-      {composing && (
+      {/* 多层合成舞台:画布按合成分辨率等比呈现(滚轮缩放;超出可视区出滚动条) */}
+      {composing && (() => {
+        const zw = (framePx?.w ?? 0) * stageZoom;
+        const zh = (framePx?.h ?? 0) * stageZoom;
+        const fits = !framePx || (zw <= hostSize.w + 0.5 && zh <= hostSize.h + 0.5);
+        return (
         <div
           ref={frameHostRef}
+          data-veditor-comp-host=""
           style={{
             width: "100%",
             height: "100%",
             flexShrink: 0,
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            overflow: "hidden",
+            // 内容超出可视区(缩放>1)时从左上开始滚动,否则居中展示
+            alignItems: fits ? "center" : "flex-start",
+            justifyContent: fits ? "center" : "flex-start",
+            overflow: "auto",
             background: "var(--bg)",
           }}
+          onDoubleClick={(e) => {
+            // 双击画布外空白(host 自身):复位缩放;层上的双击另行处理
+            if (e.target === e.currentTarget) resetStageZoom();
+          }}
         >
+          <div
+            style={{
+              position: "relative",
+              width: framePx ? zw : "100%",
+              height: framePx ? zh : "100%",
+              flexShrink: 0,
+            }}
+          >
           <div
             ref={stageRef}
             data-veditor-comp-frame=""
             style={{
-              position: "relative",
+              position: framePx ? "absolute" : "relative",
+              left: 0,
+              top: 0,
               width: framePx?.w ?? "100%",
               height: framePx?.h ?? "100%",
               overflow: "hidden",
               background: "#000",
               flexShrink: 0,
+              transform: framePx && stageZoom !== 1 ? `scale(${stageZoom})` : undefined,
+              transformOrigin: "top left",
             }}
             onDoubleClick={(e) => {
               const l = layerAtPoint(e.clientX, e.clientY);
-              if (!l) return;
-              // 双击文字层:进入编辑模式(属性面板);双击视频层:铺满切换
+              // 双击文字层:进入编辑模式(属性面板);双击视频层:铺满切换;
+              // 双击空白:复位画布缩放(滚轮缩放的快捷还原)
+              if (!l) {
+                resetStageZoom();
+                return;
+              }
               if (l.text) {
                 onSelectClip?.(l.clipId);
                 onEditTextClip?.(l.clipId);
@@ -1489,8 +1573,10 @@ const [url, setUrl] = useState<string | null>(null);
           )}
 
           </div>
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 时间码 */}
       <span
