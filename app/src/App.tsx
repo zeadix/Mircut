@@ -31,6 +31,7 @@ import TextPanel from "./TextPanel";
 import StickerPanel from "./StickerPanel";
 import PackPanel from "./PackPanel";
 import ResPresetSelect from "./ResPreset";
+import PopupSelect from "./PopupSelect";
 import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
 import { PanelContext, usePanel } from "./PanelContext";
@@ -127,21 +128,13 @@ const panelComponents = {
           </div>
           {/* 居中:倍速 + 播放控制组(三键常显,按状态置灰) */}
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 8 }}>
-            <select
-              className="ti"
-              value={String(Math.abs(c.playSpeed))}
-              onChange={(e) => c.setPlaySpeed(parseFloat(e.target.value))}
+            <PopupSelect
+              testId="play-speed"
               title={t("play.speed")}
-            >
-              <option value="0.25">0.25x</option>
-              <option value="0.5">0.5x</option>
-              <option value="1">1x</option>
-              <option value="1.5">1.5x</option>
-              <option value="2">2x</option>
-              <option value="4">4x</option>
-              <option value="8">8x</option>
-              <option value="16">16x</option>
-            </select>
+              value={String(Math.abs(c.playSpeed))}
+              onChange={(v) => c.setPlaySpeed(parseFloat(v))}
+              options={[0.25, 0.5, 1, 1.5, 2, 4, 8, 16].map((s) => ({ value: String(s), label: `${s}x` }))}
+            />
             <div style={{ display: "flex" }}>
               <button
                 className="btn"
@@ -192,15 +185,16 @@ const panelComponents = {
           </div>
           {/* 引擎:最右贴边 */}
           <div style={{ justifySelf: "end" }}>
-          <select
-            className="ti"
+          <PopupSelect
+            testId="play-engine"
             value={c.renderMode}
-            onChange={(e) => c.onSwitchRenderMode(e.target.value as "proxy" | "realtime")}
+            onChange={(v) => c.onSwitchRenderMode(v as "proxy" | "realtime")}
             title={t("play.engine")}
-          >
-            <option value="proxy">{t("play.proxy")}</option>
-            <option value="realtime">{t("play.realtime")}</option>
-          </select>
+            options={[
+              { value: "proxy", label: t("play.proxy") },
+              { value: "realtime", label: t("play.realtime") },
+            ]}
+          />
           </div>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>

@@ -4,6 +4,7 @@ import type { Clip, Document } from "./types";
 import KeyframeEditor from "./KeyframeEditor";
 import NumInput from "./NumInput";
 import FontPicker from "./FontPicker";
+import PopupSelect from "./PopupSelect";
 import TransPreview from "./TransPreview";
 
 /// 元素类型(属性面板按此拼装区块:通用段 + 各自专有段)。
@@ -740,19 +741,19 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         ))}
         <label style={{ display: "block", marginBottom: 3 }}>
           人声分离:
-          <select
-            className="ti"
+          <PopupSelect
             value={afx.stem}
             title="频段滤波近似(降级);demucs/UVR 已安装时用下方按钮做真实分离"
-            onChange={(e) => {
-              setAfx({ ...afx, stem: e.target.value });
+            onChange={(v) => {
+              setAfx({ ...afx, stem: v });
               applyAudioFx();
             }}
-          >
-            <option value="None">无</option>
-            <option value="Vocals">人声增强</option>
-            <option value="Instrumental">伴奏提取</option>
-          </select>
+            options={[
+              { value: "None", label: "无" },
+              { value: "Vocals", label: "人声增强" },
+              { value: "Instrumental", label: "伴奏提取" },
+            ]}
+          />
         </label>
         <button
           className="btn"
@@ -821,18 +822,17 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         )}
         <label style={{ display: "block", marginBottom: 3 }}>
           混合模式:
-          <select
-            className="ti"
+          <PopupSelect
             value={blend}
-            onChange={(e) => {
-              setBlend(e.target.value);
-              applyBlend(e.target.value);
+            onChange={(v) => {
+              setBlend(v);
+              applyBlend(v);
             }}
-          >
-            {["Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Difference", "Addition"].map((m) => (
-              <option key={m} value={m}>{m === "Normal" ? "正常" : m}</option>
-            ))}
-          </select>
+            options={["Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "Difference", "Addition"].map((m) => ({
+              value: m,
+              label: m === "Normal" ? "正常" : m,
+            }))}
+          />
         </label>
         <div style={{ color: "var(--text-dim)", marginTop: 2 }}>主轨(V1)片段不受此设置影响</div>
       </fieldset>
@@ -883,25 +883,19 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         <legend>调色</legend>
         <label style={{ display: "block", marginBottom: 6 }}>
           预设滤镜:{" "}
-          <select
-            className="ti"
+          <PopupSelect
             defaultValue=""
-            onChange={(e) => {
-              const p = FILTER_PRESETS.find((f) => f.name === e.target.value) ??
-                pluginPresets.find((f) => f.name === e.target.value);
+            onChange={(v) => {
+              const p = FILTER_PRESETS.find((f) => f.name === v) ??
+                pluginPresets.find((f) => f.name === v);
               if (p) applyFilterPreset(p.grade);
             }}
-          >
-            <option value="" disabled>选择滤镜…</option>
-            {FILTER_PRESETS.map((f) => (
-              <option key={f.name} value={f.name}>{f.name}</option>
-            ))}
-            {pluginPresets.length > 0 && <optgroup label="插件">
-              {pluginPresets.map((f) => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </optgroup>}
-          </select>
+            options={[
+              { value: "", label: "选择滤镜…", disabled: true },
+              ...FILTER_PRESETS.map((f) => ({ value: f.name, label: f.name })),
+              ...pluginPresets.map((f) => ({ value: f.name, label: f.name, group: "插件" })),
+            ]}
+          />
         </label>
         {(["brightness", "contrast", "saturation"] as const).map((k) => (
           <label key={k} style={{ display: "block", marginBottom: 4 }}>
@@ -1324,26 +1318,28 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
             <span style={{ fontSize: 11, color: "var(--text-dim)" }}>对齐</span>
-            <select
+            <PopupSelect
               className="ti sm"
               value={clip.text.align_h ?? "center"}
-              onChange={(e) => applyTextClip({ align_h: e.target.value as "left" | "center" | "right" })}
+              onChange={(v) => applyTextClip({ align_h: v as "left" | "center" | "right" })}
               title="水平对齐(框内排版)"
-            >
-              <option value="left">左</option>
-              <option value="center">中</option>
-              <option value="right">右</option>
-            </select>
-            <select
+              options={[
+                { value: "left", label: "左" },
+                { value: "center", label: "中" },
+                { value: "right", label: "右" },
+              ]}
+            />
+            <PopupSelect
               className="ti sm"
               value={clip.text.align_v ?? "middle"}
-              onChange={(e) => applyTextClip({ align_v: e.target.value as "top" | "middle" | "bottom" })}
+              onChange={(v) => applyTextClip({ align_v: v as "top" | "middle" | "bottom" })}
               title="垂直对齐(框内排版)"
-            >
-              <option value="top">上</option>
-              <option value="middle">中</option>
-              <option value="bottom">下</option>
-            </select>
+              options={[
+                { value: "top", label: "上" },
+                { value: "middle", label: "中" },
+                { value: "bottom", label: "下" },
+              ]}
+            />
           </div>
           <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 6 }}>
             位置在预览窗口拖拽调整;时长在时间轴拖拽裁剪;出入场动画在下方"动画"区
@@ -1364,17 +1360,13 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           return (
             <div key={slot} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
               <span style={{ fontSize: 11, color: "var(--text-dim)", width: 28, flexShrink: 0 }}>{label}</span>
-              <select
-                className="ti"
-                style={{ width: 100 }}
+              <PopupSelect
                 value={kind}
-                onChange={(e) => applyAnim(slot, e.target.value, dur)}
+                onChange={(v) => applyAnim(slot, v, dur)}
                 title={`${label}动画(作用于片段${slot === "enter" ? "开头" : "结尾"})`}
-              >
-                {anims.map(([k, name]) => (
-                  <option key={k} value={k}>{name}</option>
-                ))}
-              </select>
+                wrapStyle={{ width: 100 }}
+                options={anims.map(([k, name]) => ({ value: k, label: name }))}
+              />
               <NumInput
                 key={`anim-${slot}-${clip.id}-${dur}`}
                 width={56}
@@ -1402,16 +1394,12 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
         <legend>转场(与右侧片段)</legend>
         {rightNeighbor ? (
           <>
-            <select
-              className="ti"
+            <PopupSelect
               value={transKind}
-              onChange={(e) => setTransKind(e.target.value)}
+              onChange={(v) => setTransKind(v)}
               title="转场画廊(15 种)"
-            >
-              {TRANSITIONS.map((t) => (
-                <option key={t[0]} value={t[0]}>{t[1]}</option>
-              ))}
-            </select>{" "}
+              options={TRANSITIONS.map((t) => ({ value: t[0], label: t[1] }))}
+            />{" "}
             <TransPreview
               kind={transKind}
               label={`${TRANSITIONS.find((t) => t[0] === transKind)?.[1] ?? ""} 预览`}

@@ -36,7 +36,8 @@ test("图片素材上轨:3 秒定格片段 + fx.rect + 入场动画", async ({ p
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
-  await page.locator("select[title*='入场动画']").selectOption("Fade");
+  await page.locator("button[title*='入场动画']").click();
+  await page.locator("[data-value='Fade']").click();
   // 点击命中的可能是同位置的其他片段;断言"任一片段写入入场动画"
   await expect
     .poll(

@@ -120,21 +120,28 @@ test("类型开关:关闭后该类块置灰、预览不合成、不可命中", a
     .toBe(false);
   await expect(page.getByText(/ 0层/).first()).toBeVisible({ timeout: 5000 });
 
-  // 图片块(90-180 ticks = 45-90px)置灰:采样块中心,灰罩后绿色/蓝色成分大幅降低
-  const grayProbe = await page.evaluate(() => {
-    const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
-    const ctx = canvas.getContext("2d")!;
-    // 图片块中心 x≈65, 内容行中心 y≈42
-    const img = ctx.getImageData(60, 40, 12, 24);
-    let grayish = 0;
-    for (let i = 0; i < img.data.length; i += 4) {
-      const r = img.data[i], g = img.data[i + 1], b = img.data[i + 2];
-      // 灰罩后 RGB 通道接近(去饱和)
-      if (Math.abs(r - g) < 28 && Math.abs(g - b) < 28) grayish++;
-    }
-    return grayish;
-  });
-  expect(grayProbe, "图片块应整体置灰(去饱和)").toBeGreaterThan(150);
+  // 图片块(90-180 ticks = 45-90px)置灰:采样块中心。判据:灰罩
+  // rgba(110,116,128,0.55) 会把任何内容拉到距罩灰 ≤66(每通道)的范围内,
+  // 而未覆盖的高饱和缩略图距离 ~130+(对缩略图色调/加载时机鲁棒;
+  // canvas 重绘异步:轮询直到灰罩生效)
+  const grayProbe = () =>
+    page.evaluate(() => {
+      const canvas = document.querySelector('[data-veditor-drop="timeline"] canvas') as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      // 图片块中心 x≈65, 内容行中心 y≈42
+      const img = ctx.getImageData(60, 40, 12, 24);
+      let covered = 0;
+      for (let i = 0; i < img.data.length; i += 4) {
+        const d = Math.max(
+          Math.abs(img.data[i] - 110),
+          Math.abs(img.data[i + 1] - 116),
+          Math.abs(img.data[i + 2] - 128)
+        );
+        if (d <= 66) covered++;
+      }
+      return covered;
+    });
+  await expect.poll(grayProbe, "图片块应整体置灰(灰罩覆盖)").toBeGreaterThan(150);
 
   // 不可命中:点击图片块位置不会选中它(选中态仍是视频块或无选中)
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();

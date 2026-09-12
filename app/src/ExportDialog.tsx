@@ -5,6 +5,7 @@ import * as api from "./api";
 import type { Document } from "./types";
 import { t } from "./i18n";
 import { useLang } from "./useLang";
+import PopupSelect, { type PopupSelectOption } from "./PopupSelect";
 
 interface Props {
   doc: Document;
@@ -374,30 +375,27 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         {/* 平台预设 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {t("export.preset")}
-          <select
-            className="ti"
-            style={{ flex: 1 }}
-            value={presetIdx}
-            onChange={(e) => setPresetIdx(Number(e.target.value))}
-          >
-            {presets.map((p, i) => (
-              <option key={p.name} value={i}>
-                {p.name} ({p.width}x{p.height}@{p.fps})
-              </option>
-            ))}
-          </select>
+          <PopupSelect
+            testId="export-preset"
+            wrapStyle={{ flex: 1 }}
+            value={String(presetIdx)}
+            onChange={(v) => setPresetIdx(Number(v))}
+            options={presets.map((p, i) => ({
+              value: String(i),
+              label: `${p.name} (${p.width}x${p.height}@${p.fps})`,
+            }))}
+          />
         </label>
 
         {/* 视频编码器(试编探测;按版权分组,不可用置灰) */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {t("export.encoder")}
-          <select
-            className="ti"
-            style={{ flex: 1 }}
+          <PopupSelect
+            testId="export-encoder"
+            wrapStyle={{ flex: 1 }}
             value={vcodec}
             disabled={format === "gif"}
-            onChange={(e) => {
-              const next = e.target.value;
+            onChange={(next) => {
               setVcodec(next);
               // 编码器与当前容器不兼容时自动切到 MKV(全兼容)
               if (!encoderAllowed(next, format)) setFormat("mkv");
@@ -407,54 +405,48 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
                 ? "GIF 使用内置编码器,无需选择"
                 : "仅列出本机试编可用的编码器;免版税组商用无忧,H.265 有专利池授权风险"
             }
-          >
-            {encoders === null && <option value="libx264">检测编码器中…</option>}
-            {encoders !== null &&
-              SW_GROUPS.map((g) => {
-                const usableInGroup = g.encoders.filter(
-                  ([id]) => id === "libx264" || (encoders.software ?? []).includes(id)
-                );
-                if (usableInGroup.length === 0) return null;
-                return (
-                  <optgroup key={g.label} label={g.label} title={g.hint}>
-                    {usableInGroup.map(([id, label]) => (
-                      <option key={id} value={id} disabled={!encoderAllowed(id, format)}>
-                        {label}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-            {encoders !== null && (encoders.hardware ?? []).length > 0 && (
-              <optgroup label="硬件加速">
-                {encoders!.hardware.map((id) => (
-                  <option key={id} value={id} disabled={!encoderAllowed(id, format)}>
-                    {hwLabel(id)}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {encoders !== null && (encoders.unavailable ?? []).length > 0 && (
-              <optgroup label="本机不可用(试编失败)">
-                {encoders!.unavailable.map((id) => (
-                  <option key={id} value={id} disabled>
-                    {`${hwLabel(id) || id}(本机不可用)`}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+            options={
+              encoders === null
+                ? [{ value: "libx264", label: "检测编码器中…" }]
+                : ([
+                    ...SW_GROUPS.flatMap((g) => {
+                      const usableInGroup = g.encoders.filter(
+                        ([id]) => id === "libx264" || (encoders!.software ?? []).includes(id)
+                      );
+                      if (usableInGroup.length === 0) return [];
+                      return usableInGroup.map(([id, label]) => ({
+                        value: id,
+                        label,
+                        group: g.label,
+                        groupTitle: g.hint,
+                        disabled: !encoderAllowed(id, format),
+                      }));
+                    }),
+                    ...(encoders!.hardware ?? []).map((id) => ({
+                      value: id,
+                      label: hwLabel(id),
+                      group: "硬件加速",
+                      disabled: !encoderAllowed(id, format),
+                    })),
+                    ...(encoders!.unavailable ?? []).map((id) => ({
+                      value: id,
+                      label: `${hwLabel(id) || id}(本机不可用)`,
+                      group: "本机不可用(试编失败)",
+                      disabled: true,
+                    })),
+                  ] as PopupSelectOption[])
+            }
+          />
         </label>
 
         {/* 容器格式(与编码器兼容联动;不合法组合禁用)+ 一键免版税 */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           容器
-          <select
-            className="ti"
-            style={{ flex: 1 }}
+          <PopupSelect
+            testId="export-format"
+            wrapStyle={{ flex: 1 }}
             value={format}
-            onChange={(e) => {
-              const next = e.target.value;
+            onChange={(next) => {
               setFormat(next);
               // 切换容器自动替换输出扩展名
               const ext = `.${next}`;
@@ -464,14 +456,12 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
               });
             }}
             title="输出容器格式"
-          >
-            {FORMATS.map(([id, label]) => (
-              <option key={id} value={id} disabled={!encoderAllowed(vcodec, id)}>
-                {label}
-                {!encoderAllowed(vcodec, id) ? "(与当前编码器不兼容)" : ""}
-              </option>
-            ))}
-          </select>
+            options={FORMATS.map(([id, label]) => ({
+              value: id,
+              label: `${label}${!encoderAllowed(vcodec, id) ? "(与当前编码器不兼容)" : ""}`,
+              disabled: !encoderAllowed(vcodec, id),
+            }))}
+          />
           <button className="btn" onClick={onRoyaltyFree} title="WebM 容器 + AV1/VP9 + Opus,全部免版税可商用">
             免版税
           </button>
@@ -513,19 +503,14 @@ function ExportDialogInner({ doc, fps, onClose, onStatus }: Props) {
         {/* 仅音频导出(混音全部未静音音频;免版税容器为主) */}
         <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
           仅音频
-          <select
-            className="ti"
-            style={{ flex: 1 }}
+          <PopupSelect
+            testId="export-audio"
+            wrapStyle={{ flex: 1 }}
             value={audioFormat}
-            onChange={(e) => setAudioFormat(e.target.value)}
+            onChange={(v) => setAudioFormat(v)}
             title="WAV/FLAC/OGG 免版税;MP3 专利已过期;M4A 兼容 Apple"
-          >
-            {AUDIO_FORMATS.map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
+            options={AUDIO_FORMATS.map(([id, label]) => ({ value: id, label }))}
+          />
           <button className="btn" onClick={onEnqueueAudio} disabled={busy}>
             导出音频
           </button>

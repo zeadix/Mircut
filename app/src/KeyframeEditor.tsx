@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Keyframe } from "./types";
 import type { KeyframeProp } from "./api";
+import PopupSelect from "./PopupSelect";
 
 interface Props {
   clipId: string;
@@ -295,17 +296,17 @@ function KeyframeEditorInner({
             value={k.value}
             onChange={(e) => changeValue(idx, parseFloat(e.target.value))}
           />
-          <select
-            className="ti"
+          <PopupSelect
             value={k.interp}
-            onChange={(e) => changeInterp(idx, e.target.value as Keyframe["interp"])}
-            style={{ flex: 1 }}
-          >
-            <option value="Linear">线性</option>
-            <option value="Hold">保持</option>
-            <option value="Smooth">平滑</option>
-            <option value="Bezier">贝塞尔</option>
-          </select>
+            onChange={(v) => changeInterp(idx, v as Keyframe["interp"])}
+            wrapStyle={{ flex: 1 }}
+            options={[
+              { value: "Linear", label: "线性" },
+              { value: "Hold", label: "保持" },
+              { value: "Smooth", label: "平滑" },
+              { value: "Bezier", label: "贝塞尔" },
+            ]}
+          />
           <button className="btn sm" onClick={() => remove(idx)}>
             ×
           </button>

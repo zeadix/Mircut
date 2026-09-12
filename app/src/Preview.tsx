@@ -353,7 +353,9 @@ const [url, setUrl] = useState<string | null>(null);
       const ch = el.clientHeight;
       if (cw <= 0 || ch <= 0) return;
       const s = Math.min(cw / compW, ch / compH);
-      setFramePx({ w: Math.floor(compW * s), h: Math.floor(compH * s) });
+      // 保留浮点尺寸:双向独立取整会破坏宽高比(误差可达 1/h,矮面板下
+      // 16:9 断言翻车);DOM 舞台接受亚像素尺寸
+      setFramePx({ w: compW * s, h: compH * s });
     };
     measure();
     const ro = new ResizeObserver(measure);

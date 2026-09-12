@@ -137,14 +137,15 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   ).toBeVisible();
   await expect(rightAside.locator("legend").filter({ hasText: "音频滤镜" })).toBeVisible();
 
-  // 3. 文字工作面板:音色下拉(piper 多音色)
+  // 3. 文字工作面板:音色下拉(piper 多音色;PopupSelect:点开数选项行)
   await page.getByRole("button", { name: "窗口", exact: true }).click();
   await page.getByRole("button").filter({ hasText: "文字" }).last().click();
   const textPanel = page.locator('[data-panel="text"]');
   await expect(textPanel.getByText(/音色\(piper\)/)).toBeVisible();
-  const voiceSel = textPanel.locator("select").last();
-  await expect(voiceSel.locator("option")).toHaveCount(2); // 默认 + mock 音色
-});
+  const voiceSel = textPanel.locator("button[title*='音色模型']");
+  await voiceSel.click();
+  await expect(page.locator("[data-select-popup] [data-value]")).toHaveCount(2); // 默认 + mock 音色
+  await page.keyboard.press("Escape");});
 
 test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page }) => {
   await page.goto("/");

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import PopupPortal from "./PopupPortal";
 
 /**
- * 字体选择器:自绘下拉,每个选项用其自身字体渲染(所见即所选)。
- * 原生 <select> 的 option 字体样式在 WebKitGTK 下不可靠,故自绘。
- * 弹出列表挂在触发器下方(Inspector 可滚动区域内绝对定位,随内容滚动可达)。
+ * 字体选择器:每个选项用其自身字体渲染(所见即所选)。
+ * 原生 <select> 的 option 字体样式在 WebKitGTK 下不可靠,故自绘;
+ * 弹层经 PopupPortal 挂到 body,不受 Inspector 滚动区裁剪限制。
  */
 
 interface Props {
@@ -63,22 +64,6 @@ function FontPickerInner({ value, options, onChange, width = 150 }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   return (
     <div ref={wrapRef} style={{ position: "relative", width, flexShrink: 0 }}>
       <button
@@ -102,24 +87,8 @@ function FontPickerInner({ value, options, onChange, width = 150 }: Props) {
         </span>
         <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>▾</span>
       </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            zIndex: 200,
-            background: "var(--card)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-pop)",
-            padding: 4,
-            maxHeight: 240,
-            overflowY: "auto",
-            boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
-          }}
-        >
+      <PopupPortal open={open} onClose={() => setOpen(false)} anchorRef={wrapRef} minWidth={width}>
+        <div style={{ maxHeight: 240, overflowY: "auto" }}>
           <FontRow
             label="默认字体"
             cssFamily=""
@@ -142,7 +111,7 @@ function FontPickerInner({ value, options, onChange, width = 150 }: Props) {
             />
           ))}
         </div>
-      )}
+      </PopupPortal>
     </div>
   );
 }

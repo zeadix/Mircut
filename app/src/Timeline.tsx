@@ -1462,9 +1462,26 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         // 时间行/视频行/音频行任意位置都命中整个文件块 ——
         // 保证"所见即可选/可拖",即使音视频起点有偏差也按块范围命中
         const blocks = (docIndex.fileBlocks.get(track.id) ?? []);
+        // 类型门控:块代表元素(视频优先,音频兜底)所在类型被关闭时该块
+        // 不可命中 —— 与块灰罩/预览不合成/普通轨门控保持一致
+        const blockHitId = (blk: { videoId?: string | null; audioId?: string | null }): string | null => {
+          for (const id of [blk.videoId, blk.audioId]) {
+            if (!id) continue;
+            const c = docIndex.clipsById.get(id);
+            const ct = c ? docIndex.trackById.get(c.track_id) : undefined;
+            if (!c || !ct) continue;
+            const off =
+              (c.text && ct.text_on === false) ||
+              (c.lane === "Audio" && ct.audio_on === false) ||
+              (c.lane !== "Audio" && !c.text && (c.speed ?? 1) === 0 && ct.image_on === false) ||
+              (c.lane !== "Audio" && !c.text && (c.speed ?? 1) !== 0 && ct.video_on === false);
+            if (!off) return id;
+          }
+          return null;
+        };
         const b = blocks.find((blk) => t >= blk.start && t < blk.start + blk.duration);
         if (b) {
-          const clipId = b.videoId ?? b.audioId;
+          const clipId = blockHitId(b);
           if (!clipId) return null;
           const bx0 = b.start * pxPerTick;
           const bx1 = (b.start + b.duration) * pxPerTick;
@@ -1478,7 +1495,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         let best: { clipId: string; edge: "left" | "right" } | null = null;
         let bestDist = tol;
         for (const blk of blocks) {
-          const vid = blk.videoId ?? blk.audioId;
+          const vid = blockHitId(blk);
           if (!vid) continue;
           const dL = Math.abs(t - blk.start);
           const dR = Math.abs(blk.start + blk.duration - t);

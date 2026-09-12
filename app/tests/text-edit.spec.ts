@@ -119,11 +119,11 @@ test("字体与斜体设置写入文字片段", async ({ page }) => {
   await page.mouse.dblclick(cb!.x + 20, cb!.y + 12);
   await expect(rightAside.getByRole("button", { name: "完成编辑" })).toBeVisible({ timeout: 5000 });
 
-  // 选字体(自绘下拉,选项以自身字体渲染):点开 → 点选 Noto Sans CJK SC
+  // 选字体(自绘下拉经 PopupPortal 挂到 body,不在 aside 内):点开 → 点选
   const fontBtn = rightAside.locator("button[title^='字体']");
   await expect(fontBtn).toBeVisible();
   await fontBtn.click();
-  await rightAside.getByRole("button", { name: "Noto Sans CJK SC", exact: true }).click();
+  await page.getByRole("button", { name: "Noto Sans CJK SC", exact: true }).click();
   await expect
     .poll(async () => page.evaluate(() => window.__veditorMock.doc.clips.find((c) => c.text)?.text?.font ?? ""))
     .toBe("Noto Sans CJK SC");

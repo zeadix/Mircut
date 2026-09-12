@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { PencilSimple, Trash, X } from "@phosphor-icons/react";
 import { t } from "./i18n";
+import PopupPortal from "./PopupPortal";
 
 /// 合成画布分辨率预设:下拉选择常用规格,支持自定义增删改(localStorage 持久化)。
 export interface ResPreset {
@@ -70,22 +71,6 @@ export default function ResPresetSelect({ width, height, onApply }: Props) {
     setCustom(loadCustomPresets());
   }, []);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
   const all = [...BUILTIN_PRESETS, ...custom];
   const active = all.find((p) => p.w === width && p.h === height);
 
@@ -138,24 +123,7 @@ export default function ResPresetSelect({ width, height, onApply }: Props) {
         )}
         <span style={{ color: "var(--text-dim)" }}>▾</span>
       </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            marginTop: 4,
-            background: "var(--card)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-pop)",
-            padding: 6,
-            minWidth: 230,
-            fontSize: 12,
-            color: "var(--text)",
-            boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
-            zIndex: 300,
-          }}
-        >
+      <PopupPortal open={open} onClose={() => setOpen(false)} anchorRef={rootRef} minWidth={230}>
           {editing !== null ? (
             /// 自定义表单(新建/编辑共用;确定/取消行内完成)
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -308,8 +276,7 @@ export default function ResPresetSelect({ width, height, onApply }: Props) {
               <X size={11} />
             </button>
           )}
-        </div>
-      )}
+      </PopupPortal>
     </span>
   );
 }

@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
+import PopupSelect from "./PopupSelect";
 import type { Document } from "./types";
 
 interface Props {
@@ -169,18 +170,16 @@ function TextPanelInner({ doc, playheadTicks, onSeek, onRefresh }: Props) {
         />
         <label style={{ display: "block", marginBottom: 6 }}>
           音色(piper):
-          <select
-            className="ti"
-            style={{ width: "100%" }}
+          <PopupSelect
+            wrapStyle={{ width: "100%" }}
             value={voice}
-            onChange={(e) => setVoice(e.target.value)}
+            onChange={(v) => setVoice(v)}
             title="音色模型放 ~/.veditor/voices/*.onnx(含同名 .json);空 = piper 默认"
-          >
-            <option value="">默认</option>
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "默认" },
+              ...voices.map((v) => ({ value: v.id, label: v.name })),
+            ]}
+          />
         </label>
         <button className="btn" style={{ marginTop: 6 }} onClick={onTts}>生成配音</button>
       </fieldset>

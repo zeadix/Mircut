@@ -107,9 +107,12 @@ test("播放倍速:可选 16x 且生效", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  const speed = page.locator("select[title*='倍率'], select").first();
-  await speed.selectOption("16");
-  await expect(speed).toHaveValue("16");
+  // 自定义下拉(PopupPortal):点击触发器 → 点击选项行
+  const speed = page.locator("button[data-select='play-speed']");
+  await speed.click();
+  await page.locator("[data-select-popup='play-speed'] [data-value='16']").click();
+  await expect(speed).toHaveAttribute("data-value", "16");
+  await expect(page.locator("[data-select-popup='play-speed']")).toHaveCount(0);
 });
 
 test("图像菜单:三种尺寸模式作用于选中片段", async ({ page }) => {
@@ -170,9 +173,10 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   // 右栏已纯属性化(无 Tab 栏):选中片段后 Inspector 直接显示
   const rightAside = page.locator("aside").last();
 
-  // 入场 = 淡入 → fx.enter 写入文档
-  const enterSel = rightAside.locator("select[title*='入场动画']");
-  await enterSel.selectOption("Fade");
+  // 入场 = 淡入 → fx.enter 写入文档(自定义下拉:点开选 Fade)
+  const enterSel = rightAside.locator("button[title*='入场动画']");
+  await enterSel.click();
+  await page.locator("[data-value='Fade']").click();
   const fxCheck = () =>
     page.evaluate(() => {
       const d = window.__veditorMock.doc;
@@ -196,15 +200,19 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   );
 
   // 出场 = 向左滑出 → 播放头 2.9s(mock 片段 3s,出场窗 [2.5,3.0])→ 向左位移
-  const exitSel = rightAside.locator("select[title*='出场动画']");
-  await exitSel.selectOption("SlideLeft");
+  const exitSel = rightAside.locator("button[title*='出场动画']");
+  await exitSel.click();
+  await page.locator("[data-value='SlideLeft']").click();
   await expect.poll(async () => (await fxCheck()).exit).toEqual({ kind: "SlideLeft", dur_secs: 0.5 });
   const tc = page.locator("input[title^='时间码']");
   await tc.fill("2.9");
   await tc.press("Enter");
-  await page.waitForTimeout(400);
-  const tf = await layer.evaluate((el) => (el as HTMLElement).style.transform);
-  expect(tf).toContain("translateX(-");
+  // seek 后预览异步重渲染:轮询直到出场位移生效
+  await expect
+    .poll(async () =>
+      layer.evaluate((el) => (el as HTMLElement).style.transform)
+    )
+    .toContain("translateX(-");
 });
 
 test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) => {
@@ -213,7 +221,7 @@ test("播放/暂停/停止:图标按钮随播放状态切换", async ({ page }) 
 
   // 播放控制组移入预览工具条,三键常显、按状态置灰(预览工具条居中)
   const group = page.locator("div:has(> button[title^='暂停'])");
-  const playBtn = page.locator("button[title^='播放']");
+  const playBtn = page.locator("button[title='播放(空格)']");
   const stopBtn = page.locator("button[title^='停止']");
   const pauseBtn = page.locator("button[title^='暂停']");
   for (const b of [playBtn, stopBtn, pauseBtn]) {
