@@ -1242,6 +1242,28 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     []
   );
 
+  // ================= 播放头自动跟随 =================
+  // 任意来源的 seek(时间码/预览进度条/播放)把播放头带到可视区之外时,
+  // 滚动视口将其带入(带 24px 边距);已在区内不滚动。
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const headPx = playheadTicks * pxPerTick;
+    const margin = 24;
+    (window as unknown as { __dbgFollow?: unknown }).__dbgFollow = {
+      headPx,
+      scrollLeft: wrap.scrollLeft,
+      clientW: wrap.clientWidth,
+      scrollW: wrap.scrollWidth,
+    };
+    if (headPx < wrap.scrollLeft + margin) {
+      wrap.scrollLeft = Math.max(0, headPx - margin);
+    } else if (headPx > wrap.scrollLeft + wrap.clientWidth - margin) {
+      wrap.scrollLeft = headPx - wrap.clientWidth + margin;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadTicks, pxPerTick]);
+
   // ================= 动态层:播放头 rAF 直绘(不经 React) =================
   const playheadRef = useRef(playheadTicks);
   playheadRef.current = playheadTicks;
