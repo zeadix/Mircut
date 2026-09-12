@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChromaKey, Clip, ClipAnimKind, ColorGrade, Document, FxRect, LutApply, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
-import { Crosshair, FrameCorners, Magnet } from "@phosphor-icons/react";
+import { Crosshair, FrameCorners, Magnet, ChartLine } from "@phosphor-icons/react";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
 type TransitionKind = Transition["kind"];
@@ -11,6 +11,8 @@ interface Props {
   playheadTicks: number;
   fps: number;
   playing: boolean;
+  /** 播放条 seek(点击/拖拽进度条)。 */
+  onSeek?: (ticks: number) => void;
   /// 自动选取/变换框/磁吸(受控;开关按钮在预览顶栏)。
   autoSelect?: boolean;
   editMode?: boolean;
@@ -250,6 +252,7 @@ function snapVal(v: number, candidates: number[], tol = SNAP_TOL): { v: number; 
  * - 预览高度可拖拽调整
  */
 function PreviewInner({
+  onSeek,
   autoSelect: autoSelectProp,
   editMode: editModeProp,
   snapOn: snapOnProp,
@@ -283,6 +286,9 @@ const [url, setUrl] = useState<string | null>(null);
   const snapOn = snapOnProp ?? snapOnState;
   /// 自动选取(快捷工具栏开关)。
   const [autoSelectState, setAutoSelect] = useState(true);
+  /// 播放条显示模式:show 常显 / hide 隐藏 / auto 划过画布下方显示。
+  const [progressMode, setProgressMode] = useState<"show" | "hide" | "auto">("auto");
+  const [progressHover, setProgressHover] = useState(false);
   const autoSelect = autoSelectProp ?? autoSelectState;
   /// 变换编辑模式(显示调整框;默认开)。
   const [editModeState, setEditMode] = useState(true);
@@ -295,8 +301,26 @@ const [url, setUrl] = useState<string | null>(null);
   /// 吸附辅助线(归一化坐标,null=不显示)。
   const [guides, setGuides] = useState<{ x: number | null; y: number | null } | null>(null);
   /// 预览区高度(右下角拖拽调整)。
-  const [panelH, setPanelH] = useState(300);
+  // 默认 250:预览组高 290 - 工具条 ≈ 34 → 预览完整可见(播放条不被裁剪)
+  // 默认铺满 flex 中间区(挂载时测量),避免被 Scopes/工具条裁剪导致
+  // 播放条/底部交互不可见;拖拽手柄与 dock 分隔条仍可继续调整
+  const [panelH, setPanelH] = useState(250);
+  const rootRef = useRef<HTMLDivElement>(null);
   const panelHDrag = useRef<{ startY: number; startH: number } | null>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const parent = root?.parentElement;
+    if (!root || !parent) return;
+    const apply = () => {
+      const h = parent.clientHeight;
+      if (h > 100) setPanelH((prev) => (Math.abs(prev - h) > 2 ? h : prev));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, []);
 
   const latest = useRef({ t: playheadTicks, playing, mode: renderMode, asset: assetPreview });
   latest.current = { t: playheadTicks, playing, mode: renderMode, asset: assetPreview };
@@ -957,8 +981,18 @@ const [url, setUrl] = useState<string | null>(null);
 
   const showTransform = editMode && composing && !!selected && !!onSetRect;
 
+  /// 播放条:总时长(内容末尾)与 seek。
+  const totalTicks = doc ? doc.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0) : 0;
+  const seekFromBar = (clientX: number, bar: HTMLElement) => {
+    if (!onSeek || totalTicks <= 0) return;
+    const r = bar.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    onSeek(Math.round(ratio * totalTicks));
+  };
+
   return (
     <div
+      ref={rootRef}
       style={{
         background: "var(--bg)",
         color: "var(--text-dim)",
@@ -971,7 +1005,82 @@ const [url, setUrl] = useState<string | null>(null);
         overflow: "hidden",
         resize: "both",
       }}
+      onMouseMove={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const inStrip = e.clientY - r.top > r.height - 24;
+        if (inStrip !== progressHover) setProgressHover(inStrip);
+      }}
+      onMouseLeave={() => setProgressHover(false)}
     >
+      {/* 预览工具浮动组:画布(面板)右上角,允许在视频区域之外 */}
+      <div style={{ position: "absolute", right: 8, top: 8, zIndex: 12, display: "flex", gap: 4 }}>
+        <button
+          className={`chip${autoSelect ? " on" : ""}`}
+          onClick={() => onToggleAutoSelect?.()}
+          title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
+        >
+          <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
+        </button>
+        <button
+          className={`chip${editMode ? " on" : ""}`}
+          onClick={() => onToggleEditMode?.()}
+          title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
+        >
+          <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
+        </button>
+        <button
+          className={`chip${snapOn ? " on" : ""}`}
+          onClick={() => onToggleSnap?.()}
+          title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
+        >
+          <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
+        </button>
+        <button
+          className="chip"
+          onClick={() =>
+            setProgressMode(progressMode === "show" ? "hide" : progressMode === "hide" ? "auto" : "show")
+          }
+          title={`进度条:${progressMode === "show" ? "常显" : progressMode === "hide" ? "隐藏" : "自动(划过画布下方显示)"}(点击切换)`}
+        >
+          <ChartLine size={14} weight={progressMode !== "hide" ? "fill" : "light"} />
+        </button>
+      </div>
+
+      {/* 播放条:显示进度;点击/拖拽 seek;与时间码同源同步 */}
+      {(progressMode === "show" || (progressMode === "auto" && progressHover)) && totalTicks > 0 && (
+        <div
+          id="preview-progress-bar"
+          style={{
+            position: "absolute",
+            left: 12,
+            right: 12,
+            bottom: 6,
+            height: 10,
+            zIndex: 12,
+            background: "var(--surface)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--radius-ctl)",
+            cursor: "pointer",
+          }}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            seekFromBar(e.clientX, e.currentTarget);
+          }}
+          onPointerMove={(e) => {
+            if (e.buttons & 1) seekFromBar(e.clientX, e.currentTarget);
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.min(100, (playheadTicks / totalTicks) * 100)}%`,
+              height: "100%",
+              background: "var(--accent)",
+              borderRadius: "var(--radius-ctl)",
+              pointerEvents: "none",
+            }}
+          />
+        </div>
+      )}
       {/* 素材直读 / 单层兜底 */}
       {!composing && url && (
         <img
@@ -1342,40 +1451,6 @@ const [url, setUrl] = useState<string | null>(null);
               )}
             </div>
           )}
-
-          {/* 自动选取/变换/磁吸:浮动按钮组,画布右上角 */}
-          <div
-            style={{
-              position: "absolute",
-              right: 8,
-              top: 8,
-              zIndex: 10,
-              display: "flex",
-              gap: 4,
-            }}
-          >
-            <button
-              className={`chip${autoSelect ? " on" : ""}`}
-              onClick={() => onToggleAutoSelect?.()}
-              title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
-            >
-              <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
-            </button>
-            <button
-              className={`chip${editMode ? " on" : ""}`}
-              onClick={() => onToggleEditMode?.()}
-              title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
-            >
-              <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
-            </button>
-            <button
-              className={`chip${snapOn ? " on" : ""}`}
-              onClick={() => onToggleSnap?.()}
-              title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
-            >
-              <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
-            </button>
-          </div>
 
           {/* 磁吸辅助线 */}
           {guides && (guides.x !== null || guides.y !== null) && (

@@ -213,6 +213,10 @@ const panelComponents = {
             onToggleAutoSelect={() => c.setAutoSelect(!c.autoSelect)}
             onToggleEditMode={() => c.setEditMode(!c.editMode)}
             onToggleSnap={() => c.setSnapOn(!c.snapOn)}
+            onSeek={(t) => {
+              c.playheadRef.current = t;
+              c.setPlayhead(t);
+            }}
           />
         </div>
         <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
