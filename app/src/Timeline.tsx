@@ -2379,7 +2379,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       </div>
       {/* 顶部刻度尺行(图层区上方):左侧创建图层按钮 + 右侧刻度 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px" }}>
+        <div style={{ width: headW + 6, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px" }}>
           <button
             className="btn"
             style={{ padding: "1px 8px", fontSize: 10 }}
@@ -2768,7 +2768,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
 
       {/* 底部刻度尺(固定在轨道列表下边缘)+ 横向滚动条 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW, flexShrink: 0, background: "var(--header)", borderTop: "1px solid var(--border)" }} />
+        <div style={{ width: headW + 6, flexShrink: 0, background: "var(--header)", borderTop: "1px solid var(--border)" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <RulerBar
             num={doc.timebase.num}
