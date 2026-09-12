@@ -3088,28 +3088,52 @@ function RulerBar({
     if (!rect) return 0;
     return Math.max(0, Math.round((clientX - rect.left + scrollX) / pxPerTick));
   };
-  const s0 = Math.max(0, Math.floor(scrollX / pxPerTick / num));
-  const s1 = Math.ceil((scrollX + viewW) / pxPerTick / num);
+  // ===== 自适应颗粒度:按缩放选择标签步长,避免刻度/文字过密 =====
+  // pxPerSec = 每秒像素;标签间距不足 80px 时步长升一级(1-2-5 数列):
+  // 放大 → 步长细化到 ms;缩小 → 粗化到 s/m/h。细刻度 = 标签步长/5。
+  const pxPerSec = pxPerTick * num;
+  const STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
+  const MIN_LABEL_PX = 80;
+  let labelStep = STEPS[STEPS.length - 1];
+  for (const st of STEPS) {
+    if (st * pxPerSec >= MIN_LABEL_PX) {
+      labelStep = st;
+      break;
+    }
+  }
+  const minorStep = labelStep / 5;
+  const fmtLabel = (secs: number): string => {
+    if (labelStep < 1) return `${Math.round(secs * 1000)}ms`;
+    if (labelStep < 60) return `${Number(secs.toFixed(2))}s`;
+    if (labelStep < 3600) return `${Number((secs / 60).toFixed(2))}m`;
+    return `${Number((secs / 3600).toFixed(2))}h`;
+  };
+  const startSecs = scrollX / pxPerSec;
+  const endSecs = (scrollX + viewW) / pxPerSec;
+  const m0 = Math.max(0, Math.floor(startSecs / minorStep));
+  const m1 = Math.ceil(endSecs / minorStep);
   const ticks: JSX.Element[] = [];
-  for (let s = s0; s <= s1; s++) {
-    const x = s * num * pxPerTick - scrollX;
+  for (let i = m0; i <= m1; i++) {
+    const secs = i * minorStep;
+    const x = secs * pxPerSec - scrollX;
+    const isMajor = i % 5 === 0;
     ticks.push(
       <div
-        key={s}
+        key={`t${i}`}
         style={{
           position: "absolute",
           left: x,
           ...(hang ? { top: 0 } : { bottom: 0 }),
           width: 1,
-          height: s % 2 === 0 ? 16 : 8,
+          height: isMajor ? 16 : 8,
           background: "var(--border-strong)",
         }}
       />
     );
-    if (s % 2 === 0) {
+    if (isMajor) {
       ticks.push(
         <span
-          key={`l${s}`}
+          key={`l${i}`}
           style={{
             position: "absolute",
             left: x + 4,
@@ -3119,7 +3143,7 @@ function RulerBar({
             userSelect: "none",
           }}
         >
-          {s}s
+          {fmtLabel(secs)}
         </span>
       );
     }
