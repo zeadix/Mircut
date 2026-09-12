@@ -144,6 +144,38 @@ test("预览画布:滚轮缩放,超出可视区出滚动条,双击空白复位",
   await expect(page.locator("button[title^='画布缩放']")).toHaveCount(0);
 });
 
+test("时间轴播放头:单一元素横跨刻度尺与轨道,播放时同步移动", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+
+  // 只有一个播放头元素(不再分刻度尺绘制 + 轨道动态层两套)
+  const ph = page.locator("[data-veditor-playhead]");
+  await expect(ph).toHaveCount(1);
+
+  // 纵向覆盖:上沿达上刻度尺、下沿达下刻度尺(完整元素,横跨两个 UI 层)
+  const geo = await ph.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const wr = (document.querySelector(".timeline-wrap") as HTMLElement).getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, wrapTop: wr.top, wrapBottom: wr.bottom };
+  });
+  expect(geo.top).toBeLessThanOrEqual(geo.wrapTop);
+  expect(geo.bottom).toBeGreaterThanOrEqual(geo.wrapBottom);
+
+  // 播放中:播放头持续移动(单一元素,不存在刻度尺/轨道两套绘制先后差)
+  const readX = () =>
+    page.evaluate(() => {
+      const el = document.querySelector("[data-veditor-playhead]") as HTMLElement;
+      return new DOMMatrix(getComputedStyle(el).transform).m41;
+    });
+  await page.locator("button[title='播放(空格)']").click();
+  await page.waitForTimeout(350);
+  const x1 = await readX();
+  await page.waitForTimeout(300);
+  const x2 = await readX();
+  expect(x2).not.toBe(x1);
+  await page.locator("button[title^='停止']").click();
+});
+
 test("播放倍速:可选 16x 且生效", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();

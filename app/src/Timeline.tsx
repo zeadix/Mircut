@@ -266,7 +266,6 @@ function TimelineInner({
   onEditTextClip,
 }: Props) {
 const canvasRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragSession | null>(null);
   const [trackH, setTrackH] = useState(56);
@@ -1258,53 +1257,15 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playheadTicks, pxPerTick]);
 
-  // ================= 动态层:播放头 rAF 直绘(不经 React) =================
+  // ================= 播放头(DOM 单元素) =================
+  // 刻度尺与轨道共用同一播放头元素(横跨两区、z 最高、React 提交定位),
+  // 不再各自绘制 —— 先后不一/被遮挡/消失问题从根上消除。
   const playheadRef = useRef(playheadTicks);
   playheadRef.current = playheadTicks;
-  const rafRef = useRef(0);
   /// 播放头拖拽中(6px 触发区抓取后)。
   const playheadDragRef = useRef<{ active: boolean } | null>(null);
-
-  useEffect(() => {
-    const canvas = overlayRef.current;
-    if (!canvas) return;
-    let running = true;
-    let lastKey = "";
-    const draw = () => {
-      if (!running) return;
-      const dpr = window.devicePixelRatio || 1;
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      const headPx = playheadRef.current * pxPerTick - (wrapRef.current?.scrollLeft ?? 0);
-      // 状态签名:播放头/视口/尺寸/缩放都未变化时跳过重绘(暂停时不再 60fps 空转)
-      const key = `${headPx}|${w}x${h}|${dpr}|${pxPerTick}`;
-      if (key !== lastKey) {
-        lastKey = key;
-        if (canvas.width !== Math.round(w * dpr)) {
-          canvas.width = Math.round(w * dpr);
-          canvas.height = Math.round(h * dpr);
-        }
-        const ctx = canvas.getContext("2d")!;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.clearRect(0, 0, w, h);
-        if (headPx >= -2 && headPx <= w + 2) {
-          ctx.strokeStyle = "#ff5f5f";
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(headPx, 0);
-          ctx.lineTo(headPx, h);
-          ctx.stroke();
-          ctx.lineWidth = 1;
-        }
-      }
-      rafRef.current = requestAnimationFrame(draw);
-    };
-    rafRef.current = requestAnimationFrame(draw);
-    return () => {
-      running = false;
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [scrollX, pxPerTick, geo.totalH]);
+  /// 播放头 DOM 元素:横向滚动时与画布同步帧平移(绕过 React 批处理延迟)。
+  const playheadElRef = useRef<HTMLDivElement>(null);
 
   // 缩放(pxPerTick 变化)后,wrap.scrollLeft 可能被浏览器 clamp 但不触发 scroll 事件,
   // 导致 scrollX state 失同步(刻度尺/播放头错位);此处主动同步。
@@ -2410,6 +2371,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           {fmtTicks(playheadTicks, tps)} / 内容 {fmtTicks(contentEndTick, tps)}
         </span>
       </div>
+      {/* 刻度尺+轨道统一包裹:播放头作为单一元素横跨上刻度尺/轨道/下刻度尺 */}
+      <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       {/* 顶部刻度尺行(图层区上方):左侧创建图层按钮 + 右侧刻度 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
         <div style={{ width: headW + 6, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px" }}>
@@ -2434,7 +2397,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             viewW={viewWRef.current}
             contentW={contentW}
             hang
-            playheadTicks={playheadTicks}
             onSeekTicks={onSeek}
           />
         </div>
@@ -2724,6 +2686,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             if (headInnerRef.current) {
               headInnerRef.current.style.transform = `translateY(${-el.scrollTop}px)`;
             }
+            // 播放头与画布同帧平移(不等 React 批处理)
+            if (playheadElRef.current) {
+              playheadElRef.current.style.transform = `translateX(${playheadRef.current * pxPerTick - el.scrollLeft}px)`;
+            }
             // 纵向滚动时 scrollLeft 不变,React 同值 bail-out 不重渲染;
             // 横向滚动同帧多次事件合并为一次 setState。
             if (!scrollRafRef.current) {
@@ -2783,19 +2749,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
               }}
             />
           </div>
-          {/* 动态层独立 sibling:避免任何 CSS stacking 干扰主 canvas 的事件/坐标 */}
-          <canvas
-            ref={overlayRef}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              width: contentW,
-              height: canvasH,
-              pointerEvents: "none",
-              zIndex: 5,
-            }}
-          />
         </div>
       </div>
 
@@ -2809,10 +2762,65 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             scrollX={scrollX}
             viewW={viewWRef.current}
             contentW={contentW}
-            playheadTicks={playheadTicks}
             onSeekTicks={onSeek}
           />
         </div>
+      </div>
+
+      {/* 播放头:单一完整元素(红竖线 + 上下三角),横跨刻度尺与轨道区、
+          置于所有层之上不被遮挡;仅内容区宽度内绘制(pointerEvents none,
+          点击/拖拽仍由下方 canvas 的 6px 触发区处理) */}
+      <div
+        style={{
+          position: "absolute",
+          left: headW + 6,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          overflow: "hidden",
+          pointerEvents: "none",
+          zIndex: 30,
+        }}
+      >
+        <div
+          ref={playheadElRef}
+          data-veditor-playhead=""
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: -1,
+            width: 2,
+            transform: `translateX(${playheadTicks * pxPerTick - scrollX}px)`,
+          }}
+        >
+          <div style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: 2, background: "#ff5f5f" }} />
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: -4,
+              width: 0,
+              height: 0,
+              borderLeft: "5px solid transparent",
+              borderRight: "5px solid transparent",
+              borderTop: "6px solid #ff5f5f",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: -4,
+              width: 0,
+              height: 0,
+              borderLeft: "5px solid transparent",
+              borderRight: "5px solid transparent",
+              borderBottom: "6px solid #ff5f5f",
+            }}
+          />
+        </div>
+      </div>
       </div>
 
       {/* 标记列表面板 */}
@@ -3085,8 +3093,6 @@ function RulerBar({
   contentW,
   /// 刻度线从顶边垂下(上方刻度尺;默认从底边向上)。
   hang,
-  /// 播放头(ticks):绘制红色指示器(画在刻度之上)。
-  playheadTicks,
   onSeekTicks,
 }: {
   num: number;
@@ -3095,7 +3101,6 @@ function RulerBar({
   viewW: number;
   contentW: number;
   hang?: boolean;
-  playheadTicks?: number;
   onSeekTicks?: (t: number) => void;
 }) {
   const barRef = useRef<HTMLDivElement>(null);
@@ -3165,42 +3170,7 @@ function RulerBar({
       );
     }
   }
-  // 播放头指示器:红竖线贯穿 + 指向刻度的三角,画在刻度之上(不被遮盖)
-  const headPx = playheadTicks != null ? playheadTicks * pxPerTick - scrollX : -1;
-  if (headPx >= -6 && headPx <= viewW + 6) {
-    ticks.push(
-      <div
-        key="playhead-line"
-        style={{
-          position: "absolute",
-          left: headPx - 1,
-          top: 0,
-          width: 2,
-          height: "100%",
-          background: "#ff5f5f",
-          zIndex: 3,
-          pointerEvents: "none",
-        }}
-      />,
-      <div
-        key="playhead-tri"
-        style={{
-          position: "absolute",
-          left: headPx - 5,
-          ...(hang ? { top: 0 } : { bottom: 0 }),
-          width: 0,
-          height: 0,
-          borderLeft: "5px solid transparent",
-          borderRight: "5px solid transparent",
-          ...(hang
-            ? { borderTop: "6px solid #ff5f5f" }
-            : { borderBottom: "6px solid #ff5f5f" }),
-          zIndex: 3,
-          pointerEvents: "none",
-        }}
-      />
-    );
-  }
+  // 播放头指示器已移至轨道区上方统一 DOM 播放头(单一元素横跨刻度尺与轨道)
   return (
     <div
       ref={barRef}
