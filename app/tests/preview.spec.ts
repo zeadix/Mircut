@@ -226,6 +226,33 @@ test("预览画布:视频区域外拖拽平移画布,滚动条联动", async ({ 
   const fb2 = (await frame.boundingBox())!;
   expect(fb2.x).toBeCloseTo(fb.x + 70, 0); // 右拖 → 画布右移(滚动左移)
   expect(fb2.y).toBeCloseTo(fb.y - 30, 0); // 上拖 → 画布上移(滚动下移)
+
+  // 复位为适应窗口(画布 241 宽 < 窗口 880 宽:水平方向小于窗口也可拖)
+  await page.locator("button[title^='画布缩放']").click();
+  await page.waitForTimeout(150);
+  const fbFit = (await frame.boundingBox())!;
+  const hbFit = (await host.boundingBox())!;
+  expect(fbFit.width).toBeLessThan(hbFit.width);
+
+  // 适应窗口下从左侧空白持续左拖到极限:画布右缘恰好贴窗口左缘(不越界)
+  await page.mouse.move(hbFit.x + 10, fbFit.y + fbFit.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(hbFit.x + 10 - i * 200, fbFit.y + fbFit.height / 2, { steps: 2 });
+  await page.mouse.up();
+  const fbEnd = (await frame.boundingBox())!;
+  expect(fbEnd.x + fbEnd.width).toBeCloseTo(hbFit.x, 0);
+
+  // 反向极限:画布左缘恰好贴窗口右缘
+  await page.mouse.move(hbFit.x + 10, fbFit.y + fbFit.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move(hbFit.x + 10 + i * 200, fbFit.y + fbFit.height / 2, { steps: 2 });
+  await page.mouse.up();
+  const fbEnd2 = (await frame.boundingBox())!;
+  expect(fbEnd2.x).toBeCloseTo(hbFit.x + hbFit.width, 0);
+
+  // 复位回适应窗口居中
+  await page.mouse.dblclick(hbFit.x + 10, fbFit.y + fbFit.height / 2);
+  await expect.poll(async () => (await frame.boundingBox())!.x).toBeCloseTo(fbFit.x, 0);
 });
 
 test("时间轴播放头:单一元素横跨刻度尺与轨道,播放时同步移动", async ({ page }) => {

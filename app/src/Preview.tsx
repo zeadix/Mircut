@@ -349,15 +349,28 @@ const [url, setUrl] = useState<string | null>(null);
   /// 居中/重绑滚轮监听/重挂 RO。
   const [hostNode, setHostNode] = useState<HTMLElement | null>(null);
   const [framePx, setFramePx] = useState<{ w: number; h: number } | null>(null);
+  const framePxRef = useRef<{ w: number; h: number } | null>(null);
+  framePxRef.current = framePx;
   /// 复位为适应窗口(measure 的 resize 检测与分辨率切换共用)。
   const [stageZoom, setStageZoom] = useState(1);
   const stageZoomRef = useRef(1);
   const resetStageZoom = useCallback(() => {
     stageZoomRef.current = 1;
     setStageZoom(1);
+    // 倍率已是 1 时 setStageZoom 同值不触发居中 effect(如适应窗口下
+    // 拖离后双击空白复位):直接把滚动位置设回内容中心
+    const host = frameHostRef.current;
+    const fp = framePxRef.current;
+    const hs = hostSizeRef.current;
+    if (host && fp && hs.w > 0) {
+      host.scrollLeft = (hs.w + fp.w) / 2;
+      host.scrollTop = (hs.h + fp.h) / 2;
+    }
   }, []);
   /// 宿主内容区尺寸(缩放补偿与居中用;滚动条出现会使其变小)。
   const [hostSize, setHostSize] = useState({ w: 0, h: 0 });
+  const hostSizeRef = useRef(hostSize);
+  hostSizeRef.current = hostSize;
   /// 面板外框尺寸(offset,含滚动条):只有它变化才是真 resize;
   /// 缩放出滚动条引起的 clientSize 变化不能触发"复位为适应窗口"。
   const hostOuterRef = useRef<{ w: number; h: number } | null>(null);
@@ -1203,8 +1216,11 @@ const [url, setUrl] = useState<string | null>(null);
       {composing && (() => {
         const zw = (framePx?.w ?? 0) * stageZoom;
         const zh = (framePx?.h ?? 0) * stageZoom;
-        /// 画布超出可视区(该方向出现滚动条)—— 抓取平移的启用条件。
-        const panAvailable = !!framePx && (zw > hostSize.w + 0.5 || zh > hostSize.h + 0.5);
+        /// 有空白可抓(画布任一边与窗口不重合)即可拖拽。平移范围无需
+        /// 自行夹取:pad=V 布局下滚动范围两端恰好是"画布边缘贴窗口边缘"
+        /// (sl=0 ↔ 左缘贴窗口右缘;sl_max ↔ 右缘贴窗口左缘),浏览器
+        /// 对 scroll 的物理钳制天然等于合法范围。
+        const panAvailable = !!framePx && (Math.abs(zw - hostSize.w) > 0.5 || Math.abs(zh - hostSize.h) > 0.5);
         return (
         <div
           ref={(el) => {
@@ -1240,7 +1256,7 @@ const [url, setUrl] = useState<string | null>(null);
             onPointerDown={(e) => {
               // 视频区域内的按下交给舞台(自动选取/变换框手柄)
               if ((e.target as HTMLElement).closest?.("[data-veditor-comp-frame]")) return;
-              // 抓取平移:仅在画布超出可视区(该方向出现滚动条)时启用
+              // 抓取平移:画布与窗口完全重合(无空白可抓)时禁用
               if (!panAvailable || e.button !== 0) return;
               const host = frameHostRef.current;
               if (!host) return;
@@ -1252,9 +1268,20 @@ const [url, setUrl] = useState<string | null>(null);
               const p = panRef.current;
               const host = frameHostRef.current;
               if (!p || !host) return;
-              // 平移 = 反向拖动滚动容器(滚动条位置随之联动)
-              host.scrollLeft = p.sl - (e.clientX - p.x);
-              host.scrollTop = p.st - (e.clientY - p.y);
+              // 平移 = 反向拖动滚动容器(滚动条位置随之联动);
+              // 夹取在"画布边缘贴窗口边缘":左缘不越过窗口右缘
+              // (sl ≥ V−V_w)、右缘不越过窗口左缘(sl ≤ V+S)
+              const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+              host.scrollLeft = clamp(
+                p.sl - (e.clientX - p.x),
+                Math.max(0, hostSize.w - host.clientWidth),
+                Math.min(hostSize.w + zw, host.scrollWidth - host.clientWidth)
+              );
+              host.scrollTop = clamp(
+                p.st - (e.clientY - p.y),
+                Math.max(0, hostSize.h - host.clientHeight),
+                Math.min(hostSize.h + zh, host.scrollHeight - host.clientHeight)
+              );
             }}
             onPointerUp={() => {
               if (!panRef.current) return;
