@@ -1685,21 +1685,21 @@ const [url, setUrl] = useState<string | null>(null);
         );
       })()}
 
-      {/* 时间码 */}
-      <span
-        style={{
-          position: "absolute",
-          right: 8,
-          bottom: 4,
-          fontSize: 11,
-          color: "#666",
-          pointerEvents: "none",
-        }}
-      >
-        {assetPreview
-          ? "素材预览"
-          : `${(playheadTicks / fps).toFixed(2)}s [${renderMode}]${composing ? ` ${layers.length}层` : ""}`}
-      </span>
+      {/* 状态角标:素材预览提示(合成模式的时间/引擎信息不再重复展示) */}
+      {assetPreview && (
+        <span
+          style={{
+            position: "absolute",
+            right: 8,
+            bottom: 4,
+            fontSize: 11,
+            color: "#666",
+            pointerEvents: "none",
+          }}
+        >
+          素材预览
+        </span>
+      )}
 
       {/* 面板高度拖拽手柄 */}
       <div

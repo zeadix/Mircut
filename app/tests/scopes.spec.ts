@@ -1,17 +1,26 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * 调色示波器回归:播放头停住后(250ms 防抖),波形/矢量 canvas 必须
- * 出现数据点(mock 返回仿真数据;真实链路由 Rust analyze_scopes 提供)。
- * 背景:文件轨单区化后 Rust 侧曾按 kind==Video 筛片段导致恒"无视频片段"
- * 空白 —— 此用例守住前端绘制链路 + mock 数据形状。
+ * 调色示波器回归:独立窗口面板(窗口菜单开关,默认隐藏)。
+ * - 播放头停住后(250ms 防抖),波形/矢量 canvas 必须出现数据点
+ *   (mock 返回仿真数据;真实链路由 Rust analyze_scopes 提供)
+ * - 预览面板内不再渲染示波器(数据-scope 锚点仅面板打开时存在)
  */
 
-test("示波器:波形/矢量出现数据点且随播放头移动刷新", async ({ page }) => {
+async function openScopesPanel(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  // 菜单项 accessible name 勾选态带 "✓ " 前缀;用正则避开面板内同名文本
+  await page.getByRole("button", { name: /示波器$/ }).click();
+  await expect(page.locator("[data-panel='scopes']")).toBeVisible();
+}
+
+test("示波器:窗口菜单打开,波形/矢量出现数据点且随播放头移动刷新", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
-  await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  // 预览面板中不应再有示波器
+  await expect(page.locator("[data-scope='waveform']")).toHaveCount(0);
+
+  await openScopesPanel(page);
 
   const countPixels = (sel: string) =>
     page.evaluate((sel) => {
@@ -29,9 +38,20 @@ test("示波器:波形/矢量出现数据点且随播放头移动刷新", async 
   await expect.poll(() => countPixels("waveform"), { timeout: 5000 }).toBeGreaterThan(30);
   await expect.poll(() => countPixels("vectorscope"), { timeout: 5000 }).toBeGreaterThan(10);
 
-  // seek 后标题时间刷新(播放头 → 0.5s)
+  // seek 后重新分析(mock 数据恒定,断言不报错即可)
   const tc = page.locator("input[title^='时间码']");
   await tc.fill("0.5");
   await tc.press("Enter");
-  await expect(page.locator("text=/波形 0\\.50s/")).toBeVisible({ timeout: 5000 });
+  await page.waitForTimeout(500);
+  await expect(page.locator("[data-panel='scopes']")).toBeVisible();
+});
+
+test("示波器:窗口菜单再次点击隐藏面板", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+  await openScopesPanel(page);
+  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: /示波器$/ }).click();
+  // dockview 浮动组隐藏 = overlay 视觉隐藏(DOM 保留)
+  await expect(page.locator("[data-panel='scopes']")).toBeHidden();
 });

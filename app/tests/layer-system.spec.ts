@@ -107,9 +107,9 @@ test("类型开关:关闭后该类块置灰、预览不合成、不可命中", a
   const tc = page.locator("input[title^='时间码']");
   await tc.fill("3.5");
   await tc.press("Enter");
-  await expect(page.getByText(/ 1层/).first()).toBeVisible({ timeout: 5000 });
+  await expect(page.locator("[data-veditor-layer]")).toHaveCount(1, { timeout: 5000 });
 
-  // 关闭图片类型 → 预览层清零(无"N层"状态)
+  // 关闭图片类型 → 预览层清零
   await page.locator("button[title^='图片元素参与合成']").first().click();
   await expect
     .poll(
@@ -118,7 +118,7 @@ test("类型开关:关闭后该类块置灰、预览不合成、不可命中", a
       { timeout: 5000 }
     )
     .toBe(false);
-  await expect(page.getByText(/ 0层/).first()).toBeVisible({ timeout: 5000 });
+  await expect(page.locator("[data-veditor-layer]")).toHaveCount(0, { timeout: 5000 });
 
   // 图片块(90-180 ticks = 45-90px)置灰:采样块中心。判据:灰罩
   // rgba(110,116,128,0.55) 会把任何内容拉到距罩灰 ≤66(每通道)的范围内,

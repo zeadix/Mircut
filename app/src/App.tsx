@@ -224,7 +224,16 @@ const panelComponents = {
             }}
           />
         </div>
-        <Scopes playheadTicks={c.playhead} fps={c.fps} playing={c.playing} />
+      </div>
+    );
+  },
+  scopes: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="scopes" style={{ height: "100%", overflowY: "auto" }}>
+        <ErrorBoundary label="示波器面板">
+          <Scopes playheadTicks={c.playhead} playing={c.playing} />
+        </ErrorBoundary>
       </div>
     );
   },
@@ -375,6 +384,7 @@ const PANEL_IDS = [
   "preview",
   "timeline",
   "inspector",
+  "scopes",
   "subtitles",
   "text",
   "sticker",
@@ -387,15 +397,17 @@ const panelTitle = (id: string): string =>
       ? t("menu.panelPreview")
       : id === "timeline"
         ? t("menu.panelTimeline")
-        : id === "inspector"
-          ? t("menu.panelInspector")
-          : id === "subtitles"
-            ? t("panel.subtitles")
-            : id === "text"
-              ? t("panel.texts")
-              : id === "sticker"
-                ? t("panel.stickers")
-                : t("panel.packs");
+          : id === "inspector"
+            ? t("menu.panelInspector")
+            : id === "scopes"
+              ? t("panel.scopes")
+              : id === "subtitles"
+                ? t("panel.subtitles")
+                : id === "text"
+                  ? t("panel.texts")
+                  : id === "sticker"
+                    ? t("panel.stickers")
+                    : t("panel.packs");
 
 export default function App() {  /// 全局编辑器状态(store):doc/selected/playing/playhead/status。
   const doc = useEditor((s) => s.doc);
@@ -569,6 +581,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   /// 工作面板(字幕/文字/贴纸/素材包)默认不在布局中:按需经窗口菜单添加
   /// (addPanel 浮动窗口),再次点击隐藏(eof setVisible)。
   const [hiddenPanels, setHiddenPanels] = useState<string[]>([
+    "scopes",
     "subtitles",
     "text",
     "sticker",

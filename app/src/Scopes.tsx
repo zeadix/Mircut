@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
   playheadTicks: number;
-  fps: number;
   playing?: boolean;
   dragging?: boolean;
 }
@@ -14,7 +13,7 @@ interface ScopeData {
 }
 
 /// 调色示波器:亮度波形图 + UV 矢量示波器(规格 P1)。
-function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
+function ScopesInner({ playheadTicks, playing, dragging }: Props) {
   const [data, setData] = useState<ScopeData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const waveRef = useRef<HTMLCanvasElement>(null);
@@ -93,9 +92,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "0 16px 8px", background: "var(--bg)" }}>
       <div>
-        <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>
-          波形 {(playheadTicks / fps).toFixed(2)}s
-        </div>
+        <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>波形</div>
         <canvas
           ref={waveRef}
           data-scope="waveform"
