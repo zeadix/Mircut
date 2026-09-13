@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
@@ -11,15 +11,15 @@ import AudioBus from "./AudioBus";
 import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, Play, Pause, Stop } from "@phosphor-icons/react";
 import TimecodeScrub from "./TimecodeScrub";
 import {
-  DockviewReact,
-  DockviewDefaultTab,
-  type DockviewApi,
-  type DockviewReadyEvent,
-  type IDockviewPanelHeaderProps,
-  themeDark,
-  themeLight,
-} from "dockview-react";
-import "dockview-react/dist/styles/dockview.css";
+  Layout,
+  Model,
+  Actions,
+  DockLocation,
+  type TabNode,
+  type IJsonModel,
+  type IJsonTabNode,
+} from "flexlayout-react";
+import "flexlayout-react/style/dark.css";
 import { useEditor } from "./store";
 import { toggleTheme } from "./theme";
 import { t } from "./i18n";
@@ -36,20 +36,6 @@ import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
 import { PanelContext, usePanel } from "./PanelContext";
 
-/// 面板标签:双击 = 最大化/恢复(折叠其余区域),tooltip 提示拖拽/折叠交互。
-/// DockviewDefaultTab 会把其余 props(含 onDoubleClick/title)透传到根元素。
-/// 用隐式返回箭头:文件内不出现组件级 `return (`(hooks-rule 静态防护以它定位主 return)。
-const PanelTab = (props: IDockviewPanelHeaderProps) => (
-  <DockviewDefaultTab
-    {...props}
-    onDoubleClick={() => {
-      if (props.api.isMaximized()) props.api.exitMaximized();
-      else props.api.maximize();
-    }}
-    title={`${props.api.title ?? ""}(拖拽移动/停靠面板;双击最大化/恢复)`}
-  />
-);
-
 /// 时间码显示:mm:ss.ff。
 function fmtTimecode(secs: number): string {
   if (!Number.isFinite(secs) || secs < 0) secs = 0;
@@ -65,10 +51,10 @@ function parseTimecode(s: string): number {
   return parts.reduce((acc, p) => acc * 60 + p, 0);
 }
 
-// ===== dockview 面板注册(模块级:引用稳定,杜绝面板重挂载/整体失效) =====
+// ===== 面板注册(模块级:引用稳定,杜绝面板重挂载/整体失效) =====
 // 面板经 Portal 挂载,props 闭包会陈旧 —— 状态/回调一律经 PanelContext 读取;
 // 这里只做 usePanel() -> 实体组件 props 的转发。
-const panelComponents = {
+const panelComponents: Record<string, () => ReactElement> = {
   media: () => {
     const c = usePanel();
     return (
@@ -350,33 +336,73 @@ const panelComponents = {
   },
 };
 
-/// 默认布局:左媒体库 | 中上预览 + 中下时间轴 | 右属性面板
-const buildDefaultLayout = (api: DockviewApi) => {
-  api.clear();
-  api.addPanel({ id: "preview", component: "preview", title: t("menu.panelPreview") });
-  api.addPanel({ id: "media", component: "media", title: t("menu.panelMedia"), position: { referencePanel: "preview", direction: "left" } });
-  api.addPanel({ id: "inspector", component: "inspector", title: t("menu.panelInspector"), position: { referencePanel: "preview", direction: "right" } });
-  api.addPanel({ id: "timeline", component: "timeline", title: t("menu.panelTimeline"), position: { referencePanel: "preview", direction: "below" } });
-  // 侧栏默认 280px(媒体库/属性面板各占一列,预览/时间轴吃剩余空间);
-  // 用户拖过分隔线后的尺寸由布局持久化接管
-  for (const id of ["media", "inspector"]) {
-    const panel = api.getPanel(id);
-    panel?.group.api.setSize({ width: 280 });
+/// 工作面板(独立浮动窗口语义)—— 打开时加入布局后立即转浮动。
+const FLOAT_PANELS = new Set(["scopes", "subtitles", "text", "sticker", "packs"]);
+
+/// 面板 tab json(固定 id = 面板 id:窗口菜单显隐/hiddenPanels 同步依赖它)。
+const tabJson = (id: string): IJsonTabNode => ({
+  type: "tab",
+  id,
+  name: panelTitle(id),
+  component: id,
+  enableFloat: true,
+  enableFloatIcon: true,
+});
+
+/// 默认布局:左媒体库 | 中上预览 + 中下时间轴 | 右属性面板(比例近似原 280px 侧栏)。
+const buildDefaultLayout = (): IJsonModel => ({
+  global: {
+    tabEnableClose: true,
+    tabEnableFloatIcon: true,
+    // 全部 tab 保活渲染(dockview 行为):非激活面板内容仍在 DOM,
+    // 媒体库/时间轴等切换标签不丢状态
+    tabEnableRenderOnDemand: false,
+    tabSetEnableMaximize: true,
+    tabSetAutoSelectTab: true,
+    tabSetEnableDivide: true,
+  },
+  borders: [],
+  layout: {
+    id: "root",
+    type: "row",
+    weight: 100,
+    children: [
+      { type: "tabset", weight: 19.5, children: [tabJson("media")] },
+      {
+        type: "row",
+        weight: 60.5,
+        children: [
+          { type: "tabset", weight: 34, children: [tabJson("preview")] },
+          { type: "tabset", weight: 66, children: [tabJson("timeline")] },
+        ],
+      },
+      { type: "tabset", weight: 20, children: [tabJson("inspector")] },
+    ],
+  },
+});
+
+/// 从 localStorage 加载模型;旧 dockview 结构/损坏数据回退默认布局。
+const loadModel = (): Model => {
+  try {
+    const saved = localStorage.getItem("veditor-dock-layout");
+    if (saved) {
+      const json = JSON.parse(saved);
+      // flexlayout 顶层必有 layout 节点;dockview 旧结构没有 → 回退
+      if (json && typeof json === "object" && json.layout) return Model.fromJson(json);
+    }
+  } catch {
+    /* 布局数据损坏:回退默认 */
   }
-  // 时间轴默认高度翻倍(约 2/3 列高,预览 1/3):
-  // 传输栏(播放控制+时间码)移入时间轴面板顶部,配合更高的轨道区
-  const tl = api.getPanel("timeline");
-  tl?.group.api.setSize({ height: Math.round(api.height * 0.66) });
+  return Model.fromJson(buildDefaultLayout());
 };
 
-/// dockview 8:组级显隐 API 在内部 DockviewComponent 上(公开 DockviewApi 未转发,
-/// DockviewPanelApi 还特意 Omit 了 setVisible)。运行时经 api.component 访问。
-type DockComponent = {
-  setVisible: (group: unknown, visible: boolean) => void;
-  isVisible: (group: unknown) => boolean;
+/// 布局中第一个 tabset 的 id(菜单打开面板的落点)。
+const firstTabsetId = (m: Model): string | null => {
+  for (const child of m.getRootRow()!.getChildren()) {
+    if (child.getType() === "tabset") return child.getId();
+  }
+  return null;
 };
-const dockComponent = (api: DockviewApi): DockComponent | null =>
-  (api as unknown as { component?: DockComponent }).component ?? null;
 
 /// 窗口菜单管理的面板 id 与标题。
 const PANEL_IDS = [
@@ -461,132 +487,29 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [dragKind, setDragKind] = useState<"video" | "audio">("video");
   // 拖拽中的素材 id(时间轴块状落点轮廓用)
   const [dragAssetId, setDragAssetId] = useState<string | null>(null);
-  // dockview:api 引用 + 隐藏面板(窗口菜单可见性)
-  const dockApiRef = useRef<DockviewApi | null>(null);
+  // flexlayout:布局模型(含拖出浮动的面板) + 隐藏面板(窗口菜单可见性)
   const dockHostRef = useRef<HTMLDivElement | null>(null);
-  /// tab/组拖拽中:释放点在网格外时把面板转成独立浮动窗口。
-  const floatDragRef = useRef<{ panel: unknown; group: unknown } | null>(null);
+  const modelRef0 = useRef<Model | null>(null);
+  if (modelRef0.current === null) modelRef0.current = loadModel();
+  const [model, setModel] = useState<Model>(modelRef0.current);
+  const [hiddenPanels, setHiddenPanels] = useState<string[]>(() =>
+    PANEL_IDS.filter((id) => modelRef0.current!.getNodeById(id) === undefined)
+  );
 
-  /// 按布局真实可见性重算窗口菜单勾选态:组级显隐会同时影响同组多个面板,
-  /// 也覆盖 fromJSON 恢复的隐藏组。
-  const syncHiddenFromLayout = (api: DockviewApi) => {
-    const comp = dockComponent(api);
-    if (!comp) return;
-    setHiddenPanels(
-      PANEL_IDS.filter((id) => {
-        const p = api.getPanel(id);
-        // 面板不在布局中(被 × 关闭/工作面板未创建)= 隐藏,
-        // 否则打开任一面板后其余未创建面板被误标"可见",菜单点击变成无效的隐藏操作
-        return p ? !comp.isVisible(p.group) : true;
-      })
-    );
+  /// 按布局真实可见性重算窗口菜单勾选态(含浮动 subLayouts 中的面板)。
+  const syncHiddenFromLayout = (m: Model) => {
+    setHiddenPanels(PANEL_IDS.filter((id) => m.getNodeById(id) === undefined));
   };
-  // tab/组拖拽结束:释放点在 dock 网格之外(顶栏/边缘外)时,
-  // 把被拖面板转成独立浮动窗口落在鼠标处 —— "拖出来变成独立窗口"
-  useEffect(() => {
-    const onUp = (ev: PointerEvent) => {
-      const d = floatDragRef.current;
-      floatDragRef.current = null;
-      const api = dockApiRef.current;
-      const host = dockHostRef.current;
-      if (!d || !api || !host) return;
-      const r = host.getBoundingClientRect();
-      const inside =
-        ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
-      if (inside) return; // 网格内交由 dockview 正常停靠
-      const x = Math.max(8, ev.clientX - r.left - 140);
-      const y = Math.max(8, ev.clientY - r.top - 10);
-      // 等本帧 dockview 拖拽收尾后再转换,避免与内部 DnD 竞态
-      setTimeout(() => {
-        try {
-          if (d.panel) {
-            (api as unknown as { addFloatingGroup: (p: unknown, o?: object) => void }).addFloatingGroup(d.panel, { x, y, width: 480, height: 360 });
-          } else {
-            (api as unknown as { addFloatingGroup: (g: unknown, o?: object) => void }).addFloatingGroup(d.group, { x, y, width: 480, height: 360 });
-          }
-          syncHiddenFromLayout(api);
-        } catch {
-          /* 拖拽已自行结束等竞态,忽略 */
-        }
-      }, 0);
-    };
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") floatDragRef.current = null; // 取消拖拽不残留
-    };
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("keydown", onKey);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // 浮动窗口标题栏拖动移动:dndStrategy=pointer 时 dockview 的指针拖拽源会
-  // 抢占标题栏 pointerdown(其 overlay 移动逻辑因此永远不触发)。改为捕获阶段
-  // 拦截,直接移动 overlay 元素,松手后经 addFloatingGroup 重新锚定(内部
-  // 状态/持久化同步)。Shift+拖保留给 dockview 原生行为(拖回布局入坞)。
-  useEffect(() => {
-    const onTitlebarDown = (ev: PointerEvent) => {
-      if (ev.button !== 0 || ev.shiftKey) return;
-      const target = ev.target as HTMLElement | null;
-      const titlebar = target?.closest?.(".dv-floating-titlebar") as HTMLElement | null;
-      if (!titlebar) return;
-      const container = titlebar.closest(".dv-resize-container") as HTMLElement | null;
-      const host = dockHostRef.current;
-      if (!container || !host) return;
-      ev.stopImmediatePropagation();
-      ev.preventDefault();
-      const hostRect = host.getBoundingClientRect();
-      const cRect = container.getBoundingClientRect();
-      const grabX = ev.clientX - cRect.left;
-      const grabY = ev.clientY - cRect.top;
-      const move = (e2: PointerEvent) => {
-        const x = Math.max(-40, e2.clientX - hostRect.left - grabX);
-        const y = Math.max(0, e2.clientY - hostRect.top - grabY);
-        container.style.left = `${x}px`;
-        container.style.top = `${y}px`;
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        // 重新锚定:同步 dockview 内部位置(布局持久化正确)
-        const api = dockApiRef.current;
-        if (!api) return;
-        const x = Math.max(0, parseFloat(container.style.left) || 0);
-        const y = Math.max(0, parseFloat(container.style.top) || 0);
-        const group = (api.groups as unknown as { element?: HTMLElement }[]).find((g) =>
-          g.element ? container.contains(g.element) : false
-        );
-        if (group) {
-          try {
-            (api as unknown as { addFloatingGroup: (g: unknown, o?: object) => void }).addFloatingGroup(group, {
-              x,
-              y,
-              width: cRect.width,
-              height: cRect.height,
-            });
-          } catch {
-            /* 重新锚定失败保持样式位置即可 */
-          }
-        }
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-    };
-    window.addEventListener("pointerdown", onTitlebarDown, true);
-    return () => window.removeEventListener("pointerdown", onTitlebarDown, true);
-  }, []);
-
-  /// 工作面板(字幕/文字/贴纸/素材包)默认不在布局中:按需经窗口菜单添加
-  /// (addPanel 浮动窗口),再次点击隐藏(eof setVisible)。
-  const [hiddenPanels, setHiddenPanels] = useState<string[]>([
-    "scopes",
-    "subtitles",
-    "text",
-    "sticker",
-    "packs",
-  ]);
+  /// 持久化 + 菜单勾选同步(onModelChange / 显隐切换共用)。
+  const persistLayout = (m: Model) => {
+    try {
+      localStorage.setItem("veditor-dock-layout", JSON.stringify(m.toJson()));
+    } catch {
+      /* 隐私模式忽略 */
+    }
+    syncHiddenFromLayout(m);
+  };
   // 稳定引用:Preview effect 依赖此回调,内联箭头函数会致其循环重建(崩溃教训)
   const clearAssetPreview = useCallback(() => setAssetPreview(null), []);
   const rafRef = useRef<number>(0);
@@ -1608,55 +1531,37 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   if (!doc) return <div style={{ color: "var(--text)", padding: 24 }}>{t("status.loading")}</div>;
 
-
-  const onDockReady = (e: DockviewReadyEvent) => {
-    dockApiRef.current = e.api;
-    // 拖拽起始记录(dockview-react 不透传 willDrag 事件,经 component API 订阅)
-    const comp = (e.api as unknown as { component?: {
-      onWillDragPanel: (cb: (ev: { panel: unknown; group: unknown }) => void) => { dispose: () => void };
-      onWillDragGroup: (cb: (ev: { group: unknown }) => void) => { dispose: () => void };
-    } }).component;
-    if (comp) {
-      comp.onWillDragPanel((ev) => {
-        floatDragRef.current = { panel: ev.panel, group: ev.group };
-      });
-      comp.onWillDragGroup((ev) => {
-        floatDragRef.current = { panel: null, group: ev.group };
-      });
-    }
-    const saved = localStorage.getItem("veditor-dock-layout");
-    if (saved) {
-      try {
-        e.api.fromJSON(JSON.parse(saved));
-      } catch {
-        /* 布局数据损坏:回退默认 */
-        buildDefaultLayout(e.api);
-        return;
-      }
-      // 恢复的布局可能带隐藏组(保存时的显隐状态会写进 JSON):
-      // 同步菜单勾选态,否则菜单显示"打开"而面板实际隐藏。
-      syncHiddenFromLayout(e.api);
-      return;
-    }
-    buildDefaultLayout(e.api);
+  const factory = (node: TabNode) => {
+    const comp = panelComponents[node.getComponent() ?? ""];
+    return comp ? comp() : <div style={{ padding: 12 }}>未知面板:{node.getComponent()}</div>;
   };
 
+  /// 窗口菜单面板显隐:显示 = 加入第一个 tabset(工作面板随后转独立浮动
+  /// 窗口);隐藏 = deleteTab(浮动/停靠均从布局移除,菜单勾选随动)。
   const togglePanelVisible = (id: string) => {
-    const api = dockApiRef.current;
-    const comp = api ? dockComponent(api) : null;
     const show = hiddenPanels.includes(id);
-    const panel = api?.getPanel(id);
-    if (panel && comp) {
-      // dockview 8:组级显隐在内部 DockviewComponent 上,公开 DockviewApi 未转发;
-      // 必须传"组"。此前误调不存在的 api.setVisible → 点击即 TypeError 打崩渲染树(白屏)。
-      comp.setVisible(panel.group, show);
-    } else if (!panel && show && api) {
-      // 面板不在当前布局(被标签×关闭/保存时缺失):以浮动窗口添加,
-      // 避免挤占时间轴等既有面板的标签位(工作面板 = 独立窗口)
-      void api.addPanel({ id, component: id, title: panelTitle(id), floating: true });
+    if (show) {
+      const toId = firstTabsetId(model);
+      if (!toId) {
+        // 布局空了:直接作为唯一 tabset 重建(极端兜底)
+        model.doAction(Actions.addTab({ ...tabJson(id), id }, model.getRootRow()!.getId(), DockLocation.CENTER, -1));
+      } else {
+        // 工作面板 select=false(随即转浮窗,不抢激活);主面板激活显示
+        model.doAction(Actions.addTab(tabJson(id), toId, DockLocation.CENTER, -1, !FLOAT_PANELS.has(id)));
+      }
+      if (FLOAT_PANELS.has(id)) {
+        // 转浮动需读取新 tab 的容器矩形:等 React 渲染出 tab 后再 popout
+        setTimeout(() => {
+          model.doAction(Actions.popoutTab(id, "float"));
+          persistLayout(model);
+        }, 50);
+      } else {
+        persistLayout(model);
+      }
+    } else {
+      model.doAction(Actions.deleteTab(id));
+      persistLayout(model);
     }
-    if (api) syncHiddenFromLayout(api);
-    else setHiddenPanels((prev) => (show ? prev.filter((p) => p !== id) : [...prev, id]));
   };
 
   return (
@@ -1734,17 +1639,15 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               items: [
                 {
                   label: t("menu.saveLayout"),
-                  fn: () => {
-                    const api = dockApiRef.current;
-                    if (api) localStorage.setItem("veditor-dock-layout", JSON.stringify(api.toJSON()));
-                  },
+                  fn: () => persistLayout(model),
                 },
                 {
                   label: t("menu.resetLayout"),
                   fn: () => {
                     localStorage.removeItem("veditor-dock-layout");
-                    const api = dockApiRef.current;
-                    if (api) buildDefaultLayout(api);
+                    const fresh = Model.fromJson(buildDefaultLayout());
+                    modelRef0.current = fresh;
+                    setModel(fresh);
                     setHiddenPanels([]);
                   },
                 },
@@ -1789,19 +1692,10 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
         <div style={{ flex: 1, minHeight: 0 }}>
           <PanelContext.Provider value={panelValue}>
             <div ref={dockHostRef} className="dock-host" style={{ width: "100%", height: "100%" }}>
-              <DockviewReact
-                components={panelComponents}
-                onReady={onDockReady}
-                dndStrategy="pointer"
-                defaultTabComponent={PanelTab}
-                className={theme === "light" ? themeLight.className : themeDark.className}
-                // 浮动窗口拖拽柄 = 标题栏(tabbar 模式无移动手柄,窗口拖不动);
-                // 标签条经 CSS 压至 24px,消除默认 35px 的空白观感
-                // 根级边缘放置:拖到网格最外沿出现边缘高亮,释放即整行/整列停靠
-                dndEdges={{
-                  size: { value: 70, type: "pixels" },
-                  activationSize: { value: 24, type: "pixels" },
-                }}
+              <Layout
+                model={model}
+                factory={factory}
+                onModelChange={(m) => persistLayout(m)}
               />
             </div>
           </PanelContext.Provider>
