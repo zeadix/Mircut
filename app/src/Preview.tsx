@@ -391,6 +391,9 @@ const [url, setUrl] = useState<string | null>(null);
   /// 滚轮锚点:缩放后保持光标下的内容点不动(scroll 补偿)。
   /// 记录滚动位置而非读取时机,布局 effect 里用旧值精确求解。
   const zoomAnchorRef = useRef<{ mx: number; my: number; sl: number; st: number } | null>(null);
+  /// 空白区拖拽平移(抓取滚动):仅在画布超出可视区(出现滚动条)时启用。
+  const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
+  const [panning, setPanning] = useState(false);
   /// 合成分辨率变化时复位缩放(画布语义变了)。
   useEffect(() => {
     stageZoomRef.current = 1;
@@ -1200,6 +1203,8 @@ const [url, setUrl] = useState<string | null>(null);
       {composing && (() => {
         const zw = (framePx?.w ?? 0) * stageZoom;
         const zh = (framePx?.h ?? 0) * stageZoom;
+        /// 画布超出可视区(该方向出现滚动条)—— 抓取平移的启用条件。
+        const panAvailable = !!framePx && (zw > hostSize.w + 0.5 || zh > hostSize.h + 0.5);
         return (
         <div
           ref={(el) => {
@@ -1207,11 +1212,13 @@ const [url, setUrl] = useState<string | null>(null);
             setHostNode(el);
           }}
           data-veditor-comp-host=""
+          className={stageZoom === 1 ? "no-scrollbar" : undefined}
           style={{
             width: "100%",
             height: "100%",
             flexShrink: 0,
             overflow: "auto",
+            cursor: panning ? "grabbing" : undefined,
             // 关闭 Chromium scroll anchoring:层 DOM 挂载/替换会触发锚定重置,
             // 把程序设置好的 scroll 位置(居中/缩放锚点)拉回 0
             overflowAnchor: "none",
@@ -1223,16 +1230,42 @@ const [url, setUrl] = useState<string | null>(null);
               position: "relative",
               width: framePx ? zw + hostSize.w * 2 : "100%",
               height: framePx ? zh + hostSize.h * 2 : "100%",
+              // 空白区抓手光标(仅画布超出可视区、可平移时)
+              cursor: panning ? "grabbing" : panAvailable ? "grab" : "default",
             }}
             onDoubleClick={(e) => {
               // 双击画布外空白(sizer 边距):复位缩放;层上的双击另行处理
               if (e.target === e.currentTarget) resetStageZoom();
             }}
+            onPointerDown={(e) => {
+              // 视频区域内的按下交给舞台(自动选取/变换框手柄)
+              if ((e.target as HTMLElement).closest?.("[data-veditor-comp-frame]")) return;
+              // 抓取平移:仅在画布超出可视区(该方向出现滚动条)时启用
+              if (!panAvailable || e.button !== 0) return;
+              const host = frameHostRef.current;
+              if (!host) return;
+              panRef.current = { x: e.clientX, y: e.clientY, sl: host.scrollLeft, st: host.scrollTop };
+              setPanning(true);
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const p = panRef.current;
+              const host = frameHostRef.current;
+              if (!p || !host) return;
+              // 平移 = 反向拖动滚动容器(滚动条位置随之联动)
+              host.scrollLeft = p.sl - (e.clientX - p.x);
+              host.scrollTop = p.st - (e.clientY - p.y);
+            }}
+            onPointerUp={() => {
+              if (!panRef.current) return;
+              panRef.current = null;
+              setPanning(false);
+            }}
           >
           <div
             style={
               framePx
-                ? { position: "absolute", left: hostSize.w, top: hostSize.h, width: zw, height: zh }
+                ? { position: "absolute", left: hostSize.w, top: hostSize.h, width: zw, height: zh, cursor: "default" }
                 : { position: "relative", width: "100%", height: "100%" }
             }
           >

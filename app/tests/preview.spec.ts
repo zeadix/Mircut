@@ -194,6 +194,40 @@ test("预览画布缩放锚点:光标下的内容点在缩放前后保持不动"
   expect(Math.abs(after2.uy - before2.uy)).toBeLessThan(1.5);
 });
 
+test("预览画布:视频区域外拖拽平移画布,滚动条联动", async ({ page }) => {
+  await addAssetToTimeline(page);
+  const host = page.locator("[data-veditor-comp-host]");
+  const frame = page.locator("[data-veditor-comp-frame]");
+  await expect(frame).toBeVisible();
+  const fitBox = (await frame.boundingBox())!;
+
+  // 放大两档(高度超出可视区 → 滚动条出现,平移可用)
+  await page.mouse.move(fitBox.x + fitBox.width / 2, fitBox.y + fitBox.height / 2);
+  await page.mouse.wheel(0, -120);
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(150);
+
+  // 初始居中:舞台左缘之外有可见空白;光标放到左侧空白按住拖动
+  const fb = (await frame.boundingBox())!;
+  const hb = (await host.boundingBox())!;
+  expect(fb.x).toBeGreaterThan(hb.x + 40); // 有空白可抓
+  const before = await host.evaluate((el) => ({ sl: el.scrollLeft, st: el.scrollTop }));
+  const px = hb.x + 10;
+  const py = fb.y + fb.height / 2;
+  await page.mouse.move(px, py);
+  await page.mouse.down();
+  await page.mouse.move(px + 70, py - 30, { steps: 6 });
+  await page.mouse.up();
+
+  // 平移 = 反向拖动滚动容器:滚动位置与舞台显示位置同步变化(滚动条联动)
+  const after = await host.evaluate((el) => ({ sl: el.scrollLeft, st: el.scrollTop }));
+  expect(after.sl).toBeCloseTo(before.sl - 70, 0);
+  expect(after.st).toBeCloseTo(before.st + 30, 0);
+  const fb2 = (await frame.boundingBox())!;
+  expect(fb2.x).toBeCloseTo(fb.x + 70, 0); // 右拖 → 画布右移(滚动左移)
+  expect(fb2.y).toBeCloseTo(fb.y - 30, 0); // 上拖 → 画布上移(滚动下移)
+});
+
 test("时间轴播放头:单一元素横跨刻度尺与轨道,播放时同步移动", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
