@@ -14,7 +14,6 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
   await expect(page.locator('[data-veditor-drop="timeline"]')).toBeVisible();
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "导入" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "文件夹" })).toBeVisible();
   await expect(page.getByText("音乐库")).toHaveCount(0);
 
   // 2. 媒体库有 mock 素材,双击追加到时间轴

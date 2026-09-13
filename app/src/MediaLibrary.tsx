@@ -3,6 +3,7 @@ import * as api from "./api";
 import type { Document } from "./types";
 import MiniWaveform from "./MiniWaveform";
 import TransPreview from "./TransPreview";
+import PopupPortal from "./PopupPortal";
 import { FolderOpen } from "@phosphor-icons/react";
 
 interface Props {
@@ -55,7 +56,9 @@ function MediaLibraryInner({
   onApplyPackItem,
   onRefresh,
 }: Props) {
-const [mediaGrid, setMediaGrid] = useState(true); // 默认网格视图
+const [importMenu, setImportMenu] = useState(false);
+  const importBtnRef = useRef<HTMLButtonElement>(null);
+  const [mediaGrid, setMediaGrid] = useState(true); // 默认网格视图
   const [mediaCat, setMediaCat] = useState<
     "all" | "video" | "audio" | "image" | "templates"
   >("all");
@@ -144,15 +147,39 @@ const [mediaGrid, setMediaGrid] = useState(true); // 默认网格视图
   return (
     <aside style={{ width: "100%", height: "100%", background: "var(--panel)", padding: 8, overflowY: "auto" }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-        <button className="btn" onClick={onPickFolder}><FolderOpen size={14} /> 导入</button>
-        <span style={{ flex: 1 }} />
         <button
+          ref={importBtnRef}
           className="btn"
-          title="选择文件夹,递归批量导入媒体文件(已导入自动跳过)"
-          onClick={onImportFolder}
+          title="导入媒体:选择文件(可多选)或文件夹(递归批量)"
+          onClick={() => setImportMenu((v) => !v)}
         >
-          <FolderOpen size={14} /> 文件夹
+          <FolderOpen size={14} /> 导入
         </button>
+        <PopupPortal open={importMenu} onClose={() => setImportMenu(false)} anchorRef={importBtnRef} minWidth={190}>
+          <button
+            className="btn"
+            style={{ width: "100%", justifyContent: "flex-start" }}
+            title="选择一个或多个媒体文件"
+            onClick={() => {
+              setImportMenu(false);
+              onPickFolder();
+            }}
+          >
+            文件…(可多选)
+          </button>
+          <button
+            className="btn"
+            style={{ width: "100%", justifyContent: "flex-start", marginTop: 4 }}
+            title="选择文件夹,递归批量导入(已导入自动跳过)"
+            onClick={() => {
+              setImportMenu(false);
+              onImportFolder();
+            }}
+          >
+            文件夹…(递归批量)
+          </button>
+        </PopupPortal>
+        <span style={{ flex: 1 }} />
         {mediaSel.size > 0 && (
           <button
             className="btn"
