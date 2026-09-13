@@ -98,6 +98,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
         </div>
         <canvas
           ref={waveRef}
+          data-scope="waveform"
           width={128}
           height={72}
           style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-pop)", display: "block" }}
@@ -107,6 +108,7 @@ function ScopesInner({ playheadTicks, fps, playing, dragging }: Props) {
         <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>矢量</div>
         <canvas
           ref={vectRef}
+          data-scope="vectorscope"
           width={72}
           height={72}
           style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-pop)", display: "block" }}

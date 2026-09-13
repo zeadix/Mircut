@@ -4,7 +4,7 @@ use crate::state::{AppState, RenderMode};
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::State;
-use veditor_core::{Ticks, TrackKind};
+use veditor_core::{Lane, Ticks, TrackKind};
 use veditor_render::Renderer;
 
 #[tauri::command(async)]
@@ -12,18 +12,21 @@ pub(crate) fn analyze_scopes(
     t: Ticks,
     state: State<'_, AppState>,
 ) -> Result<veditor_media::ScopeData, String> {
-    let (path, clip_start) = {
+    let (path, clip_start, source_in) = {
         let inner = state.inner.lock().unwrap();
+        // 视频片段 = 未隐藏的非音频轨上、lane 非 Audio 的非文字块
+        // (文件轨单区化:视频元素都在 File 轨上,不能按 kind==Video 筛)
         let clip = inner
             .doc
             .clips
             .iter()
             .filter(|c| c.start <= t && t < c.start + c.duration)
+            .filter(|c| c.lane != Some(Lane::Audio) && c.text.is_none())
             .filter(|c| {
                 inner
                     .doc
                     .track(&c.track_id)
-                    .is_some_and(|tr| tr.kind == TrackKind::Video && !tr.hidden)
+                    .is_some_and(|tr| tr.kind != TrackKind::Audio && !tr.hidden)
             })
             .max_by_key(|c| {
                 inner
@@ -37,13 +40,15 @@ pub(crate) fn analyze_scopes(
             return Err("该位置无视频片段".into());
         };
         let asset = inner.doc.asset(&clip.asset.asset_id).ok_or("素材缺失")?;
-        (asset.path.clone(), clip.start)
+        (asset.path.clone(), clip.start, clip.asset.source_in)
     };
     let tb = {
         let inner = state.inner.lock().unwrap();
         inner.doc.timebase
     };
-    let t_secs = tb.secs(t - clip_start);
+    // 片内时间换算到素材时间轴:入点偏移(source_in)+ 片内 ticks
+    // 片内时间换算到素材时间轴:入点偏移(source_in,秒)+ 片内 ticks→秒
+    let t_secs = source_in + tb.secs(t - clip_start);
     veditor_media::analyze_frame_scopes(&PathBuf::from(path), t_secs).map_err(|e| e.to_string())
 }
 

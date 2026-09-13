@@ -497,8 +497,16 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "log_js_error":
       return true;
     case "analyze_scopes":
-      // 示波器:mock 空数据(波形/矢量均为空)
-      return { waveform: [[], [], []], vectorscope: [] };
+      // 示波器:仿真数据(中间调亮度分布 + 少量色度点),供前端绘制链路测试
+      return {
+        waveform: Array.from({ length: 64 }, (_, x) =>
+          Array.from({ length: 64 }, (_, i) => 40 + Math.round(90 * Math.abs(Math.sin((x + i) / 24))))
+        ),
+        vectorscope: Array.from({ length: 96 }, (_, i) => [
+          128 + Math.round(40 * Math.cos(i / 5)),
+          128 + Math.round(40 * Math.sin(i / 5)),
+        ] as [number, number]),
+      };
     case "plugin:event|listen":
       return Math.floor(Math.random() * 1e6);
     case "plugin:event|unlisten":
