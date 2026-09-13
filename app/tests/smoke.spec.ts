@@ -9,10 +9,13 @@ import { test, expect } from "@playwright/test";
 test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page }) => {
   await page.goto("/");
 
-  // 1. 应用加载:顶栏/媒体库/时间轴可见
+  // 1. 应用加载:顶栏/媒体库/时间轴可见;导入区 = 导入(文件单/多选)+ 文件夹(批量)
   await expect(page.locator("header strong")).toHaveText("VEditor");
   await expect(page.locator('[data-veditor-drop="timeline"]')).toBeVisible();
   await expect(page.locator(".asset-card").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "导入" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "文件夹" })).toBeVisible();
+  await expect(page.getByText("音乐库")).toHaveCount(0);
 
   // 2. 媒体库有 mock 素材,双击追加到时间轴
   const assetCard = page.locator(".asset-card").first();

@@ -181,10 +181,15 @@ pub(crate) fn probe_media(path: String) -> Result<MediaInfo, String> {
     veditor_media::probe(&PathBuf::from(&path)).map_err(|e| e.to_string())
 }
 
-/// 扫描目录下的音频文件(递归,上限 200 个)——音乐/音效库批量导入用。
+/// 扫描目录下的媒体文件(递归,上限 200 个)—— 文件夹批量导入用。
+/// 覆盖音频/视频/图片(与"导入"文件对话框一致的媒体语义)。
 #[tauri::command(async)]
-pub(crate) fn scan_audio_dir(dir: String) -> Result<Vec<String>, String> {
-    const AUDIO_EXTS: [&str; 7] = ["mp3", "wav", "aac", "ogg", "flac", "m4a", "opus"];
+pub(crate) fn scan_media_dir(dir: String) -> Result<Vec<String>, String> {
+    const MEDIA_EXTS: [&str; 20] = [
+        "mp3", "wav", "aac", "ogg", "flac", "m4a", "opus", //
+        "mp4", "mov", "mkv", "webm", "avi", "m4v", //
+        "png", "jpg", "jpeg", "webp", "gif", "bmp", "avif",
+    ];
     let root = PathBuf::from(&dir);
     if !root.is_dir() {
         return Err("不是目录".into());
@@ -206,7 +211,7 @@ pub(crate) fn scan_audio_dir(dir: String) -> Result<Vec<String>, String> {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
                 .unwrap_or_default();
-            if AUDIO_EXTS.contains(&ext.as_str()) {
+            if MEDIA_EXTS.contains(&ext.as_str()) {
                 out.push(p.to_string_lossy().to_string());
                 if out.len() >= 200 {
                     return Ok(out);

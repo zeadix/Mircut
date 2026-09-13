@@ -11,7 +11,7 @@ interface Props {
   waveforms: Record<string, number[]>;
   onPickFolder: () => void;
   onImportFiles: (files: FileList | null) => void;
-  onScanMusicDir: () => void;
+  onImportFolder: () => void;
   onDragKind: (k: "video" | "audio") => void;
   /// 拖拽开始(id)/结束(null)上报:时间轴据此显示块状落点轮廓
   onDragAsset?: (assetId: string | null) => void;
@@ -46,7 +46,7 @@ function MediaLibraryInner({
   waveforms,
   onPickFolder,
   onImportFiles,
-  onScanMusicDir,
+  onImportFolder,
   onDragKind,
   onDragAsset,
   onAssetPreview,
@@ -148,10 +148,10 @@ const [mediaGrid, setMediaGrid] = useState(true); // 默认网格视图
         <span style={{ flex: 1 }} />
         <button
           className="btn"
-          title="扫描音乐/音效文件夹(批量导入并打标签)"
-          onClick={onScanMusicDir}
+          title="选择文件夹,递归批量导入媒体文件(已导入自动跳过)"
+          onClick={onImportFolder}
         >
-          ♪ 音乐库
+          <FolderOpen size={14} /> 文件夹
         </button>
         {mediaSel.size > 0 && (
           <button

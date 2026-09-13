@@ -80,7 +80,7 @@ const panelComponents = {
             waveforms={c.waveforms}
             onPickFolder={c.onPickFolder}
             onImportFiles={c.onImportFiles}
-            onScanMusicDir={c.onScanMusicDir}
+            onImportFolder={c.onImportFolder}
             onDragKind={c.setDragKind}
             onDragAsset={c.setDragAssetId}
             onAssetPreview={c.setAssetPreview}
@@ -689,14 +689,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     await refresh();
   }, []);
 
-  const onPickFolder = useCallback(async () => {
-    const picked = await openDialog({
-      multiple: true,
-      filters: [{ name: "媒体", extensions: ["mp4", "mov", "mkv", "webm", "mp3", "wav", "aac", "jpg", "png"] }],
-    });
-    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    if (paths.length === 0) return;
-    for (const path of paths) {
+  /// 导入单/多文件后的公共处理:缩略图 + 代理 + 波形(失败静默)。
+  const importOnePath = useCallback(
+    async (path: string) => {
       setStatus(`导入 ${path} ...`);
       try {
         const { asset } = await api.importMedia(path);
@@ -719,9 +714,45 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       } catch (e) {
         setStatus(`导入失败: ${e}`);
       }
+    },
+    []
+  );
+
+  /// 导入文件(对话框可单选/多选)。
+  const onPickFolder = useCallback(async () => {
+    const picked = await openDialog({
+      multiple: true,
+      filters: [{ name: "媒体", extensions: ["mp4", "mov", "mkv", "webm", "mp3", "wav", "aac", "jpg", "png"] }],
+    });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    if (paths.length === 0) return;
+    for (const path of paths) {
+      await importOnePath(path);
     }
     await refresh();
-  }, []);
+  }, [importOnePath]);
+
+  /// 导入文件夹:递归扫描媒体文件批量导入,已导入的路径自动跳过。
+  const onImportFolder = useCallback(async () => {
+    const picked = await openDialog({ multiple: false, directory: true });
+    const dir = Array.isArray(picked) ? picked[0] : picked;
+    if (!dir) return;
+    setStatus("扫描文件夹...");
+    try {
+      const paths = await api.scanMediaDir(dir);
+      const known = new Set(useEditor.getState().doc?.assets.map((a) => a.path) ?? []);
+      let n = 0;
+      for (const path of paths) {
+        if (known.has(path)) continue;
+        await importOnePath(path);
+        n += 1;
+      }
+      await refresh();
+      setStatus(`文件夹导入完成:新增 ${n} 个(跳过已导入 ${paths.length - n} 个)`);
+    } catch (e) {
+      setStatus(`扫描失败: ${e}`);
+    }
+  }, [importOnePath]);
 
   const addToTimeline = useCallback(
     async (assetId: string) => {
@@ -1292,33 +1323,6 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     []
   );
 
-  /// 扫描音乐/音效文件夹:批量导入(已导入的路径自动跳过)并打"音乐"标签。
-  const onScanMusicDir = useCallback(async () => {
-    const picked = await openDialog({ multiple: false, directory: true });
-    const dir = Array.isArray(picked) ? picked[0] : picked;
-    if (!dir) return;
-    setStatus("扫描音频文件夹...");
-    try {
-      const paths = await api.scanAudioDir(dir);
-      const known = new Set(doc?.assets.map((a) => a.path) ?? []);
-      let n = 0;
-      for (const path of paths) {
-        if (known.has(path)) continue;
-        try {
-          const { asset } = await api.importMedia(path);
-          await api.setTagAsset(asset.id, "音乐");
-          n += 1;
-          setStatus(`导入音乐 ${n}/${paths.length}: ${path.split("/").pop()}`);
-        } catch {
-          /* 单个失败不阻塞 */
-        }
-      }
-      await refresh();
-      setStatus(`音乐库导入完成:新增 ${n} 个(跳过已导入 ${paths.length - n} 个)`);
-    } catch (e) {
-      setStatus(`扫描失败: ${e}`);
-    }
-  }, [doc]);
 
   /// 跨轨对齐边缘:非当前操作轨道的片段头尾(供吸附)。
   const alignEdges = useMemo(() => {
@@ -1579,7 +1583,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       onRemoveMarker, onMoveClips, onDropPackItem, onDropAsset, onReorderTrack,
       onClipRangeSet, onRenameTrack, onRemoveTrack, onDuplicateClip,
       onToggleTrack, onToggleTrackMedia, onToggleLaneView,
-      onPickFolder, onImportFiles, onScanMusicDir, onImportPack, onApplyPackItem,
+      onPickFolder, onImportFiles, onImportFolder, onImportPack, onApplyPackItem,
       addToTimeline, refresh, onSwitchRenderMode, onSetRect, onStickerMove,
       clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
       tcDraft, onDetectBeats, onRemoveSilence, onSelectClipPlain,
@@ -1596,7 +1600,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       onClipClick, onRemoveMarker, onImportPack, onApplyPackItem, onDropPackItem,
       onStickerMove, onMoveClips, onRollEdit, onSetAudioFade, onSetVolumeKeyframe,
       onClipTrim, onDuplicateClip, onSetRect, onRenameTrack, onRemoveTrack,
-      onReorderTrack, onClipRangeSet, onDropAsset, onScanMusicDir, onToggleTrackMedia,
+      onReorderTrack, onClipRangeSet, onDropAsset, onImportFolder, onToggleTrackMedia,
       onToggleLaneView, onToggleTrack, onSwitchRenderMode, onDetectBeats,
       onRemoveSilence, onSelectClipPlain, editingTextClipId, beginTextEdit, onSetRotate,
     ]

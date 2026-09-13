@@ -191,9 +191,9 @@ export async function setTagAsset(assetId: string, tag: string): Promise<boolean
   return invoke("tag_asset", { assetId, tag });
 }
 
-/// 扫描目录下音频文件(音乐/音效库批量导入)。
-export async function scanAudioDir(dir: string): Promise<string[]> {
-  return invoke("scan_audio_dir", { dir });
+/// 扫描目录下媒体文件(音频/视频/图片;文件夹批量导入)。
+export async function scanMediaDir(dir: string): Promise<string[]> {
+  return invoke("scan_media_dir", { dir });
 }
 
 /// 批量移动(组合命令,一次撤销)。

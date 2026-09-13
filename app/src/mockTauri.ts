@@ -559,7 +559,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "remove_track":
       return true;
     case "freeze_frame":
-    case "scan_audio_dir":
+    case "scan_media_dir":
       return true;
     case "ping":
       return "pong";
