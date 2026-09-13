@@ -110,10 +110,13 @@ test("预览画布:滚轮缩放,超出可视区出滚动条,双击空白复位",
   const frame = page.locator("[data-veditor-comp-frame]");
   await expect(frame).toBeVisible();
 
-  // 初始(适应窗口):内容不超出,无滚动
+  // 初始(适应窗口):舞台完整可见、居中(四周为补白滚动区)
   const fitBox = (await frame.boundingBox())!;
-  const scroll0 = await host.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
-  expect(scroll0.sw).toBeLessThanOrEqual(scroll0.cw + 1);
+  const hb0 = (await host.boundingBox())!;
+  expect(fitBox.x).toBeGreaterThanOrEqual(hb0.x);
+  expect(fitBox.y).toBeGreaterThanOrEqual(hb0.y);
+  expect(fitBox.x + fitBox.width).toBeLessThanOrEqual(hb0.x + hb0.width + 1);
+  expect(fitBox.y + fitBox.height).toBeLessThanOrEqual(hb0.y + hb0.height + 1);
 
   // 光标置于画布中心,滚轮向上连续放大(矮面板下画布宽 241px、host 宽 880:
   // 需放大数倍后横向才溢出;1.15^12 ≈ 5.35)
@@ -142,6 +145,53 @@ test("预览画布:滚轮缩放,超出可视区出滚动条,双击空白复位",
     .poll(async () => (await frame.boundingBox())!.width, { timeout: 5000 })
     .toBeCloseTo(fitBox.width, 0);
   await expect(page.locator("button[title^='画布缩放']")).toHaveCount(0);
+});
+
+test("预览画布缩放锚点:光标下的内容点在缩放前后保持不动", async ({ page }) => {
+  await addAssetToTimeline(page);
+  const host = page.locator("[data-veditor-comp-host]");
+  const frame = page.locator("[data-veditor-comp-frame]");
+  await expect(frame).toBeVisible();
+
+  /// 读取光标视口位置处的内容点标识:光标坐标相对舞台可视原点(含
+  /// transform 与滚动后的实际位置)除以缩放,即未缩放内容坐标。
+  /// 锚点补偿正确则该值在多档缩放后不变。
+  const probe = async (cx: number, cy: number) =>
+    page.evaluate(
+      ([cx, cy]) => {
+        const stage = document.querySelector("[data-veditor-comp-frame]") as HTMLElement;
+        const sr = stage.getBoundingClientRect();
+        const m = new DOMMatrix(getComputedStyle(stage).transform);
+        return { ux: ((cx as number) - sr.left) / m.a, uy: ((cy as number) - sr.top) / m.a };
+      },
+      [cx, cy]
+    );
+
+  // 锚点1:画布左上内容点(内部 1/3 处);连续放大 4 档,内容点必须钉在光标下
+  let fb = (await frame.boundingBox())!;
+  const p1 = { x: fb.x + fb.width / 3, y: fb.y + fb.height / 3 };
+  const before = await probe(p1.x, p1.y);
+  await page.mouse.move(p1.x, p1.y);
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(120);
+  const after = await probe(p1.x, p1.y);
+  expect(Math.abs(after.ux - before.ux)).toBeLessThan(1.5);
+  expect(Math.abs(after.uy - before.uy)).toBeLessThan(1.5);
+
+  // 锚点2:复位后改用画布右下内容点(2/3 处)再放大,同样钉住
+  await page.keyboard.press("Escape");
+  const resetBtn = page.locator("button[title^='画布缩放']");
+  if (await resetBtn.count()) await resetBtn.click();
+  await expect.poll(async () => (await frame.boundingBox())!.width).toBeLessThan(fb.width * 1.5);
+  fb = (await frame.boundingBox())!;
+  const p2 = { x: fb.x + (fb.width * 2) / 3, y: fb.y + (fb.height * 2) / 3 };
+  const before2 = await probe(p2.x, p2.y);
+  await page.mouse.move(p2.x, p2.y);
+  for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(120);
+  const after2 = await probe(p2.x, p2.y);
+  expect(Math.abs(after2.ux - before2.ux)).toBeLessThan(1.5);
+  expect(Math.abs(after2.uy - before2.uy)).toBeLessThan(1.5);
 });
 
 test("时间轴播放头:单一元素横跨刻度尺与轨道,播放时同步移动", async ({ page }) => {

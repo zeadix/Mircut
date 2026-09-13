@@ -343,10 +343,24 @@ const [url, setUrl] = useState<string | null>(null);
   const compW = doc?.width ?? 1920;
   const compH = doc?.height ?? 1080;
   /// 画布在宿主内的像素尺寸 = 最大内接矩形(保持合成比例,黑边留白)。
-  const frameHostRef = useRef<HTMLDivElement>(null);
+  const frameHostRef = useRef<HTMLDivElement | null>(null);
+  /// host 节点身份(状态):素材预览↔合成模式切换会卸载/重挂 host,
+  /// 重挂后新节点 scroll 归零 —— 以节点身份作 effect 依赖,自动重新
+  /// 居中/重绑滚轮监听/重挂 RO。
+  const [hostNode, setHostNode] = useState<HTMLElement | null>(null);
   const [framePx, setFramePx] = useState<{ w: number; h: number } | null>(null);
-  /// 宿主可视尺寸(判断缩放后内容是否超出:超出出滚动条,否则居中)。
+  /// 复位为适应窗口(measure 的 resize 检测与分辨率切换共用)。
+  const [stageZoom, setStageZoom] = useState(1);
+  const stageZoomRef = useRef(1);
+  const resetStageZoom = useCallback(() => {
+    stageZoomRef.current = 1;
+    setStageZoom(1);
+  }, []);
+  /// 宿主内容区尺寸(缩放补偿与居中用;滚动条出现会使其变小)。
   const [hostSize, setHostSize] = useState({ w: 0, h: 0 });
+  /// 面板外框尺寸(offset,含滚动条):只有它变化才是真 resize;
+  /// 缩放出滚动条引起的 clientSize 变化不能触发"复位为适应窗口"。
+  const hostOuterRef = useRef<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const el = frameHostRef.current;
     if (!el) return;
@@ -354,28 +368,29 @@ const [url, setUrl] = useState<string | null>(null);
       const cw = el.clientWidth;
       const ch = el.clientHeight;
       if (cw <= 0 || ch <= 0) return;
+      const ow = el.offsetWidth;
+      const oh = el.offsetHeight;
+      const resized = hostOuterRef.current !== null && (hostOuterRef.current.w !== ow || hostOuterRef.current.h !== oh);
+      hostOuterRef.current = { w: ow, h: oh };
       const s = Math.min(cw / compW, ch / compH);
       // 保留浮点尺寸:双向独立取整会破坏宽高比(误差可达 1/h,矮面板下
       // 16:9 断言翻车);DOM 舞台接受亚像素尺寸
       setFramePx({ w: compW * s, h: compH * s });
       setHostSize((prev) => (prev.w === cw && prev.h === ch ? prev : { w: cw, h: ch }));
+      // 面板真 resize:补白(视口)尺寸变了,复位为适应窗口
+      if (resized) resetStageZoom();
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [compW, compH]);
+  }, [compW, compH, resetStageZoom, hostNode]);
 
   /// 预览画布缩放(滚轮;1 = 适应面板)。层坐标全部归一化(百分比 +
   /// getBoundingClientRect 比例),CSS scale 对交互/命中完全透明。
-  const [stageZoom, setStageZoom] = useState(1);
-  const stageZoomRef = useRef(1);
   /// 滚轮锚点:缩放后保持光标下的内容点不动(scroll 补偿)。
-  const zoomAnchorRef = useRef<{ mx: number; my: number; prev: number } | null>(null);
-  const resetStageZoom = useCallback(() => {
-    stageZoomRef.current = 1;
-    setStageZoom(1);
-  }, []);
+  /// 记录滚动位置而非读取时机,布局 effect 里用旧值精确求解。
+  const zoomAnchorRef = useRef<{ mx: number; my: number; sl: number; st: number } | null>(null);
   /// 合成分辨率变化时复位缩放(画布语义变了)。
   useEffect(() => {
     stageZoomRef.current = 1;
@@ -392,23 +407,46 @@ const [url, setUrl] = useState<string | null>(null);
       const next = Math.min(6, Math.max(0.25, prev * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
       if (next === prev) return;
       const rect = host.getBoundingClientRect();
-      zoomAnchorRef.current = { mx: e.clientX - rect.left, my: e.clientY - rect.top, prev };
+      zoomAnchorRef.current = {
+        mx: e.clientX - rect.left,
+        my: e.clientY - rect.top,
+        sl: host.scrollLeft,
+        st: host.scrollTop,
+      };
       stageZoomRef.current = next;
       setStageZoom(next);
     };
     host.addEventListener("wheel", onWheel, { passive: false });
     return () => host.removeEventListener("wheel", onWheel);
-  }, [composing]);
-  /// 缩放生效后按锚点补偿滚动位置(布局更新后、绘制前)。
+  }, [hostNode]);
+  /// 缩放生效后按锚点精确补偿滚动位置(布局更新后、绘制前)。
+  /// 以 DOM 已生效缩放(appliedZoom)为基准求内容点坐标 —— 快速滚轮下
+  /// React 批处理会合并多档缩放,事件时的 prev 不可靠。
+  /// 布局:sizer 四周各补一个视口(Figma 式),内容原点恒在 (V, V),
+  /// 锚点要求 scrollLeft = V + u·z − mx ∈ [0, V+S] 恒可达 —— 任何光标
+  /// 位置(含黑边)都以光标为缩放中心,不存在"内容小则被迫居中缩放"。
+  const appliedZoomRef = useRef(1);
   useLayoutEffect(() => {
     const host = frameHostRef.current;
     const a = zoomAnchorRef.current;
     zoomAnchorRef.current = null;
-    if (!host || !a || stageZoom === a.prev) return;
-    const k = stageZoom / a.prev;
-    host.scrollLeft = (host.scrollLeft + a.mx) * k - a.mx;
-    host.scrollTop = (host.scrollTop + a.my) * k - a.my;
-  }, [stageZoom]);
+    const applied = appliedZoomRef.current;
+    appliedZoomRef.current = stageZoom;
+    if (!host || !a || !framePx || stageZoom === applied) return;
+    const ux = (a.mx + a.sl - host.clientWidth) / applied;
+    const uy = (a.my + a.st - host.clientHeight) / applied;
+    host.scrollLeft = host.clientWidth + ux * stageZoom - a.mx;
+    host.scrollTop = host.clientHeight + uy * stageZoom - a.my;
+  }, [stageZoom, framePx]);
+  /// 适应窗口(倍率 1)时内容居中:scroll 定位到内容中心(四周各 V 补白)。
+  /// hostNode 是依赖:host 重挂载(素材预览↔合成切换)后新节点 scroll 归零,
+  /// 必须重新居中。
+  useEffect(() => {
+    const host = frameHostRef.current;
+    if (!host || !framePx || stageZoom !== 1 || hostSize.w <= 0) return;
+    host.scrollLeft = (hostSize.w + framePx.w) / 2;
+    host.scrollTop = (hostSize.h + framePx.h) / 2;
+  }, [framePx, hostSize, stageZoom, hostNode]);
 
   /// 单个片段 -> 合成层(取出帧时刻与全部视觉属性)。
   const buildLayer = useCallback(
@@ -1156,38 +1194,47 @@ const [url, setUrl] = useState<string | null>(null);
         </span>
       )}
 
-      {/* 多层合成舞台:画布按合成分辨率等比呈现(滚轮缩放;超出可视区出滚动条) */}
+      {/* 多层合成舞台:画布按合成分辨率等比呈现(滚轮缩放;超出可视区出滚动条)。
+          sizer 四周各补一个视口尺寸的空白:内容原点恒在 (V, V),任意光标位置
+          (含黑边)缩放锚点都可达 —— 不存在内容小于视口时被迫围绕中心缩放 */}
       {composing && (() => {
         const zw = (framePx?.w ?? 0) * stageZoom;
         const zh = (framePx?.h ?? 0) * stageZoom;
-        const fits = !framePx || (zw <= hostSize.w + 0.5 && zh <= hostSize.h + 0.5);
         return (
         <div
-          ref={frameHostRef}
+          ref={(el) => {
+            frameHostRef.current = el;
+            setHostNode(el);
+          }}
           data-veditor-comp-host=""
           style={{
             width: "100%",
             height: "100%",
             flexShrink: 0,
-            display: "flex",
-            // 内容超出可视区(缩放>1)时从左上开始滚动,否则居中展示
-            alignItems: fits ? "center" : "flex-start",
-            justifyContent: fits ? "center" : "flex-start",
             overflow: "auto",
+            // 关闭 Chromium scroll anchoring:层 DOM 挂载/替换会触发锚定重置,
+            // 把程序设置好的 scroll 位置(居中/缩放锚点)拉回 0
+            overflowAnchor: "none",
             background: "var(--bg)",
-          }}
-          onDoubleClick={(e) => {
-            // 双击画布外空白(host 自身):复位缩放;层上的双击另行处理
-            if (e.target === e.currentTarget) resetStageZoom();
           }}
         >
           <div
             style={{
               position: "relative",
-              width: framePx ? zw : "100%",
-              height: framePx ? zh : "100%",
-              flexShrink: 0,
+              width: framePx ? zw + hostSize.w * 2 : "100%",
+              height: framePx ? zh + hostSize.h * 2 : "100%",
             }}
+            onDoubleClick={(e) => {
+              // 双击画布外空白(sizer 边距):复位缩放;层上的双击另行处理
+              if (e.target === e.currentTarget) resetStageZoom();
+            }}
+          >
+          <div
+            style={
+              framePx
+                ? { position: "absolute", left: hostSize.w, top: hostSize.h, width: zw, height: zh }
+                : { position: "relative", width: "100%", height: "100%" }
+            }
           >
           <div
             ref={stageRef}
@@ -1200,7 +1247,6 @@ const [url, setUrl] = useState<string | null>(null);
               height: framePx?.h ?? "100%",
               overflow: "hidden",
               background: "#000",
-              flexShrink: 0,
               transform: framePx && stageZoom !== 1 ? `scale(${stageZoom})` : undefined,
               transformOrigin: "top left",
             }}
@@ -1572,6 +1618,7 @@ const [url, setUrl] = useState<string | null>(null);
             </>
           )}
 
+          </div>
           </div>
           </div>
         </div>
