@@ -13,6 +13,12 @@ use veditor_render::Renderer;
 pub(crate) fn get_document(state: State<'_, AppState>) -> Document {
     let mut inner = state.inner.lock().unwrap();
     inner.ensure();
+    // 旧工程素材无文件大小(列表视图展示用):惰性回填一次
+    for a in inner.doc.assets.iter_mut() {
+        if a.size_bytes == 0 && !a.path.is_empty() && !a.path.contains("://") {
+            a.size_bytes = std::fs::metadata(&a.path).map(|m| m.len()).unwrap_or(0);
+        }
+    }
     // 双保险:恢复 autosave 后确保实时引擎文档一致(仅首启一次,renderer
     // 刚创建时 realtime 可能仍持旧文档)
     if !inner.rt_synced {
@@ -146,8 +152,21 @@ pub(crate) fn set_clips_audio(
 pub(crate) fn add_marker(t: Ticks, label: String, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
     inner.exec(Box::new(AddMarker {
-        marker: Marker { t, label },
+        marker: Marker { t, label, color: None },
     }));
+    true
+}
+
+/// 编辑标记标签/颜色(空颜色串 = 回默认色)。
+#[tauri::command]
+pub(crate) fn set_marker(
+    t: Ticks,
+    label: Option<String>,
+    color: Option<String>,
+    state: State<'_, AppState>,
+) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(veditor_core::SetMarker::new(t, label, color)));
     true
 }
 
@@ -553,6 +572,7 @@ pub(crate) fn drop_text(start: Ticks, state: State<'_, AppState>) -> Result<Stri
             name: Some("文字".into()),
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
     }
     let tps = inner.doc.timebase.num / inner.doc.timebase.den.max(1);
@@ -1018,7 +1038,7 @@ pub(crate) fn trim_clip(
         }
     }
     if ripple {
-        // 波纹:后方片段前移填补空隙(仅尾修剪缩短时)
+        // 自动前移:后方片段前移填补空隙(仅尾修剪缩短时)
         if dur < clip.duration {
             let gap = clip.duration - dur;
             let back: Vec<(String, i64)> = inner
@@ -1483,6 +1503,7 @@ mod inspector_target_tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             let mk = |id: &str, lane: Lane| Clip {
                 id: id.into(),

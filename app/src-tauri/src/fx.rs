@@ -462,6 +462,7 @@ pub(crate) fn article_to_video(text: String, state: State<'_, AppState>) -> Resu
                 name: Some("文字".into()),
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
         }
         let mut fx = veditor_core::ClipFx::default();

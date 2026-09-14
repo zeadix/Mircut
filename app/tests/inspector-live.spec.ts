@@ -86,7 +86,7 @@ test("文字内容键入即时提交", async ({ page }) => {
   await expect(page.locator(".asset-card").first()).toBeVisible();
   // 新建文字块并进入编辑
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: "文字" }).last().click();
+  await page.getByRole("menuitem", { name: "文字" }).click();
   await page.locator('[data-panel="text"]').getByRole("button", { name: "+ 在播放头新建文字" }).click();
   await expect(
     page.locator('[data-panel="text"]').getByText(/文字片段\(/).first()

@@ -442,6 +442,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         doc.clips.push(Clip {
             id: "c1".into(),

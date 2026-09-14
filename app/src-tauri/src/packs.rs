@@ -325,6 +325,7 @@ pub(crate) fn apply_pack_item(
                     name: Some("文字".into()),
                     fps: None,
                     tags: vec![],
+                    size_bytes: 0,
                 });
             }
             let mut fx = veditor_core::ClipFx::default();

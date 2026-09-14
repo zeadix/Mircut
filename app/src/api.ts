@@ -80,6 +80,11 @@ export async function addMarker(t: number, label: string): Promise<boolean> {
   return invoke("add_marker", { t, label });
 }
 
+/// 编辑标记标签/颜色(空串 = 回默认色)。
+export async function setMarker(t: number, label: string | null, color: string | null): Promise<boolean> {
+  return invoke("set_marker", { t, label, color });
+}
+
 export async function removeMarker(t: number): Promise<boolean> {
   return invoke("remove_marker", { t });
 }

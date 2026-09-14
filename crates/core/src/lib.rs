@@ -359,6 +359,9 @@ pub struct Asset {
     /// 用户标签(媒体库筛选)。
     #[serde(default)]
     pub tags: Vec<String>,
+    /// 文件字节数(媒体库列表视图展示;导入时读取,旧工程缺省 0 = 未知)。
+    #[serde(default)]
+    pub size_bytes: u64,
 }
 
 /// 项目文档:编辑的唯一真源。
@@ -631,7 +634,11 @@ pub struct Marker {
     /// 时间轴位置(ticks)。
     pub t: Ticks,
     /// 标签(空 = 不显示文字)。
+    #[serde(default)]
     pub label: String,
+    /// 颜色(多色区分书签类别;None = 默认色)。
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// 具体命令:添加标记(同刻度幂等)。
@@ -651,6 +658,45 @@ impl Command for AddMarker {
     }
     fn undo(&mut self, doc: &mut Document) {
         doc.markers.retain(|m| m.t != self.marker.t);
+    }
+}
+
+/// 具体命令:设置标记的标签/颜色(标记不存在则无操作)。
+pub struct SetMarker {
+    pub t: Ticks,
+    pub label: Option<String>,
+    pub color: Option<String>,
+    old: Option<Marker>,
+}
+
+impl SetMarker {
+    pub fn new(t: Ticks, label: Option<String>, color: Option<String>) -> Self {
+        Self { t, label, color, old: None }
+    }
+}
+
+impl Command for SetMarker {
+    fn label(&self) -> &str {
+        "编辑标记"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.old = doc.markers.iter().find(|m| m.t == self.t).cloned();
+        if let Some(m) = doc.markers.iter_mut().find(|m| m.t == self.t) {
+            if let Some(l) = &self.label {
+                m.label = l.clone();
+            }
+            if let Some(c) = &self.color {
+                // 空串 = 清除自定义色(回默认)
+                m.color = if c.is_empty() { None } else { Some(c.clone()) };
+            }
+        }
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some(old) = self.old.take() {
+            if let Some(m) = doc.markers.iter_mut().find(|m| m.t == old.t) {
+                *m = old;
+            }
+        }
     }
 }
 
@@ -1159,6 +1205,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         let json = serde_json::to_string(&doc).unwrap();
         let back: Document = serde_json::from_str(&json).unwrap();
@@ -1201,6 +1248,37 @@ mod tests {
     }
 
     #[test]
+    fn marker_set_label_and_color_with_undo() {
+        let mut doc = Document::default();
+        let mut add = AddMarker {
+            marker: Marker {
+                t: 30,
+                label: String::new(),
+                color: None,
+            },
+        };
+        add.apply(&mut doc);
+        // 命名 + 着色
+        let mut set = SetMarker::new(30, Some("卡点".into()), Some("#7ed957".into()));
+        set.apply(&mut doc);
+        let m = doc.markers.iter().find(|m| m.t == 30).unwrap();
+        assert_eq!(m.label, "卡点");
+        assert_eq!(m.color.as_deref(), Some("#7ed957"));
+        // 空色串 = 回默认色;label=None 保持不动
+        let mut clear = SetMarker::new(30, None, Some(String::new()));
+        clear.apply(&mut doc);
+        let m = doc.markers.iter().find(|m| m.t == 30).unwrap();
+        assert_eq!(m.label, "卡点");
+        assert_eq!(m.color, None);
+        // 撤销逐步回滚
+        clear.undo(&mut doc);
+        assert_eq!(doc.markers[0].color.as_deref(), Some("#7ed957"));
+        set.undo(&mut doc);
+        assert_eq!(doc.markers[0].label, "");
+        assert_eq!(doc.markers[0].color, None);
+    }
+
+    #[test]
     fn marker_add_remove_and_backward_compatible_load() {
         let mut doc = Document::default();
         // 添加 + 同刻度幂等
@@ -1208,6 +1286,7 @@ mod tests {
             marker: Marker {
                 t: 90,
                 label: "高潮".into(),
+                color: None,
             },
         };
         add.apply(&mut doc);

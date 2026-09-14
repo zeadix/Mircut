@@ -59,6 +59,7 @@ let mockDoc: Document = {
       fps: 30,
       name: null,
       tags: [],
+      size_bytes: 15_728_640,
     },
     {
       id: "a2",
@@ -71,6 +72,7 @@ let mockDoc: Document = {
       fps: null,
       name: null,
       tags: ["音乐"],
+      size_bytes: 4_194_304,
     },
     {
       id: "a3",
@@ -83,6 +85,7 @@ let mockDoc: Document = {
       fps: null,
       name: null,
       tags: [],
+      size_bytes: 524_288,
     },
   ],
   transitions: [],
@@ -417,6 +420,18 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "undo":
     case "redo":
       return true;
+    case "set_marker": {
+      // 编辑标签/颜色(空色串 = 回默认色)
+      const t = Number(args.t);
+      const m = mockDoc.markers?.find((x) => x.t === t);
+      if (m) {
+        const label = args.label as string | null | undefined;
+        const color = args.color as string | null | undefined;
+        if (label != null) m.label = label;
+        if (color != null) m.color = color === "" ? null : color;
+      }
+      return true;
+    }
     case "remove_marker":
       mockDoc.markers = (mockDoc.markers ?? []).filter((m) => m.t !== Number(args.t));
       return true;

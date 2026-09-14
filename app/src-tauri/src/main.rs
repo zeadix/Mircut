@@ -60,7 +60,7 @@ use veditor_render::Renderer;
 
 // ---------- 编辑命令 ----------
 
-// ---------- M2:轨道/波纹/变速/特效/转场 ----------
+// ---------- M2:轨道/删除并前移/变速/特效/转场 ----------
 
 // ---------- 文字叠层 ----------
 
@@ -96,6 +96,7 @@ fn main() {
                     name: None,
                     fps: None,
                     tags: vec![],
+                    size_bytes: 0,
                 });
                 inner.doc.clips.push(Clip {
                     id: "cstress".into(),
@@ -245,6 +246,7 @@ fn main() {
             remove_clips,
             set_clips_audio,
             add_marker,
+            set_marker,
             remove_marker,
             split_clip,
             auto_split_scenes,
@@ -396,6 +398,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             for id in ["c1", "c2"] {
                 inner.doc.clips.push(Clip {
@@ -512,6 +515,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             // 块 [300, 600)(10s~20s),源占用 [10s, 20s) —— 两侧都有余量
             inner.doc.clips.push(Clip {
@@ -622,6 +626,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             inner.doc.clips.push(Clip {
                 id: "c1".into(),
@@ -691,6 +696,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             // 1. 音频素材拖到视频轨 trackId=Some("v1") -> 应自动建音频轨并落入
             let asset = inner.doc.asset("mp3").cloned().unwrap();
@@ -788,6 +794,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             // 已有片段 A [0,60)
             inner.doc.clips.push(Clip {
@@ -855,7 +862,7 @@ mod tests {
         }
     }
 
-    /// 同轨无重叠回归:插入(拖放)+ 磁吸推挤 + 波纹修剪混合后,任意时刻同轨片段不重叠。
+    /// 同轨无重叠回归:插入(拖放)+ 磁吸推挤 + 自动前移修剪混合后,任意时刻同轨片段不重叠。
     #[test]
     fn no_overlap_invariant_after_mixed_ops() {
         let st = AppState::default();
@@ -886,6 +893,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             let mk = |id: &str, start: i64, dur: i64| Clip {
                 id: id.into(),
@@ -1003,6 +1011,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             // 与 drop_asset 完全相同的落库序列:双块 AddClip
             let mk = |lane: Lane, id: &str| Clip {
@@ -1124,6 +1133,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             let mk = |id: &str, asset: &str, lane: Lane, start: i64| Clip {
                 id: id.into(),
@@ -1249,6 +1259,7 @@ mod tests {
                     name: None,
                     fps: None,
                     tags: vec![],
+                    size_bytes: 0,
                 });
             }
             let mk = |id: &str, asset: &str, lane: Lane, start: i64| Clip {
@@ -1347,6 +1358,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             inner.doc.clips.push(Clip {
                 id: "v1".into(),
@@ -1512,6 +1524,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         };
         {
             let mut inner = st.inner.lock().unwrap();
@@ -1634,6 +1647,7 @@ mod tests {
                 name: None,
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
             let clip = Clip {
                 id: "c1".into(),

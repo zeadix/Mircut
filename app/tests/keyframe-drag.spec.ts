@@ -14,6 +14,8 @@ async function setupKeyframes(page: import("@playwright/test").Page) {
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
+  // 「点击定位」开启:单击元素块会把播放头切到点击处;打帧前先回到 0
+  await page.keyboard.press("Home");
 
   const rightAside = page.locator("aside").last();
   // 两帧:播放头 0 与片段末尾(End = 3s)
@@ -41,6 +43,35 @@ test("关键帧:竖线拖拽改变时间(6px 触发区)", async ({ page }) => {
   // 0.00s 行消失,出现非零时刻行(拖拽把首帧移离 0)
   await expect(aside.locator("text=/^0\\.00s$/")).toHaveCount(0);
   await expect(aside.locator("text=/^0\\.[0-9]{2}s$/").first()).toBeVisible();
+});
+
+test("点击定位:单击元素块(非空白)也 seek", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".asset-card").first()).toBeVisible();
+  await page.locator(".asset-card").first().dblclick();
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
+
+  const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const cb = await canvas.boundingBox();
+  const tc = page.locator("input[title^='时间码']");
+
+  // 单击 mock 文件块内部(0-90 ticks,默认 pxPerTick=0.5 → 块宽 45px):
+  // 元素块上的单击同样把帧指示器切到点击位置
+  await page.mouse.click(cb!.x + 60, cb!.y + 60);
+  await expect.poll(async () => await tc.inputValue(), { timeout: 5000 }).not.toBe("00:00.00");
+  const afterClipClick = await tc.inputValue();
+
+  // 拖动元素块(位移 >5px)= 移动,不应触发 seek 到松手点之外的行为差异
+  await tc.fill("0");
+  await tc.press("Enter");
+  await page.mouse.move(cb!.x + 20, cb!.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(cb!.x + 120, cb!.y + 60, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  // 拖拽不 seek(播放头保持 0;块被移动)
+  expect(await tc.inputValue()).toBe("00:00.00");
+  expect(afterClipClick).not.toBe("00:00.00");
 });
 
 test("点击定位:开关开启时空白单击 seek,关闭时不 seek", async ({ page }) => {

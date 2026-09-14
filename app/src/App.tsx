@@ -30,10 +30,15 @@ import SubtitlePanel from "./SubtitlePanel";
 import TextPanel from "./TextPanel";
 import StickerPanel from "./StickerPanel";
 import PackPanel from "./PackPanel";
+import MarkersPanel from "./MarkersPanel";
 import ResPresetSelect from "./ResPreset";
 import PopupSelect from "./PopupSelect";
 import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
+import { ConfigProvider, Button as AntdButton, Tag } from "antd";
+import zhCN from "antd/locale/zh_CN";
+import enUS from "antd/locale/en_US";
+import { buildAntdTheme } from "./ui/antdTheme";
 import { PanelContext, usePanel } from "./PanelContext";
 
 /// 时间码显示:mm:ss.ff。
@@ -223,6 +228,22 @@ const panelComponents: Record<string, () => ReactElement> = {
       </div>
     );
   },
+  markers: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="markers" style={{ height: "100%", overflow: "hidden" }}>
+        <ErrorBoundary label="标记面板">
+          <MarkersPanel
+            markers={c.doc?.markers ?? []}
+            tps={c.tps}
+            onSeek={c.setPlayhead}
+            onSetMarker={c.onSetMarker}
+            onRemoveMarker={c.onRemoveMarker}
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  },
   timeline: () => {
     const c = usePanel();
     return (
@@ -236,9 +257,12 @@ const panelComponents: Record<string, () => ReactElement> = {
             onSelectMany={c.selectMany}
             onClipAction={c.onClipAction}
             onSetVolumeKeyframe={c.onSetVolumeKeyframe}
+            curveEditIds={c.curveEditIds}
+            onOpenMarkersPanel={c.openMarkersPanel}
             onSetAudioFade={c.onSetAudioFade}
             onRollEdit={c.onRollEdit}
             onRemoveMarker={c.onRemoveMarker}
+            onSetMarker={c.onSetMarker}
             onMoveClips={c.onMoveClips}
             onDropPackItem={c.onDropPackItem}
             selectedClipIds={c.selected}
@@ -272,6 +296,9 @@ const panelComponents: Record<string, () => ReactElement> = {
           <RightPanel
             doc={c.doc}
             selectedClipIds={c.selected}
+            curveEditIds={c.curveEditIds}
+            onCurveEditEnter={c.enterCurveEdit}
+            onCurveEditDone={c.exitCurveEdit}
             playhead={c.playhead}
             fps={c.fps}
             onRefresh={c.refresh}
@@ -337,7 +364,7 @@ const panelComponents: Record<string, () => ReactElement> = {
 };
 
 /// 工作面板(独立浮动窗口语义)—— 打开时加入布局后立即转浮动。
-const FLOAT_PANELS = new Set(["scopes", "subtitles", "text", "sticker", "packs"]);
+const FLOAT_PANELS = new Set(["scopes", "markers", "subtitles", "text", "sticker", "packs"]);
 
 /// 面板 tab json(固定 id = 面板 id:窗口菜单显隐/hiddenPanels 同步依赖它)。
 const tabJson = (id: string): IJsonTabNode => ({
@@ -411,6 +438,7 @@ const PANEL_IDS = [
   "timeline",
   "inspector",
   "scopes",
+  "markers",
   "subtitles",
   "text",
   "sticker",
@@ -427,7 +455,9 @@ const panelTitle = (id: string): string =>
             ? t("menu.panelInspector")
             : id === "scopes"
               ? t("panel.scopes")
-              : id === "subtitles"
+              : id === "markers"
+                ? t("panel.markers")
+                : id === "subtitles"
                 ? t("panel.subtitles")
                 : id === "text"
                   ? t("panel.texts")
@@ -933,6 +963,16 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const onClipClick = selectClip;
 
   /// 移除标记。
+  /// 编辑标记标签/颜色(属性面板/列表内联编辑)。
+  const onSetMarker = useCallback(async (t: number, label: string | null, color: string | null) => {
+    try {
+      await api.setMarker(t, label, color);
+    } catch (e) {
+      setStatus(`标记编辑失败: ${String(e).slice(0, 120)}`);
+    }
+    await refresh();
+  }, []);
+
   const onRemoveMarker = useCallback(async (t: number) => {
     try {
       await api.removeMarker(t);
@@ -1088,6 +1128,69 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   );
 
   /// 音量包络拖拽提交(Timeline 音频块音量线)。
+  /// 音量曲线编辑模式:进入编辑的纯音频块集合;进入前快照(取消时还原)。
+  const [curveEditIds, setCurveEditIds] = useState<Set<string> | null>(null);
+  const curveSnapshotRef = useRef<Map<string, { kfs: { t: number; value: number; interp: string; bezier?: { c1x: number; c1y: number; c2x: number; c2y: number } }[] }>>(new Map());
+
+  /// 打开标记面板:已在布局中则激活该标签;否则加入并转独立浮窗。
+  const openMarkersPanel = useCallback(() => {
+    const m = modelRef0.current!;
+    if (m.getNodeById("markers")) {
+      m.doAction(Actions.selectTab("markers"));
+      persistLayout(m);
+      return;
+    }
+    const toId = firstTabsetId(m);
+    if (!toId) return;
+    m.doAction(Actions.addTab(tabJson("markers"), toId, DockLocation.CENTER, -1, false));
+    setTimeout(() => {
+      m.doAction(Actions.popoutTab("markers", "float"));
+      persistLayout(m);
+    }, 50);
+  }, []);
+
+  /// 进入曲线编辑(传入选中的片段 id,内部过滤出纯音频块)。
+  const enterCurveEdit = useCallback((ids: string[]) => {
+    const d = useEditor.getState().doc;
+    if (!d || ids.length === 0) return;
+    const snap = new Map<string, { kfs: { t: number; value: number; interp: string; bezier?: { c1x: number; c1y: number; c2x: number; c2y: number } }[] }>();
+    for (const id of ids) {
+      const c = d.clips.find((x) => x.id === id);
+      if (!c || c.text || c.lane !== "Audio") continue; // 仅纯音频块
+      snap.set(id, { kfs: (c.fx?.volume?.keyframes ?? []).map((k) => ({ ...k })) });
+    }
+    if (snap.size === 0) {
+      setStatus("曲线编辑仅支持纯音频块(音乐/旁白),请先选中音频块");
+      return;
+    }
+    curveSnapshotRef.current = snap;
+    setCurveEditIds(new Set(snap.keys()));
+    setStatus(`音量曲线编辑中(${snap.size} 个块):拖拽节点/点击曲线加点;完成后「完成」保存,「取消」还原`);
+  }, []);
+
+  /// 退出曲线编辑。save=true:完成(保留修改);save=false:取消(还原
+  /// 进入前的音量曲线快照,逐点恢复关键帧)。
+  const exitCurveEdit = useCallback(async (save: boolean) => {
+    const snap = curveSnapshotRef.current;
+    if (!save) {
+      const d = useEditor.getState().doc;
+      for (const [id, s0] of snap) {
+        const c = d?.clips.find((x) => x.id === id);
+        const cur = c?.fx?.volume?.keyframes ?? [];
+        for (const k of cur) {
+          if (!s0.kfs.some((sk) => sk.t === k.t)) await api.removeKeyframe(id, "volume", k.t);
+        }
+        for (const k of s0.kfs) {
+          await api.setKeyframe(id, "volume", k.t, k.value, k.interp.toLowerCase() as "linear" | "hold" | "smooth" | "bezier", k.bezier);
+        }
+      }
+      await refresh();
+    }
+    curveSnapshotRef.current = new Map();
+    setCurveEditIds(null);
+    setStatus(save ? "音量曲线编辑完成" : "已取消音量曲线编辑(还原修改)");
+  }, [refresh]);
+
   const onSetVolumeKeyframe = useCallback(async (clipId: string, tLocal: number, value: number) => {
     try {
       await api.setKeyframe(clipId, "volume", tLocal, value, "smooth");
@@ -1503,7 +1606,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       setPlaying, setPlayhead, setPlaySpeed, setDragKind, setDragAssetId,
       setAssetPreview, setTcDraft, setStatus, selectMany, onClipClick, onClipAction,
       onClipMove, onClipTrim, onSetVolumeKeyframe, onSetAudioFade, onRollEdit,
-      onRemoveMarker, onMoveClips, onDropPackItem, onDropAsset, onReorderTrack,
+      onRemoveMarker, onSetMarker, curveEditIds, enterCurveEdit, exitCurveEdit, openMarkersPanel,
+      onMoveClips, onDropPackItem, onDropAsset, onReorderTrack,
       onClipRangeSet, onRenameTrack, onRemoveTrack, onDuplicateClip,
       onToggleTrack, onToggleTrackMedia, onToggleLaneView,
       onPickFolder, onImportFiles, onImportFolder, onImportPack, onApplyPackItem,
@@ -1515,7 +1619,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       autoSelect, setAutoSelect, editMode, setEditMode, snapOn, setSnapOn,
     }),
     [
-      doc, thumbs, waveforms, playhead, selected, playing, playSpeed, renderMode,
+      doc, thumbs, waveforms, playhead, selected, playing, playSpeed, renderMode, curveEditIds,
       assetPreview, status, fps, dragKind, dragAssetId, alignEdges, tcDraft,
       autoSelect, editMode, snapOn, doc?.timebase,
       setPlayhead, clearAssetPreview, onImportFiles, onPickFolder, addToTimeline,
@@ -1565,6 +1669,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   };
 
   return (
+    <ConfigProvider theme={buildAntdTheme(theme !== "light")} locale={lang === "zh" ? zhCN : enUS} autoInsertSpaceInButton={false}>
     <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* 顶栏:Logo + 菜单栏 + 导出 */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
@@ -1685,7 +1790,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           ]}
         />
         <span style={{ flex: 1 }} />
-        <button className="btn primary" onClick={() => setExportDialog(true)}><Export size={16} /> {t("menu.export")}</button>
+        <AntdButton type="primary" icon={<Export size={14} />} onClick={() => setExportDialog(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28 }}>{t("menu.export")}</AntdButton>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1700,8 +1805,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             </div>
           </PanelContext.Provider>
         </div>
-        <div style={{ padding: "3px 16px", fontSize: 12, color: "var(--text-dim)", background: "var(--panel)", borderTop: "1px solid var(--border)" }}>
-          {status}
+        <div className="statusbar">
+          <span className="statusbar-dot" />
+          <span className="statusbar-text">{status}</span>
         </div>
       </div>
 
@@ -1713,5 +1819,6 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       {/* 预览音频监听(隐藏 <video> 混音,与导出混音语义对齐) */}
       <AudioBus doc={doc} playing={playing} playheadRef={playheadRef} />
     </div>
+    </ConfigProvider>
   );
 }

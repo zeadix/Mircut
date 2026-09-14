@@ -149,6 +149,7 @@ pub fn import_jianying_draft(draft_dir: &Path) -> Result<Document> {
                 name: None,
                 fps: None,
                 tags: vec![],
+            size_bytes: 0,
             });
             doc.clips.push(Clip {
                 id: format!("jc{clip_idx}"),

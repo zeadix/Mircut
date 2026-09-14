@@ -73,7 +73,7 @@ test("窗口菜单:切换面板显隐不白屏", async ({ page }) => {
 
   // 隐藏媒体库
   await page.locator("button:has-text('窗口')").click();
-  await page.locator("button:has-text('媒体库')").last().click();
+  await page.getByRole("menuitem", { name: "媒体库" }).click();
   await expect.poll(async () => (await tabGroups(page)).flat().filter((x) => x === "媒体库").length, { timeout: 5000 }).toBe(0);
   // 关键回归断言:界面没有白屏(header 与其余面板仍在,页面可交互)
   await expect(page.locator("button:has-text('窗口')")).toBeVisible();
@@ -81,7 +81,7 @@ test("窗口菜单:切换面板显隐不白屏", async ({ page }) => {
 
   // 再点恢复
   await page.locator("button:has-text('窗口')").click();
-  await page.locator("button:has-text('媒体库')").last().click();
+  await page.getByRole("menuitem", { name: "媒体库" }).click();
   await expect.poll(async () => (await tabGroups(page)).flat().filter((x) => x === "媒体库").length, { timeout: 5000 }).toBe(1);
   await expect(page.locator(".asset-card").first()).toBeVisible();
 });

@@ -2472,6 +2472,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         doc.clips.push(Clip {
             id: "c1".into(),
@@ -2612,6 +2613,7 @@ mod tests {
             name: Some("文字".into()),
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         // 顶部文字轨(置顶语义 = 数组靠前)+ 文字片段
         d.tracks.insert(
@@ -2794,6 +2796,7 @@ mod tests {
             name: Some("文字".into()),
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         };
         let base_doc = || {
             let mut d = doc();
@@ -3312,6 +3315,7 @@ mod tests {
             name: Some("文字".into()),
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         d.clips[0] = Clip {
             id: "c1".into(),
@@ -4735,6 +4739,7 @@ mod audio_offset_tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         let mk = |lane: Lane| Clip {
             id: format!("c_{}", if lane == Lane::Video { "v" } else { "a" }),

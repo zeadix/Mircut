@@ -5,6 +5,9 @@ import Inspector from "./Inspector";
 interface Props {
   doc: Document;
   selectedClipIds: string[];
+  curveEditIds?: Set<string> | null;
+  onCurveEditEnter?: (ids: string[]) => void;
+  onCurveEditDone?: (save: boolean) => void;
   playhead: number;
   fps: number;
   onRefresh: () => Promise<void>;
@@ -23,6 +26,9 @@ interface Props {
 function RightPanelInner({
   doc,
   selectedClipIds,
+  curveEditIds,
+  onCurveEditEnter,
+  onCurveEditDone,
   playhead,
   fps,
   onRefresh,
@@ -39,6 +45,10 @@ function RightPanelInner({
       <Inspector
         doc={doc}
         clip={clip}
+        selectedClipIds={selectedClipIds}
+        curveEditIds={curveEditIds}
+        onCurveEditEnter={onCurveEditEnter}
+        onCurveEditDone={onCurveEditDone}
         selectedCount={selectedClipIds.length}
         onBatchRemove={onBatchRemove}
         onBatchAudio={onBatchAudio}

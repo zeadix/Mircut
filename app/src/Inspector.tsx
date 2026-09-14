@@ -41,6 +41,12 @@ interface Props {
   clip: Clip | null;
   /// 多选数量(>1 且 clip 为空时显示批量面板)。
   selectedCount?: number;
+  /// 全部选中片段 id(多选进入音量曲线编辑用)。
+  selectedClipIds?: string[];
+  /// 音量曲线编辑模式:进入编辑的纯音频块集合(null = 非编辑模式)。
+  curveEditIds?: Set<string> | null;
+  onCurveEditEnter?: (ids: string[]) => void;
+  onCurveEditDone?: (save: boolean) => void;
   onBatchRemove?: () => Promise<void>;
   onBatchAudio?: (volume: number | null, muted: boolean | null) => Promise<void>;
   onRefresh: () => Promise<void>;
@@ -51,7 +57,7 @@ interface Props {
 }
 
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
-function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAudio, onRefresh, playheadTicks, editingText, onEndTextEdit }: Props) {
+function InspectorInner({ doc, clip, selectedCount = 0, selectedClipIds = [], curveEditIds = null, onCurveEditEnter, onCurveEditDone, onBatchRemove, onBatchAudio, onRefresh, playheadTicks, editingText, onEndTextEdit }: Props) {
   const tps = doc.timebase.num / doc.timebase.den;
   /// 编辑态去重:同一次进入只 autofocus 一次。
   const editingTextApplied = useRef<string | null>(null);
@@ -103,12 +109,15 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       setSpeed(String(clip.speed));
       setVolume(String(volSrc?.volume ?? clip.volume));
       if (clip.fx) {
-        setGrade({
-          brightness: clip.fx.grade.brightness,
-          contrast: clip.fx.grade.contrast,
-          saturation: clip.fx.grade.saturation,
-          temperature: clip.fx.grade.temperature ?? 0,
-        });
+        // fx 可能被部分注入(如仅 volume):grade 缺失时保持当前/默认值
+        if (clip.fx.grade) {
+          setGrade({
+            brightness: clip.fx.grade.brightness,
+            contrast: clip.fx.grade.contrast,
+            saturation: clip.fx.grade.saturation,
+            temperature: clip.fx.grade.temperature ?? 0,
+          });
+        }
         setCk({
           similarity: clip.fx.chroma_key?.similarity ?? 0,
           color: clip.fx.chroma_key?.color ?? "#00ff00",
@@ -310,6 +319,18 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
               批量取消静音
             </button>
           </div>
+          {(() => {
+            const audioIds = selectedClipIds.filter((id) => {
+              const c = doc.clips.find((x) => x.id === id);
+              return !!c && !c.text && c.lane === "Audio";
+            });
+            if (audioIds.length === 0) return null;
+            return (
+              <button className="btn primary" onClick={() => onCurveEditEnter?.(audioIds)}>
+                音量曲线编辑({audioIds.length} 个音频块)
+              </button>
+            );
+          })()}
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             统一音量
             <input
@@ -592,6 +613,27 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
       )}
 
       {(showAudio || showSimpleAudio) && (
+      <>
+      {/* 音量曲线编辑入口/状态(纯音频块;多选经批量面板进入) */}
+      {clip.lane === "Audio" && (
+        curveEditIds?.has(clip.id) ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+            <span style={{ color: "var(--primary)", fontSize: 11 }}>音量曲线编辑中</span>
+            <button className="btn sm primary" onClick={() => onCurveEditDone?.(true)}>完成</button>
+            <button className="btn sm" onClick={() => onCurveEditDone?.(false)}>取消</button>
+          </div>
+        ) : (
+          <div style={{ marginBottom: 6 }}>
+            <button
+              className="btn"
+              title="进入音量曲线编辑:在时间轴音频块上拖拽节点/点击加点;完成后保存退出,取消还原"
+              onClick={() => onCurveEditEnter?.([clip.id])}
+            >
+              曲线编辑
+            </button>
+          </div>
+        )
+      )}
       <label title={audioSibling ? "作用于整个文件块(写入音频部分)" : undefined}>
         音量:{" "}
         <NumInput
@@ -605,6 +647,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           title="音量倍率(键入即时生效;按住左右拖拽调值)"
         />
       </label>
+      </>
       )}
 
       {showSimpleAudio && audioTarget && (
@@ -1192,7 +1235,7 @@ function InspectorInner({ doc, clip, selectedCount = 0, onBatchRemove, onBatchAu
           clipId={clip.id}
           prop="speed"
           label="速度(倍率)"
-          keyframes={clip.fx?.speed.keyframes ?? []}
+          keyframes={clip.fx?.speed?.keyframes ?? []}
           tps={tps}
           min={0.1}
           max={16}

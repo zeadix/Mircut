@@ -321,29 +321,32 @@ test("图像菜单:三种尺寸模式作用于选中片段", async ({ page }) =>
 
   const openSizeMenu = async () => {
     await page.getByRole("button", { name: "图像", exact: true }).click();
-    await page.getByRole("button", { name: "图像尺寸" }).hover();
+    await page.getByRole("menuitem", { name: "图像尺寸" }).hover();
     await page.waitForTimeout(150);
   };
 
   // 全屏平铺:强行铺满 100%×100%
   await openSizeMenu();
-  await page.locator("button:has-text('全屏平铺')").last().click();
+  await page.getByRole("menuitem", { name: "全屏平铺" }).click();
   await expect.poll(layerBox, { timeout: 10000 }).toEqual({ w: 100, h: 100 });
 
   // 等比例平铺:320x240 → 75%×100%(contain,不超出,高贴齐)
   await openSizeMenu();
-  await page.locator("button:has-text('等比例平铺')").last().click();
+  await page.getByRole("menuitem", { name: "等比例平铺" }).click();
   await expect.poll(layerBox, { timeout: 10000 }).toEqual({ w: 75, h: 100 });
 
   // 视频默认分辨率:320x240 → 16.67%×22.22%(样式百分比字符串截断到 4 位小数)
   await openSizeMenu();
-  await page.locator("button:has-text('视频默认分辨率')").last().click();
+  await page.getByRole("menuitem", { name: "视频默认分辨率" }).click();
   await expect.poll(async () => (await layerBox()).w, { timeout: 10000 }).toBeCloseTo(100 * (320 / 1920), 2);
   await expect.poll(async () => (await layerBox()).h, { timeout: 10000 }).toBeCloseTo(100 * (240 / 1080), 2);
 
   // 勾选态:重新打开子菜单,默认分辨率项带 ✓
   await openSizeMenu();
-  await expect(page.locator("button:has-text('视频默认分辨率')").last()).toContainText("✓");
+  // 勾选态 = antd 勾选图标(CheckOutlined)
+  await expect(
+    page.getByRole("menuitem", { name: /视频默认分辨率/ }).locator(".anticon-check")
+  ).toHaveCount(1);
 });
 
 test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async ({ page }) => {
@@ -356,6 +359,8 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
+  // 「点击定位」开启:单击元素块会把播放头切到点击处;本用例需播放头停在 0
+  await page.keyboard.press("Home");
 
   // 右栏已纯属性化(无 Tab 栏):选中片段后 Inspector 直接显示
   const rightAside = page.locator("aside").last();

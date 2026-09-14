@@ -54,14 +54,14 @@ test("冒烟:工作面板经窗口菜单开关,右栏常显属性", async ({ pag
 
   // 窗口菜单开关贴纸面板(dock 面板;data-panel 定位)
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.locator('[data-menu-item="贴纸"]').click();
+  await page.getByRole("menuitem", { name: "贴纸" }).click();
   const stickerPanel = page.locator('[data-panel="sticker"]');
   await expect(stickerPanel).toBeVisible();
   await expect(stickerPanel.getByRole("button", { name: /导入图片贴纸/ })).toBeVisible();
 
   // 再次切换 → 隐藏
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.locator('[data-menu-item="贴纸"]').click();
+  await page.getByRole("menuitem", { name: "贴纸" }).click();
   await expect(stickerPanel).not.toBeVisible();
 });
 
@@ -70,13 +70,13 @@ test("冒烟:标记打点与列表", async ({ page }) => {
   // 等应用就绪(doc 加载完成,M 键在加载中会被静默忽略)
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
-  // M 键打点(播放头 0 处)
+  // M 键打点(播放头 0 处);左栏「⚑ 标记」按钮显示计数,点击打开标记面板
   await page.keyboard.press("m");
-  // 工具栏标记按钮显示计数
-  const markerBtn = page.locator("button", { hasText: "标记" }).first();
+  const markerBtn = page.locator("button[title*='标记列表']");
   await expect(markerBtn).toBeVisible();
+  await expect(markerBtn).toContainText("⚑ 标记 1");
   await markerBtn.click();
-  await expect(page.locator("text=标记(")).toBeVisible();
+  await expect(page.getByPlaceholder("标记名称…").first()).toBeVisible();
   await expect(page.locator("button", { hasText: "跳转" }).first()).toBeVisible();
 });
 
@@ -86,7 +86,7 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
 
   // 1. 字幕工作面板(窗口菜单开启):AI 模型区(mock 清单含 Whisper base)
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: "字幕" }).last().click();
+  await page.getByRole("menuitem", { name: "字幕" }).click();
   const subPanel = page.locator('[data-panel="subtitle"]');
   await expect(subPanel).toBeVisible();
   await expect(subPanel.getByText("AI 模型")).toBeVisible();
@@ -141,7 +141,7 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
 
   // 3. 文字工作面板:音色下拉(piper 多音色;PopupSelect:点开数选项行)
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: "文字" }).last().click();
+  await page.getByRole("menuitem", { name: "文字" }).click();
   const textPanel = page.locator('[data-panel="text"]');
   await expect(textPanel.getByText(/音色\(piper\)/)).toBeVisible();
   const voiceSel = textPanel.locator("button[title*='音色模型']");
@@ -171,7 +171,7 @@ test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page
 
   // 切亮色(视图菜单)
   await page.getByRole("button", { name: "视图" }).click();
-  await page.getByRole("button", { name: /切换亮\/暗主题/ }).click();
+  await page.getByRole("menuitem", { name: /切换亮\/暗主题/ }).click();
   await page.waitForTimeout(300);
   const light = await page.evaluate(() => ({
     theme: document.documentElement.dataset.theme,

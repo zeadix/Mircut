@@ -22,6 +22,13 @@ interface Props {
   onRollEdit?: (leftId: string, rightId: string, delta: number) => void;
   /// 移除标记(精确刻度)。
   onRemoveMarker?: (t: number) => void;
+  /// 编辑标记标签/颜色(空色串 = 回默认色)。
+  onSetMarker?: (t: number, label: string | null, color: string | null) => void;
+  /// 音量曲线编辑模式:进入编辑的纯音频块集合(null = 非编辑模式)。
+  /// 编辑中:曲线可编辑;其它块遮罩封锁;曲线本身常显(非编辑模式只读)。
+  curveEditIds?: Set<string> | null;
+  /// 打开标记面板(独立 dock 面板;App 侧经窗口菜单/面板聚焦)。
+  onOpenMarkersPanel?: () => void;
   /// 批量移动提交(组合命令)。
   onMoveClips?: (entries: { clipId: string; newStart: number; newTrackId: string; lane: string | null }[]) => void;
   /// 模板条目拖放(素材包条目落到时间轴位置)。
@@ -86,6 +93,9 @@ const EDGE_HIT_PX = 10;
 const VIEWPAD_RIGHT_PX = 600; // 内容右余量
 /// 音量包络显示上限(增益 >1.5 钳到顶部)。
 const ENV_MAX = 1.5;
+/// 标记预设颜色(多色区分书签类别;首个为默认色)。
+const MARKER_COLORS = ["#4ec9ff", "#ffd75e", "#7ed957", "#ff8f8f", "#c39bff"];
+
 /// File 轨道三行高度
 const TIME_ROW_H = 30;  // 层标题行高度(固定,不随轨高滑条)
 const VIDEO_ROW_H = 36; // 视频行高度
@@ -245,6 +255,9 @@ function TimelineInner({
   onToggleTrackMedia,
   onToggleLaneView,
   onRemoveMarker,
+  onSetMarker,
+  curveEditIds,
+  onOpenMarkersPanel,
   onMoveClips,
   onDropPackItem,
   selectedClipIds,
@@ -318,13 +331,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; clipId: string | null } | null>(null);
   /// 淡入淡出手柄拖拽实时值(秒)。
   const [fadeLive, setFadeLive] = useState<{ clipId: string; edge: "in" | "out"; secs: number } | null>(null);
-  /// 标记列表面板开关。
-  const [showMarkers, setShowMarkers] = useState(false);
   /// 左上角屏蔽开关(仅时间轴显示;不影响合成)。
   const [viewVideo, setViewVideo] = useState(true);
   const [viewAudio, setViewAudio] = useState(true);
   /// 音频曲线编辑模式:开启后音频区点击/拖拽=调整音量曲线;关闭时=选中/移动块。
-  const [audioEditMode, setAudioEditMode] = useState(false);
+
   /// 多选组拖拽:被拖块之外的组员起点快照(提交时统一位移)。
   const moveGroupRef = useRef<{ ids: string[]; origStarts: Record<string, number> } | null>(null);
 
@@ -669,8 +680,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             ctx.stroke();
           }
 
-          // ===== 音量包络曲线(仅"编辑音频"模式显示) =====
-          if (audioEditMode && videoH > 0 && cw > 2) {
+          // ===== 音量包络曲线(常显;仅曲线编辑模式下可交互修改) =====
+          if (videoH > 0 && cw > 2) {
             const envLaneTop = videoTop + 2;
             const envLaneH = videoH - 4;
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
@@ -1061,11 +1072,42 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       }
     }
 
+    // ===== 曲线编辑模式遮罩:非编辑块整体盖浅色罩并封锁 =====
+    if (curveEditIds) {
+      for (const c of doc.clips) {
+        if (curveEditIds.has(c.id)) continue;
+        const row = clipRow(c);
+        if (!row) continue;
+        const geo = clipLaneGeo(row, c);
+        const bx = c.start * pxPerTick;
+        const bw = Math.max(c.duration * pxPerTick, 1);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.42)";
+        ctx.fillRect(bx, geo.laneTop, bw, geo.h);
+        // 封锁提示:斜纹边框
+        ctx.strokeStyle = "rgba(120, 124, 134, 0.8)";
+        ctx.strokeRect(bx + 0.5, geo.laneTop + 0.5, Math.max(bw - 1, 1), Math.max(geo.h - 1, 1));
+      }
+      // 编辑中的块:主色描边高亮
+      for (const id of curveEditIds) {
+        const c = docIndex.clipsById.get(id);
+        if (!c) continue;
+        const row = clipRow(c);
+        if (!row) continue;
+        const geo = clipLaneGeo(row, c);
+        const bx = c.start * pxPerTick;
+        const bw = Math.max(c.duration * pxPerTick, 1);
+        ctx.strokeStyle = "#4ec9ff";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(bx + 0.5, geo.laneTop + 0.5, Math.max(bw - 1, 1), Math.max(geo.h - 1, 1));
+        ctx.lineWidth = 1;
+      }
+    }
+
     // 时间轴标记(顶部菱形,单击定位)——画在轨道区最上层边缘
     for (const m of doc.markers ?? []) {
       const mx = m.t * pxPerTick;
       if (mx < vx0 - 8 || mx > vx1 + 8) continue;
-      ctx.fillStyle = "#4ec9ff";
+      ctx.fillStyle = m.color ?? "#4ec9ff";
       ctx.beginPath();
       ctx.moveTo(mx, 1);
       ctx.lineTo(mx + 5, 6.5);
@@ -1074,7 +1116,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       ctx.closePath();
       ctx.fill();
       if (m.label) {
-        ctx.fillStyle = "#8fd0ff";
+        ctx.fillStyle = m.color ?? "#8fd0ff";
         ctx.font = "9px sans-serif";
         ctx.fillText(m.label.slice(0, 12), mx + 7, 9);
       }
@@ -1230,7 +1272,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         staticRafRef.current = 0;
       }
     };
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, audioEditMode, viewSize]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, viewSize, curveEditIds]);
 
   // 卸载兜底:取消未决的静态层重绘/滚动合帧
   useEffect(
@@ -1264,6 +1306,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   playheadRef.current = playheadTicks;
   /// 播放头拖拽中(6px 触发区抓取后)。
   const playheadDragRef = useRef<{ active: boolean } | null>(null);
+  /// 「点击定位」:记录 pointerdown 位置以区分单击与拖拽(位移 <5px = 单击)。
+  const downPosRef = useRef<{ x: number; y: number } | null>(null);
+  /// 该次按下已由专门分支处理过 seek(播放头拖拽/标记),通用单击 seek 跳过。
+  const clickSeekHandledRef = useRef(false);
   /// 播放头 DOM 元素:横向滚动时与画布同步帧平移(绕过 React 批处理延迟)。
   const playheadElRef = useRef<HTMLDivElement>(null);
 
@@ -1514,11 +1560,14 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     // overlay 是 none,e.target 在 React 合成下指向 overlay 时 setPointerCapture 无效。
     const target = (e.currentTarget as HTMLElement) ?? (e.target as HTMLElement);
     target.setPointerCapture?.(e.pointerId);
+    downPosRef.current = { x: e.clientX, y: e.clientY };
+    clickSeekHandledRef.current = false;
     const t = ticksFromClientX(e.clientX);
     const yIn = e.clientY - canvasRef.current!.getBoundingClientRect().top;
     // 播放头拖拽(触发宽度 6px):按住播放头线即可左右拖动时间针
     if (Math.abs(t - playheadRef.current) * pxPerTick <= 3) {
       playheadDragRef.current = { active: true };
+      clickSeekHandledRef.current = true; // 拖拽中已实时 seek
       return;
     }
     // 标记菱形(顶部 12px):单击定位到标记
@@ -1528,6 +1577,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       );
       if (near) {
         onSeek(near.t);
+        clickSeekHandledRef.current = true; // 已定位到标记(优先于点击位置)
         return;
       }
     }
@@ -1535,6 +1585,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     if (hit) {
       const clip = docIndex.clipsById.get(hit.clipId)!;
+      // 曲线编辑模式:非编辑块被遮罩封锁 —— 不选中/不拖拽/不修剪
+      if (curveEditIds && !curveEditIds.has(hit.clipId)) return;
       const track = docIndex.trackById.get(clip.track_id);
       if (track?.locked) return;
       // 音频块交互分区(仅纯音频块):
@@ -1545,7 +1597,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const row = clipRow(clip);
       const laneGeo = row ? clipLaneGeo(row, clip) : null;
       const inAudioRow = row ? yIn >= row.audioTop && yIn < row.audioTop + row.audioH : false;
-      if (audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow) {
+      if (curveEditIds?.has(clip.id) && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow) {
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
         const kfs = clip.fx?.volume?.keyframes ?? [];
         // 1) 节点命中(±6px):拖拽既有节点(仅调值)
@@ -1577,7 +1629,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         onClipClick(clip.id, false);
         return;
       }
-      if (!audioEditMode && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow && yIn - laneGeo.laneTop <= 7) {
+      if (!curveEditIds?.has(clip.id) && isAudioBlock && laneGeo && hit.edge === "body" && inAudioRow && yIn - laneGeo.laneTop <= 7) {
         // 淡入/淡出手柄:波带顶边手柄块 ±6px(0 值时画在 8px 内缩处仍可抓取)
         const px = e.clientX - canvasRef.current!.getBoundingClientRect().left;
         const maxFade = (clip.duration / tps) * 0.9;
@@ -1664,6 +1716,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         moveTargetRef.current = { trackId: clip.track_id, row: canvasRow, lane: clip.lane ?? null };
       }
     } else {
+      // 曲线编辑模式:空白禁框选(单击定位/播放头拖拽仍可用 —— 时间帧可自由操作)
+      if (curveEditIds) return;
       // 空白处:左键拖拽 = 框选;单击空白 = 清空选择(点击定位开启时顺带 seek)
       setMarquee({ x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY });
       dragRef.current = { kind: "marquee", x0: e.clientX, y0: e.clientY };
@@ -1915,6 +1969,21 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     setGhost(null);
     const hint = trimHint;
     setTrimHint(null);
+    // 「点击定位」:任意位置的单击(元素块/空白/边缘/文字块)都把播放头切到
+    // 点击处;位移 ≥5px 视为拖拽(移动/修剪/框选…),不 seek。
+    const down = downPosRef.current;
+    downPosRef.current = null;
+    if (
+      clickSeek &&
+      onSeek &&
+      !clickSeekHandledRef.current &&
+      down &&
+      e.button === 0 &&
+      Math.abs(e.clientX - down.x) < 5 &&
+      Math.abs(e.clientY - down.y) < 5
+    ) {
+      onSeek(ticksFromClientX(e.clientX));
+    }
     if (!d) return;
     if (d.kind === "marquee") {
       setMarquee(null);
@@ -1922,8 +1991,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const w = Math.abs(e.clientX - d.x0);
       const h = Math.abs(e.clientY - d.y0);
       if (w < 5 && h < 5) {
-        // 单击空白:清空选择;"点击定位"开启时播放头同时跳到点击位置
-        if (clickSeek && onSeek) onSeek(ticksFromClientX(e.clientX));
+        // 单击空白:清空选择(seek 已由通用单击逻辑处理)
         onSelectMany?.([]);
         return;
       }
@@ -2319,8 +2387,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         <label>
           <input type="checkbox" checked={snap} onChange={(e) => setSnap(e.target.checked)} /> 吸附
         </label>
-          <label title="波纹编辑:开启后,删除或修剪片段时后方的块自动前移填补空隙(与音频波形显示无关;波形为常显)">
-            <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 波纹
+          <label title="自动前移:开启后,删除一个视频/音频块、或把它剪短时,同一轨道后面的块会自动往前移动,补上空出来的位置(不留空隙)。关闭后:后面的块原地不动,空位就空着。">
+            <input type="checkbox" checked={ripple} onChange={(e) => setRipple(e.target.checked)} /> 自动前移
           </label>
         <label
           title="点击定位:开启后单击时间轴空白处,播放头立即跳到点击位置(拖拽仍为框选;点击片段仍是选中)"
@@ -2328,20 +2396,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         >
           <input type="checkbox" checked={clickSeek} onChange={(e) => setClickSeek(e.target.checked)} /> 点击定位
         </label>
-        <label
-          title="音频曲线编辑(仅纯音频块):开启后点击/拖拽音频块的音量线与节点调整曲线;视频块的音频经属性面板调节"
-          style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: audioEditMode ? "var(--accent)" : undefined }}
-        >
-          <input type="checkbox" checked={audioEditMode} onChange={(e) => setAudioEditMode(e.target.checked)} /> 编辑音频
-        </label>
-        <button
-          className="btn"
-          style={{ padding: "1px 6px", fontSize: 10 }}
-          onClick={() => setShowMarkers((v) => !v)}
-          title="标记列表(跳转/删除)"
-        >
-          ⚑ 标记 {doc.markers?.length ?? 0}
-        </button>
         <label>
           轨高
           <input
@@ -2387,6 +2441,14 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             }}
           >
             + 图层
+          </button>
+          <button
+            className="btn"
+            style={{ padding: "1px 8px", fontSize: 10, marginLeft: 6 }}
+            title="标记列表:跳转/改名/颜色(也可在窗口菜单打开标记面板)"
+            onClick={() => onOpenMarkersPanel?.()}
+          >
+            ⚑ 标记 {doc.markers?.length ?? 0}
           </button>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -2823,68 +2885,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       </div>
       </div>
 
-      {/* 标记列表面板 */}
-      {showMarkers && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 850,
-          }}
-          onMouseDown={() => setShowMarkers(false)}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: 8,
-              top: 26,
-              background: "var(--card)",
-              border: "1px solid var(--border-strong)",
-              borderRadius: "var(--radius-pop)",
-              padding: 8,
-              minWidth: 220,
-              maxWidth: 320,
-              maxHeight: 260,
-              overflowY: "auto",
-              fontSize: 11,
-              color: "var(--text)",
-              boxShadow: "0 6px 24px rgba(0,0,0,0.5)",
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div style={{ fontWeight: "bold", marginBottom: 6 }}>
-              标记({doc.markers?.length ?? 0})
-            </div>
-            {(doc.markers ?? []).length === 0 && (
-              <div style={{ color: "var(--text-dim)" }}>无标记:M 键在播放头打点</div>
-            )}
-            {(doc.markers ?? [])
-              .slice()
-              .sort((a, b) => a.t - b.t)
-              .map((m) => (
-                <div key={m.t} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
-                  <span style={{ color: "var(--link)", width: 58, flexShrink: 0 }}>
-                    {(m.t / tps).toFixed(2)}s
-                  </span>
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {m.label || "(无标签)"}
-                  </span>
-                  <button className="btn sm" onClick={() => onSeek(m.t)}>
-                    跳转
-                  </button>
-                  <button
-                    className="btn"
-                    style={{ padding: "1px 6px" }}
-                    title="删除标记"
-                    onClick={() => onRemoveMarker?.(m.t)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-          </div>
-        </div>
-      )}
 
       {/* 框选矩形 */}
       {marquee && (
@@ -2929,7 +2929,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                   { label: "在播放头分割", fn: () => onClipAction?.("split", c.id), disabled: !inClip },
                   { label: "复制片段(播放头处)", fn: () => onClipAction?.("duplicate", c.id) },
                   { label: "删除", fn: () => onClipAction?.("remove", c.id) },
-                  { label: "波纹删除", fn: () => onClipAction?.("ripple-remove", c.id) },
+                  { label: "删除并前移(后续块补位)", fn: () => onClipAction?.("ripple-remove", c.id) },
                   { label: "分离音频", fn: () => onClipAction?.("detach-audio", c.id) },
                   { label: "定格帧(1s)", fn: () => onClipAction?.("freeze", c.id) },
                   { label: c.muted ? "取消静音" : "静音", fn: () => onClipAction?.("toggle-mute", c.id) },

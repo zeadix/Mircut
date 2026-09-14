@@ -246,6 +246,7 @@ pub(crate) fn import_media(
         name: None,
         fps: info.video().and_then(|v| v.fps),
         tags: vec![],
+        size_bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
     };
     {
         let mut inner = state.inner.lock().unwrap();

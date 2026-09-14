@@ -233,6 +233,8 @@ export interface ImageOverlay {
 export interface Marker {
   t: number;
   label: string;
+  /// 颜色(多色区分书签类别;null/缺省 = 默认色)。
+  color?: string | null;
 }
 
 export interface Asset {
@@ -247,6 +249,8 @@ export interface Asset {
   /// 显示名(None = 文件名)。
   name?: string | null;
   tags?: string[];
+  /// 文件字节数(0 = 未知)。
+  size_bytes?: number;
 }
 
 export interface TextOverlay {

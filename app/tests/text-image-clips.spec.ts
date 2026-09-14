@@ -13,7 +13,7 @@ test("图片素材上轨:3 秒定格片段 + fx.rect + 入场动画", async ({ p
 
   // 切到贴纸 Tab,图片素材卡存在(mock a3 png)
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.locator('[data-menu-item="贴纸"]').click();
+  await page.getByRole("menuitem", { name: "贴纸" }).click();
   const stickerPanel = page.locator('[data-panel="sticker"]');
   await expect(stickerPanel.getByText("图片素材(单击放到播放头")).toBeVisible();
 
@@ -56,7 +56,7 @@ test("文字面板:新建文字片段(合成资产)", async ({ page }) => {
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.locator('[data-menu-item="文字"]').click();
+  await page.getByRole("menuitem", { name: "文字" }).click();
   const textPanel = page.locator('[data-panel="text"]');
   await expect(textPanel).toBeVisible();
   await textPanel.getByRole("button", { name: "+ 在播放头新建文字" }).click();

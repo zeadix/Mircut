@@ -85,12 +85,32 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
     return n;
   });
   expect(wavePixels, "普通模式音频区应显示波形").toBeGreaterThan(10);
-  expect(await whiteLinePixels()).toBe(0);
-
-  // ===== 1. 音频包络编辑:先开启"编辑音频"模式,按住音量线(v=1 → y≈96)拖拽 =====
-  await page.getByTitle(/音频曲线编辑/).locator("input").check();
+  // 曲线常显(新行为):非编辑模式也显示包络线,但不可编辑 ——
+  // 拖拽节点应被忽略(不提交 set_keyframe)
+  expect(await whiteLinePixels(), "曲线常显").toBeGreaterThan(5);
+  await page.mouse.click(midX, box!.y + 78); // 先选中音频块
   await page.waitForTimeout(200);
-  // 编辑模式下包络线出现
+  // 确保未进入编辑模式(退出按钮不存在)
+  expect(page.locator("aside").last().getByRole("button", { name: "完成" })).toHaveCount(0);
+  await page.mouse.move(midX, box!.y + 53);
+  await page.mouse.down();
+  await page.mouse.move(midX + 8, box!.y + 63, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  expect(
+    await page.evaluate(() => {
+      const calls = (window as unknown as { __calls?: { cmd: string; args: Record<string, unknown> }[] }).__calls ?? [];
+      return calls.filter((c) => c.cmd === "set_keyframe").length;
+    }),
+    "非编辑模式拖节点不应提交"
+  ).toBe(0);
+
+  // ===== 1. 音频包络编辑:属性面板「曲线编辑」进入,按住音量线(v=1 → y≈96)拖拽 =====
+  const rightAside = page.locator("aside").last();
+  await rightAside.getByRole("button", { name: "曲线编辑" }).click();
+  await expect(rightAside.getByText("音量曲线编辑中")).toBeVisible({ timeout: 5000 });
+  await page.waitForTimeout(200);
+  // 编辑模式下包络线节点可编辑
   expect(await whiteLinePixels(), "编辑模式应显示音量节点曲线").toBeGreaterThan(5);
   const envY = box!.y + 53;
   await page.mouse.move(midX, envY);
@@ -107,10 +127,9 @@ test("文件轨:音频包络编辑 + 音频区拖拽整体移动", async ({ page
   expect(envCall!.args.clipId).toBe("cAudio");
   expect(envCall!.args.prop).toBe("volume");
 
-  // 关闭编辑模式:包络线消失,回到波形显示
-  await page.getByTitle(/音频曲线编辑/).locator("input").uncheck();
+  // 完成(保存)退出:包络线仍在(常显),但退出编辑态
+  await rightAside.getByRole("button", { name: "完成" }).click();
   await page.waitForTimeout(200);
-  expect(await whiteLinePixels(), "退出编辑模式包络线应消失").toBe(0);
 
   // ===== 2. 音频区拖拽整体移动:在包络线之外(y=110)按下拖动 =====
   await page.mouse.move(midX, box!.y + 78);
@@ -241,8 +260,14 @@ test("编辑模式:拖拽既有音量节点 → 提交同时间新值", async ({
   await page.keyboard.press("m");
   await page.waitForTimeout(600);
 
-  // 开启编辑音频模式
-  await page.getByTitle(/音频曲线编辑/).locator("input").check();
+  // 选中音频块 → 属性面板进入曲线编辑
+  const canvas0 = page.locator('[data-veditor-drop="timeline"] canvas').first();
+  const box0 = await canvas0.boundingBox();
+  await page.mouse.click(box0!.x + 20, box0!.y + 78);
+  await page.waitForTimeout(200);
+  const aside0 = page.locator("aside").last();
+  await aside0.getByRole("button", { name: "曲线编辑" }).click();
+  await expect(aside0.getByText("音量曲线编辑中")).toBeVisible({ timeout: 5000 });
   await page.waitForTimeout(200);
 
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();

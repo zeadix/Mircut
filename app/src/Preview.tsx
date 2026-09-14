@@ -1305,8 +1305,9 @@ const [url, setUrl] = useState<string | null>(null);
               top: 0,
               width: framePx?.w ?? "100%",
               height: framePx?.h ?? "100%",
-              overflow: "hidden",
-              background: "#000",
+              // 不裁剪:元素超出视频区域时延伸到画布区(边界框仍置顶提示边界)
+              overflow: "visible",
+              background: "var(--surface)",
               transform: framePx && stageZoom !== 1 ? `scale(${stageZoom})` : undefined,
               transformOrigin: "top left",
             }}
@@ -1678,6 +1679,19 @@ const [url, setUrl] = useState<string | null>(null);
             </>
           )}
 
+          {/* 画布边界框:1px 高亮描边,置于任何元素上层 —— 元素超出视频区域
+              延伸到画布区时,边界线仍然可见(明确告诉用户画布边界在哪) */}
+          {framePx && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                border: "1px solid var(--primary)",
+                pointerEvents: "none",
+                zIndex: 30,
+              }}
+            />
+          )}
           </div>
           </div>
           </div>

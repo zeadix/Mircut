@@ -33,6 +33,7 @@ fn migrate_text_overlays(doc: &mut Document) {
                 name: Some("文字".into()),
                 fps: None,
                 tags: vec![],
+                size_bytes: 0,
             });
         }
         // 位置/字号 → fx.rect(x/y 中心;字号以 rect.h 相对画布高表达,1080p 基准)
@@ -149,6 +150,7 @@ pub(crate) fn ensure_image_asset(doc: &mut Document, path: &str) -> (String, Opt
         name: None,
         fps: None,
         tags: vec![],
+        size_bytes: 0,
     });
     (id, w.zip(h))
 }

@@ -1,4 +1,4 @@
-//! VEditor core:M2 扩展命令(轨道管理/波纹删除/关键帧/变速/转场/调色/音量静音)。
+//! VEditor core:M2 扩展命令(轨道管理/删除并前移/关键帧/变速/转场/调色/音量静音)。
 //! 与 lib.rs 的基础命令共用 Command trait。
 
 use crate::{Clip, Command, Document, Ticks, Track};
@@ -115,7 +115,7 @@ impl Command for SetTrackFlags {
     }
 }
 
-/// 波纹删除:删除片段后,同轨后方片段前移填补空隙。
+/// 删除并前移:删除片段后,同轨后方片段前移填补空隙(不留空位)。
 pub struct RippleDelete {
     pub clip_id: String,
     direct: Option<crate::RemoveClip>,
@@ -134,7 +134,7 @@ impl RippleDelete {
 
 impl Command for RippleDelete {
     fn label(&self) -> &str {
-        "波纹删除"
+        "删除并前移"
     }
     fn apply(&mut self, doc: &mut Document) {
         let Some(target) = doc.clips.iter().find(|c| c.id == self.clip_id) else {
@@ -1013,6 +1013,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         let mut stack = CommandStack::new();
         stack.execute(&mut doc, Box::new(TagAsset::add("a1", "精华")));
@@ -1107,6 +1108,7 @@ mod tests {
             name: None,
             fps: None,
             tags: vec![],
+            size_bytes: 0,
         });
         // File 轨:视频块 + 音频配对块(同素材同源区间,另一 lane)
         doc.tracks.push(Track {
@@ -1170,6 +1172,7 @@ mod tests {
             fps: None,
             name: None,
             tags: vec!["原始".into()],
+            size_bytes: 0,
         });
         let mut cmd = SetAssetMeta::new(
             "a1",

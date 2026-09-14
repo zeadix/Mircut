@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
 /// 经窗口菜单开关工作面板(key: 面板英文键;label: 菜单中文名)。
 async function toggleWorkPanel(page: import("@playwright/test").Page, key: string, label: string) {
   await page.getByRole("button", { name: "窗口", exact: true }).click();
-  await page.getByRole("button").filter({ hasText: label }).last().click();
+  await page.getByRole("menuitem", { name: label }).click();
   return page.locator(`[data-panel="${key}"]`);
 }
 

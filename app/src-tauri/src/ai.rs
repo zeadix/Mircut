@@ -149,6 +149,7 @@ pub(crate) fn separate_stems(
                 fps: None,
                 name: None,
                 tags: vec![tag.into()],
+                size_bytes: 0,
             });
         }
     }
