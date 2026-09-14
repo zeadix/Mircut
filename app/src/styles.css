@@ -494,3 +494,46 @@ fieldset legend {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* ===== 轨头小按钮 ===== */
+
+/* 元素类型合成开关:无框扁平,激活 = 类型色图标(视频绿/音频蓝/图片紫/文字橙
+   由内联 color 指定),关闭 = 灰图标;hover 浅底 */
+.kind-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.kind-toggle:hover { background: var(--btn-hover); }
+.kind-toggle:not(.on):hover { color: var(--text); }
+
+/* 轨头迷你图标钮(锁定/隐藏/静音/删除):ghost 风格,hover 才显底 */
+.mini-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.mini-icon:hover { background: var(--btn-hover); color: var(--text); }
+.mini-icon.on { color: var(--primary); }
+.mini-icon.danger:hover { background: rgba(229, 72, 77, 0.12); color: #e5484d; }

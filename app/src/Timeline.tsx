@@ -2531,10 +2531,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                           </span>
                         )}
                       </div>
-                      <button className="btn sm" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: track.locked ? 1 : 0.4, borderColor: track.locked ? "var(--accent)" : undefined, color: track.locked ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, "locked")} title={track.locked ? "解锁轨道" : "锁定轨道"}>
+                      <button className={`mini-icon${track.locked ? " on" : ""}`} style={{ alignSelf: "center" }} onClick={() => onToggleTrack?.(track.id, "locked")} title={track.locked ? "解锁轨道" : "锁定轨道"}>
                         {track.locked ? <Lock size={11} weight="fill" /> : <LockOpen size={11} />}
                       </button>
-                      <button className="btn sm" style={{ alignSelf: "center", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
+                      <button className="mini-icon danger" style={{ alignSelf: "center" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
                         <X size={11} />
                       </button>
                     </div>
@@ -2587,36 +2587,36 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                       </div>
                       {/* 按元素类型的合成开关:关闭的类型不在预览显示/不导出 */}
                       <button
-                        className={`chip${track.video_on !== false ? " on" : ""}`}
-                        style={{ alignSelf: "center" }}
+                        className={`kind-toggle${track.video_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center", color: track.video_on !== false ? "#5f9e73" : undefined }}
                         title={track.video_on !== false ? "视频元素参与合成(点击关闭)" : "视频元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "video")}
                       >
-                        {track.video_on !== false ? <Video size={12} weight="fill" /> : <VideoCameraSlash size={12} />}
+                        {track.video_on !== false ? <Video size={13} weight="fill" /> : <VideoCameraSlash size={13} />}
                       </button>
                       <button
-                        className={`chip${track.audio_on !== false ? " on" : ""}`}
-                        style={{ alignSelf: "center" }}
+                        className={`kind-toggle${track.audio_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center", color: track.audio_on !== false ? "#5f83b8" : undefined }}
                         title={track.audio_on !== false ? "音频元素参与合成(点击关闭)" : "音频元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "audio")}
                       >
-                        <SpeakerHigh size={12} weight={track.audio_on !== false ? "fill" : "light"} />
+                        <SpeakerHigh size={13} weight={track.audio_on !== false ? "fill" : "light"} />
                       </button>
                       <button
-                        className={`chip${track.image_on !== false ? " on" : ""}`}
-                        style={{ alignSelf: "center" }}
+                        className={`kind-toggle${track.image_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center", color: track.image_on !== false ? "#c39bff" : undefined }}
                         title={track.image_on !== false ? "图片元素参与合成(点击关闭)" : "图片元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "image")}
                       >
-                        <ImageIcon size={12} weight={track.image_on !== false ? "fill" : "light"} />
+                        <ImageIcon size={13} weight={track.image_on !== false ? "fill" : "light"} />
                       </button>
                       <button
-                        className={`chip${track.text_on !== false ? " on" : ""}`}
-                        style={{ alignSelf: "center" }}
+                        className={`kind-toggle${track.text_on !== false ? " on" : ""}`}
+                        style={{ alignSelf: "center", color: track.text_on !== false ? "#ffb84d" : undefined }}
                         title={track.text_on !== false ? "文字元素参与合成(点击关闭)" : "文字元素已关闭(点击开启)"}
                         onClick={() => onToggleTrackMedia?.(track.id, "text")}
                       >
-                        <TextAa size={12} weight={track.text_on !== false ? "fill" : "light"} />
+                        <TextAa size={13} weight={track.text_on !== false ? "fill" : "light"} />
                       </button>
                     </div>
                   );
@@ -2676,12 +2676,12 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
                     {(["locked", "hidden", "muted"] as const).map((f) => {
                       const on = track[f];
                       return (
-                        <button key={f} className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", opacity: on ? 1 : 0.4, borderColor: on ? "var(--accent)" : undefined, color: on ? "var(--accent)" : "var(--text-dim)" }} onClick={() => onToggleTrack?.(track.id, f)} title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}>
+                        <button key={f} className={`mini-icon${on ? " on" : ""}`} style={{ alignSelf: "center" }} onClick={() => onToggleTrack?.(track.id, f)} title={f === "locked" ? (on ? "解锁轨道" : "锁定轨道") : f === "hidden" ? (on ? "显示轨道" : "隐藏轨道") : on ? "取消静音" : "静音轨道"}>
                           {f === "locked" ? (on ? <Lock size={12} weight="fill" /> : <LockOpen size={12} />) : f === "hidden" ? (on ? <EyeSlash size={12} /> : <Eye size={12} />) : (on ? <SpeakerSlash size={12} /> : <SpeakerHigh size={12} />)}
                         </button>
                       );
                     })}
-                    <button className="btn sm icon" style={{ alignSelf: "center", display: "flex", alignItems: "center", color: "#a05a5a" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
+                    <button className="mini-icon danger" style={{ alignSelf: "center" }} onClick={() => onRemoveTrack?.(track.id)} title={`删除轨道 ${track.name}(可撤销)`}>
                       <X size={12} />
                     </button>
                   </div>

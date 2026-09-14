@@ -510,7 +510,11 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [editMode, setEditMode] = useState(true);
   const [snapOn, setSnapOn] = useState(true);
   /// 主题(仅用于触发重渲染;真值在 documentElement.dataset.theme)。
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  /// 主题 state 与 main.tsx initTheme() 同源(data-theme 已在启动时恢复,
+  /// antd ConfigProvider 需要同值,否则持久化浅色重启后 antd 组件仍是暗色白字)
+  const [theme, setTheme] = useState<"dark" | "light">(
+    document.documentElement.dataset.theme === "light" ? "light" : "dark"
+  );
   /// 语言(zh/en)。
   const [lang, setLangState] = useLang();
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
