@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, memo } from "react";
+import Counter from "./bits/Counter";
 import * as api from "./api";
 import type { Clip, Document } from "./types";
 import KeyframeEditor from "./KeyframeEditor";
@@ -59,6 +60,7 @@ interface Props {
 /// 右侧属性检查器:变速/音量/调色/关键帧/转场。
 function InspectorInner({ doc, clip, selectedCount = 0, selectedClipIds = [], curveEditIds = null, onCurveEditEnter, onCurveEditDone, onBatchRemove, onBatchAudio, onRefresh, playheadTicks, editingText, onEndTextEdit }: Props) {
   const tps = doc.timebase.num / doc.timebase.den;
+  // React Bits · Counter:数值滚动展示
   /// 编辑态去重:同一次进入只 autofocus 一次。
   const editingTextApplied = useRef<string | null>(null);
   /// 字号即时提交的防抖 timer。
@@ -287,11 +289,11 @@ function InspectorInner({ doc, clip, selectedCount = 0, selectedClipIds = [], cu
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
             <span style={{ color: "var(--text-dim)" }}>帧率</span>
-            <span>{tps.toFixed(2)} fps</span>
+            <span><Counter value={tps} digits={2} suffix=" fps" /></span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
             <span style={{ color: "var(--text-dim)" }}>时长</span>
-            <span>{durSecs.toFixed(2)}s</span>
+            <span><Counter value={durSecs} digits={2} suffix="s" /></span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between" }}>
             <span style={{ color: "var(--text-dim)" }}>片段 / 轨道</span>

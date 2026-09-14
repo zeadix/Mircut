@@ -12,6 +12,7 @@ import {
   GridFour,
   File as FileIcon,
 } from "@phosphor-icons/react";
+import FadeContent from "./bits/FadeContent";
 
 interface Props {
   doc: Document;
@@ -297,10 +298,10 @@ function MediaLibraryInner({
     </div>
   );
 
-  /// 平铺/卡片:完整缩略图卡片(现有形态)。
+  /// 平铺/卡片:完整缩略图卡片(现有形态;React Bits · FadeContent 渐入)。
   const mediaCard = (a: (typeof shownAssets)[number]) => (
+    <FadeContent key={a.id}>
     <div
-      key={a.id}
       className="asset-card"
       {...rowHandlers(a)}
       style={{
@@ -385,6 +386,7 @@ function MediaLibraryInner({
         )}
       </div>
     </div>
+    </FadeContent>
   );
 
   return (

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ChromaKey, Clip, ClipAnimKind, ColorGrade, Document, FxRect, LutApply, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
 import { Crosshair, FrameCorners, Magnet, ChartLine } from "@phosphor-icons/react";
+import Dock from "./bits/Dock";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
 type TransitionKind = Transition["kind"];
@@ -1115,8 +1116,9 @@ const [url, setUrl] = useState<string | null>(null);
       }}
       onMouseLeave={() => setProgressHover(false)}
     >
-      {/* 预览工具浮动组:画布(面板)右上角,允许在视频区域之外 */}
-      <div style={{ position: "absolute", right: 8, top: 8, zIndex: 12, display: "flex", gap: 4 }}>
+      {/* 预览工具浮动组(React Bits · Dock:悬停视差放大):画布右上角 */}
+      <div style={{ position: "absolute", right: 8, top: 8, zIndex: 12 }}>
+      <Dock baseSize={22} magnification={30}>
         <button
           className={`chip${autoSelect ? " on" : ""}`}
           onClick={() => onToggleAutoSelect?.()}
@@ -1147,6 +1149,7 @@ const [url, setUrl] = useState<string | null>(null);
         >
           <ChartLine size={14} weight={progressMode !== "hide" ? "fill" : "light"} />
         </button>
+      </Dock>
       </div>
 
       {/* 播放条:显示进度;点击/拖拽 seek;与时间码同源同步 */}

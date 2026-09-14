@@ -39,6 +39,9 @@ import { ConfigProvider, Button as AntdButton, Tag } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import { buildAntdTheme } from "./ui/antdTheme";
+import ClickSpark from "./bits/ClickSpark";
+import SplitText from "./bits/SplitText";
+import AnimatedContent from "./bits/AnimatedContent";
 import { PanelContext, usePanel } from "./PanelContext";
 
 /// 时间码显示:mm:ss.ff。
@@ -1637,7 +1640,12 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   const factory = (node: TabNode) => {
     const comp = panelComponents[node.getComponent() ?? ""];
-    return comp ? comp() : <div style={{ padding: 12 }}>未知面板:{node.getComponent()}</div>;
+    // React Bits · AnimatedContent:面板内容进入动画(激活切换时有轻反馈)
+    return (
+      <AnimatedContent distance={10} duration={0.28}>
+        {comp ? comp() : <div style={{ padding: 12 }}>未知面板:{node.getComponent()}</div>}
+      </AnimatedContent>
+    );
   };
 
   /// 窗口菜单面板显隐:显示 = 加入第一个 tabset(工作面板随后转独立浮动
@@ -1670,11 +1678,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   return (
     <ConfigProvider theme={buildAntdTheme(theme !== "light")} locale={lang === "zh" ? zhCN : enUS} autoInsertSpaceInButton={false}>
+    <ClickSpark sparkColor={theme !== "light" ? "#4ec9ff" : "#1c7ed6"}>
     <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* 顶栏:Logo + 菜单栏 + 导出 */}
       <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
         <FilmSlate size={22} />
-        <strong style={{ marginRight: 8 }}>VEditor</strong>
+        <strong style={{ marginRight: 8 }}>
+          <SplitText text="VEditor" />
+        </strong>
         <MenuBar
           menus={[
             {
@@ -1819,6 +1830,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       {/* 预览音频监听(隐藏 <video> 混音,与导出混音语义对齐) */}
       <AudioBus doc={doc} playing={playing} playheadRef={playheadRef} />
     </div>
+    </ClickSpark>
     </ConfigProvider>
   );
 }
