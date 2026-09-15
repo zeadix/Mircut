@@ -11,8 +11,11 @@ import {
   ListDashes,
   GridFour,
   File as FileIcon,
+  DotsThreeOutlineVertical,
 } from "@phosphor-icons/react";
 import FadeContent from "./bits/FadeContent";
+import { Dropdown, Modal } from "antd";
+import type { MenuProps } from "antd";
 
 interface Props {
   doc: Document;
@@ -29,6 +32,9 @@ interface Props {
   onImportPack: () => void;
   onApplyPackItem: (packId: string, item: Record<string, unknown>, kind: string) => void;
   onRefresh: () => Promise<void>;
+  /// 从列表移除素材(可撤销)/ 删除素材磁盘文件(不可撤销)。
+  onRemoveAsset: (assetId: string) => void;
+  onDeleteAssetFile: (assetId: string) => void;
 }
 
 const MEDIA_EXTS = {
@@ -62,6 +68,8 @@ function MediaLibraryInner({
   onImportPack,
   onApplyPackItem,
   onRefresh,
+  onRemoveAsset,
+  onDeleteAssetFile,
 }: Props) {
   const [importMenu, setImportMenu] = useState(false);
   const importBtnRef = useRef<HTMLButtonElement>(null);
@@ -96,6 +104,10 @@ function MediaLibraryInner({
   }, [mediaQuery]);
   const [editingAsset, setEditingAsset] = useState<string | null>(null);
   const [assetDraft, setAssetDraft] = useState({ name: "", tags: "" });
+  /// 卡片右下角竖三点菜单(锚点按素材 id 记录)。
+  const [assetMenuFor, setAssetMenuFor] = useState<string | null>(null);
+  const assetMenuRef = useRef<HTMLButtonElement>(null);
+  const [assetMenuPos, setAssetMenuPos] = useState<{ id: string; x: number; y: number } | null>(null);
   /// 素材多选(Ctrl/Shift 点击;批量上轨用)。
   const [mediaSel, setMediaSel] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -198,6 +210,24 @@ function MediaLibraryInner({
     setMediaSel(new Set());
   }
 
+  /// 打开素材编辑浮动窗(独立于面板的 Modal)。
+  function openAssetEdit(a: { id: string; name?: string | null; tags?: string[] }) {
+    setEditingAsset(a.id);
+    setAssetDraft({ name: a.name ?? "", tags: (a.tags ?? []).join(", ") });
+  }
+
+  /// 保存编辑浮窗。
+  async function saveAssetEdit() {
+    if (!editingAsset) return;
+    await api.setAssetMeta(
+      editingAsset,
+      assetDraft.name.trim() || null,
+      assetDraft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
+    );
+    setEditingAsset(null);
+    await onRefresh();
+  }
+
   /// 行内交互 props(卡片/列表/紧凑共用)。
   const rowHandlers = (a: { id: string; path: string; has_video: boolean; duration_secs: number }) => ({
     draggable: true,
@@ -226,52 +256,15 @@ function MediaLibraryInner({
         <button
           className="btn sm"
           style={{ padding: "0 4px", flexShrink: 0, opacity: 0.7 }}
-          title="重命名/标签"
+          title="编辑素材(名称/标签)"
           onClick={(e) => {
             e.stopPropagation();
-            setEditingAsset(editingAsset === a.id ? null : a.id);
-            setAssetDraft({ name: a.name ?? "", tags: (a.tags ?? []).join(", ") });
+            openAssetEdit(a);
           }}
         >
           ✎
         </button>
         <span className="media-list-size">{fmtSize(a.size_bytes)}</span>
-        {editingAsset === a.id && (
-          <div
-            style={{ width: "100%", display: "flex", gap: 4 }}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <input
-              className="ti sm"
-              style={{ flex: 1 }}
-              placeholder="显示名(空 = 文件名)"
-              value={assetDraft.name}
-              onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })}
-            />
-            <input
-              className="ti sm"
-              style={{ flex: 1 }}
-              placeholder="标签,逗号分隔"
-              value={assetDraft.tags}
-              onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
-            />
-            <button
-              className="btn sm primary"
-              onClick={async () => {
-                await api.setAssetMeta(
-                  a.id,
-                  assetDraft.name.trim() || null,
-                  assetDraft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
-                );
-                setEditingAsset(null);
-                await onRefresh();
-              }}
-            >
-              保存
-            </button>
-          </div>
-        )}
       </div>
     );
   };
@@ -323,18 +316,33 @@ function MediaLibraryInner({
         <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {a.name ?? a.path.split("/").pop()}
         </span>
-        <button
-          className="btn icon sm"
-          style={{ fontSize: 10, flexShrink: 0 }}
-          title="重命名/标签"
-          onClick={(e) => {
-            e.stopPropagation();
-            setEditingAsset(editingAsset === a.id ? null : a.id);
-            setAssetDraft({ name: a.name ?? "", tags: (a.tags ?? []).join(", ") });
+        <Dropdown
+          trigger={["click"]}
+          placement="bottomRight"
+          menu={{
+            items: [
+              { key: "edit", label: "编辑" },
+              { key: "remove", label: "从列表中删除" },
+              { type: "divider" },
+              { key: "delfile", label: "删除文件", danger: true },
+            ],
+            onClick: ({ key, domEvent }: { key: string; domEvent: { stopPropagation: () => void } }) => {
+              domEvent.stopPropagation();
+              if (key === "edit") openAssetEdit(a);
+              if (key === "remove") void onRemoveAsset(a.id);
+              if (key === "delfile") void onDeleteAssetFile(a.id);
+            },
           }}
         >
-          ✎
-        </button>
+          <button
+            className="btn icon sm"
+            style={{ fontSize: 10, flexShrink: 0 }}
+            title="素材操作:编辑 / 从列表中删除 / 删除文件"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DotsThreeOutlineVertical size={12} weight="fill" />
+          </button>
+        </Dropdown>
         <div style={{ color: "var(--text-dim)", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
         {(a.tags ?? []).length > 0 && (
           <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap", width: "100%" }}>
@@ -343,45 +351,6 @@ function MediaLibraryInner({
                 {t}
               </span>
             ))}
-          </div>
-        )}
-        {editingAsset === a.id && (
-          <div
-            style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 4, width: "100%" }}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
-          >
-            <input
-              className="ti"
-              placeholder="显示名(空 = 文件名)"
-              value={assetDraft.name}
-              onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })}
-            />
-            <input
-              className="ti"
-              placeholder="标签,逗号分隔"
-              value={assetDraft.tags}
-              onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
-            />
-            <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-              <button className="btn" onClick={() => setEditingAsset(null)}>
-                取消
-              </button>
-              <button
-                className="btn primary"
-                onClick={async () => {
-                  await api.setAssetMeta(
-                    a.id,
-                    assetDraft.name.trim() || null,
-                    assetDraft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
-                  );
-                  setEditingAsset(null);
-                  await onRefresh();
-                }}
-              >
-                保存
-              </button>
-            </div>
           </div>
         )}
       </div>
@@ -603,6 +572,36 @@ function MediaLibraryInner({
           )}
         </div>
       )}
+      {/* 素材编辑浮动窗(独立于面板的 Modal) */}
+      <Modal
+        open={!!editingAsset}
+        title="编辑素材"
+        okText="保存"
+        cancelText="取消"
+        width={380}
+        onOk={() => void saveAssetEdit()}
+        onCancel={() => setEditingAsset(null)}
+        destroyOnHidden
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 4 }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>显示名(空 = 文件名)</span>
+            <input
+              className="ti"
+              value={assetDraft.name}
+              onChange={(e) => setAssetDraft({ ...assetDraft, name: e.target.value })}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 11, color: "var(--text-dim)" }}>标签(逗号分隔)</span>
+            <input
+              className="ti"
+              value={assetDraft.tags}
+              onChange={(e) => setAssetDraft({ ...assetDraft, tags: e.target.value })}
+            />
+          </label>
+        </div>
+      </Modal>
     </aside>
   );
 }

@@ -181,6 +181,37 @@ pub(crate) fn probe_media(path: String) -> Result<MediaInfo, String> {
     veditor_media::probe(&PathBuf::from(&path)).map_err(|e| e.to_string())
 }
 
+/// 从媒体库列表移除素材(连同引用片段,可撤销;不动磁盘文件)。
+#[tauri::command(async)]
+pub(crate) fn remove_asset(asset_id: String, state: State<'_, AppState>) -> bool {
+    let mut inner = state.inner.lock().unwrap();
+    inner.exec(Box::new(veditor_core::RemoveAsset::new(asset_id)));
+    true
+}
+
+/// 删除素材:从列表移除并删除磁盘文件(文件删除不可撤销)。
+#[tauri::command(async)]
+pub(crate) fn delete_asset_file(asset_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let path = {
+        let mut inner = state.inner.lock().unwrap();
+        inner.ensure();
+        let Some(a) = inner.doc.asset(&asset_id) else {
+            return Err("素材不存在".into());
+        };
+        let p = a.path.clone();
+        inner.exec(Box::new(veditor_core::RemoveAsset::new(asset_id)));
+        p
+    };
+    if path.contains("://") {
+        return Ok(true); // 合成素材(text:// 等)无磁盘文件
+    }
+    match std::fs::remove_file(&path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(format!("删除文件失败: {e}")),
+    }
+}
+
 /// 扫描目录下的媒体文件(递归,上限 200 个)—— 文件夹批量导入用。
 /// 覆盖音频/视频/图片(与"导入"文件对话框一致的媒体语义)。
 #[tauri::command(async)]

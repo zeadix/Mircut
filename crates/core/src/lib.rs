@@ -641,6 +641,46 @@ pub struct Marker {
     pub color: Option<String>,
 }
 
+/// 具体命令:从列表移除素材(连同引用它的片段一并移除,可撤销)。
+pub struct RemoveAsset {
+    pub asset_id: String,
+    removed_asset: Option<Asset>,
+    removed_clips: Vec<Clip>,
+}
+
+impl RemoveAsset {
+    pub fn new(asset_id: impl Into<String>) -> Self {
+        Self {
+            asset_id: asset_id.into(),
+            removed_asset: None,
+            removed_clips: Vec::new(),
+        }
+    }
+}
+
+impl Command for RemoveAsset {
+    fn label(&self) -> &str {
+        "从列表中删除素材"
+    }
+    fn apply(&mut self, doc: &mut Document) {
+        self.removed_clips = doc
+            .clips
+            .iter()
+            .filter(|c| c.asset.asset_id == self.asset_id)
+            .cloned()
+            .collect();
+        doc.clips.retain(|c| c.asset.asset_id != self.asset_id);
+        self.removed_asset = doc.assets.iter().find(|a| a.id == self.asset_id).cloned();
+        doc.assets.retain(|a| a.id != self.asset_id);
+    }
+    fn undo(&mut self, doc: &mut Document) {
+        if let Some(a) = self.removed_asset.take() {
+            doc.assets.push(a);
+        }
+        doc.clips.extend(self.removed_clips.drain(..));
+    }
+}
+
 /// 具体命令:添加标记(同刻度幂等)。
 pub struct AddMarker {
     pub marker: Marker,

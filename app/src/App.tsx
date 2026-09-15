@@ -82,6 +82,8 @@ const panelComponents: Record<string, () => ReactElement> = {
             onImportPack={c.onImportPack}
             onApplyPackItem={c.onApplyPackItem}
             onRefresh={c.refresh}
+            onRemoveAsset={c.onRemoveAsset}
+            onDeleteAssetFile={c.onDeleteAssetFile}
           />
         </ErrorBoundary>
       </div>
@@ -1008,6 +1010,34 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     await refresh();
   }, []);
 
+  /// 媒体库:从列表移除素材(可撤销)。
+  const onRemoveAsset = useCallback(
+    async (assetId: string) => {
+      try {
+        await api.removeAsset(assetId);
+        setStatus("素材已从列表移除(可撤销)");
+      } catch (e) {
+        setStatus(`移除失败: ${String(e).slice(0, 120)}`);
+      }
+      await refresh();
+    },
+    []
+  );
+
+  /// 媒体库:删除素材文件(列表 + 磁盘,不可撤销;由前端确认后调用)。
+  const onDeleteAssetFile = useCallback(
+    async (assetId: string) => {
+      try {
+        await api.deleteAssetFile(assetId);
+        setStatus("素材文件已删除");
+      } catch (e) {
+        setStatus(`删除失败: ${String(e).slice(0, 120)}`);
+      }
+      await refresh();
+    },
+    []
+  );
+
   const onRemoveMarker = useCallback(async (t: number) => {
     try {
       await api.removeMarker(t);
@@ -1648,6 +1678,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       onPickFolder, onImportFiles, onImportFolder, onImportPack, onApplyPackItem,
       addToTimeline, refresh, onSwitchRenderMode, onSetRect, onStickerMove,
       clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
+      onRemoveAsset, onDeleteAssetFile,
       tcDraft, onDetectBeats, onRemoveSilence, onSelectClipPlain,
       editingTextClipId, beginTextEdit, onSetRotate,
       tps: doc ? doc.timebase.num / Math.max(1, doc.timebase.den) : 30,
@@ -1721,7 +1752,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
         <MenuBar
           menus={[
             {
-              label: t("menu.file"),
+              label: t("menu.project"),
               items: [
                 { label: t("menu.new"), hint: "Ctrl+N", fn: onNewProject },
                 { label: t("menu.open"), hint: "Ctrl+O", fn: onOpenProject },
@@ -1802,7 +1833,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               ],
             },
             {
-              label: t("menu.window"),
+              label: t("menu.view"),
               items: [
                 { label: t("menu.panelMedia"), checked: !hiddenPanels.includes("media"), fn: () => togglePanelVisible("media") },
                 { label: t("menu.panelCanvas"), checked: !hiddenPanels.includes("preview"), fn: () => togglePanelVisible("preview") },
@@ -1818,10 +1849,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               ],
             },
             {
-              label: t("menu.view"),
+              label: t("menu.theme"),
+              items: [{ label: t("menu.themeToggle"), fn: () => setTheme(toggleTheme()) }],
+            },
+            {
+              label: t("menu.language"),
               items: [
-                { label: t("menu.theme"), fn: () => setTheme(toggleTheme()) },
-                { label: lang === "zh" ? "English / 英语" : "中文 / Chinese", fn: () => setLangState(lang === "zh" ? "en" : "zh") },
+                { label: "中文", checked: lang === "zh", fn: () => setLangState("zh") },
+                { label: "English", checked: lang === "en", fn: () => setLangState("en") },
               ],
             },
             {

@@ -30,8 +30,8 @@ test("冒烟:加载->素材上轨->分割->删除->导出队列", async ({ page 
   // 4. 快捷键 S 分割(选中后)
   await page.keyboard.press("s");
 
-  // 5. 右键菜单:打开文件菜单
-  await page.getByRole("button", { name: "文件", exact: true }).click();
+  // 5. 右键菜单:打开项目菜单(原「文件」改名)
+  await page.getByRole("button", { name: "项目", exact: true }).click();
   await expect(page.locator("text=新建工程")).toBeVisible();
   await page.keyboard.press("Escape");
   await page.mouse.click(10, 400); // 关掉文件菜单浮层
@@ -53,14 +53,14 @@ test("冒烟:工作面板经窗口菜单开关,右栏常显属性", async ({ pag
   await expect(rightAside.getByText(/工程$/).or(rightAside.getByText(/工程/).first())).toBeVisible();
 
   // 窗口菜单开关贴纸面板(dock 面板;data-panel 定位)
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: "贴纸" }).click();
   const stickerPanel = page.locator('[data-panel="sticker"]');
   await expect(stickerPanel).toBeVisible();
   await expect(stickerPanel.getByRole("button", { name: /导入图片贴纸/ })).toBeVisible();
 
   // 再次切换 → 隐藏
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: "贴纸" }).click();
   await expect(stickerPanel).not.toBeVisible();
 });
@@ -85,7 +85,7 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await expect(page.locator(".asset-card").first()).toBeVisible();
 
   // 1. 字幕工作面板(窗口菜单开启):AI 模型区(mock 清单含 Whisper base)
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: "字幕" }).click();
   const subPanel = page.locator('[data-panel="subtitle"]');
   await expect(subPanel).toBeVisible();
@@ -140,7 +140,7 @@ test("冒烟:AI 面板(模型管理/抠像/音色)", async ({ page }) => {
   await expect(rightAside.locator("legend").filter({ hasText: "音频滤镜" })).toBeVisible();
 
   // 3. 文字工作面板:音色下拉(piper 多音色;PopupSelect:点开数选项行)
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: "文字" }).click();
   const textPanel = page.locator('[data-panel="text"]');
   await expect(textPanel.getByText(/音色\(piper\)/)).toBeVisible();
@@ -169,8 +169,8 @@ test("冒烟:主题 token 完整性(暗色默认 + 亮色切换)", async ({ page
   expect(dark.text).toBeTruthy();
   // 自引用 token 会解析为空 -> 显式断言非空即防回归
 
-  // 切亮色(视图菜单)
-  await page.getByRole("button", { name: "视图" }).click();
+  // 切亮色(主题菜单)
+  await page.getByRole("button", { name: "主题", exact: true }).click();
   await page.getByRole("menuitem", { name: /切换亮\/暗主题/ }).click();
   await page.waitForTimeout(300);
   const light = await page.evaluate(() => ({

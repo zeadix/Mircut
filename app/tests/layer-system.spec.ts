@@ -34,7 +34,7 @@ test("图层:命名/类型开关/ID 前缀/信息行", async ({ page }) => {
   await page.locator("button[title^='图片元素已关闭']").first().click();
 
   // 4. 新建文字块 → ID 前缀 t(mock 计数器)
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.locator("header").getByRole("menuitem", { name: /文字$/ }).click();
   await page.locator('[data-panel="text"]').getByRole("button", { name: "+ 在播放头新建文字" }).click();
   await expect
@@ -49,7 +49,7 @@ test("图层:命名/类型开关/ID 前缀/信息行", async ({ page }) => {
     .toMatch(/^t\d+$/);
 
   // 关闭文字面板浮动窗(浮窗无关闭按钮,经窗口菜单 toggle),避免遮挡后续操作
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.locator("header").getByRole("menuitem", { name: /文字$/ }).click();
   await expect(page.locator('[data-panel="text"]')).toBeHidden();
 

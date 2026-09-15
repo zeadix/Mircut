@@ -37,7 +37,7 @@ test("文字块:面板只显示适用区块", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   // 经文字面板新建文字块(置顶文字轨)
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: "文字" }).click();
   await page.locator('[data-panel="text"]').getByRole("button", { name: "+ 在播放头新建文字" }).click();
   await expect

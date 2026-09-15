@@ -8,7 +8,7 @@ import { test, expect } from "@playwright/test";
  */
 
 async function openScopesPanel(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   // 菜单项 accessible name 勾选态带 "✓ " 前缀;用正则避开面板内同名文本
   await page.getByRole("menuitem", { name: /示波器$/ }).click();
   await expect(page.locator("[data-panel='scopes']")).toBeVisible();
@@ -50,7 +50,7 @@ test("示波器:窗口菜单再次点击隐藏面板", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await openScopesPanel(page);
-  await page.getByRole("button", { name: "窗口", exact: true }).click();
+  await page.getByRole("button", { name: "视图", exact: true }).click();
   await page.getByRole("menuitem", { name: /示波器$/ }).click();
   // dockview 浮动组隐藏 = overlay 视觉隐藏(DOM 保留)
   await expect(page.locator("[data-panel='scopes']")).toBeHidden();

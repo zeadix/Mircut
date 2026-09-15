@@ -234,6 +234,8 @@ fn main() {
             preview_asset_frame,
             probe_media,
             scan_media_dir,
+            remove_asset,
+            delete_asset_file,
             get_document,
             undo,
             redo,

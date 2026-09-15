@@ -34,6 +34,16 @@ export async function removeClip(clipId: string): Promise<boolean> {
   return invoke("remove_clip", { clipId });
 }
 
+/// 从媒体库列表移除素材(连同引用片段,可撤销;不动磁盘文件)。
+export async function removeAsset(assetId: string): Promise<boolean> {
+  return invoke("remove_asset", { assetId });
+}
+
+/// 删除素材:从列表移除并删除磁盘文件(不可撤销)。
+export async function deleteAssetFile(assetId: string): Promise<boolean> {
+  return invoke("delete_asset_file", { assetId });
+}
+
 /// 批量删除(组合命令,一次撤销)。
 export async function removeClips(clipIds: string[]): Promise<boolean> {
   return invoke("remove_clips", { clipIds });
