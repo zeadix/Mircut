@@ -310,23 +310,7 @@ const [url, setUrl] = useState<string | null>(null);
   // 默认 250:预览组高 290 - 工具条 ≈ 34 → 预览完整可见(播放条不被裁剪)
   // 默认铺满 flex 中间区(挂载时测量),避免被 Scopes/工具条裁剪导致
   // 播放条/底部交互不可见;拖拽手柄与 dock 分隔条仍可继续调整
-  const [panelH, setPanelH] = useState(250);
   const rootRef = useRef<HTMLDivElement>(null);
-  const panelHDrag = useRef<{ startY: number; startH: number } | null>(null);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    const parent = root?.parentElement;
-    if (!root || !parent) return;
-    const apply = () => {
-      const h = parent.clientHeight;
-      if (h > 100) setPanelH((prev) => (Math.abs(prev - h) > 2 ? h : prev));
-    };
-    apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(parent);
-    return () => ro.disconnect();
-  }, []);
 
   const latest = useRef({ t: playheadTicks, playing, mode: renderMode, asset: assetPreview });
   latest.current = { t: playheadTicks, playing, mode: renderMode, asset: assetPreview };
@@ -1074,21 +1058,6 @@ const [url, setUrl] = useState<string | null>(null);
     updateLive(null);
   }
 
-  /// 预览面板高度拖拽。
-  function onPanelResizeDown(e: React.PointerEvent) {
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    panelHDrag.current = { startY: e.clientY, startH: panelH };
-  }
-  function onPanelResizeMove(e: React.PointerEvent) {
-    const d = panelHDrag.current;
-    if (!d) return;
-    setPanelH(Math.max(160, Math.min(window.innerHeight * 0.8, d.startH - (e.clientY - d.startY))));
-  }
-  function onPanelResizeUp(e: React.PointerEvent) {
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-    panelHDrag.current = null;
-  }
-
   const showTransform = editMode && composing && !!selected && !!onSetRect;
 
   /// 播放条:总时长(内容末尾)与 seek。
@@ -1106,7 +1075,8 @@ const [url, setUrl] = useState<string | null>(null);
       style={{
         background: isPlayer ? "#000" : "var(--bg)",
         color: "var(--text-dim)",
-        height: isPlayer ? "100%" : panelH,
+        height: "100%",
+        width: "100%",
         flexShrink: 0,
         display: "flex",
         flexDirection: isPlayer ? "column" : "row",
@@ -1114,7 +1084,6 @@ const [url, setUrl] = useState<string | null>(null);
         justifyContent: "center",
         position: "relative",
         overflow: "hidden",
-        resize: isPlayer ? undefined : "both",
       }}
       onMouseMove={(e) => {
         if (isPlayer) return;
@@ -1561,10 +1530,10 @@ const [url, setUrl] = useState<string | null>(null);
                   style={{
                     position: "absolute",
                     left: "50%",
-                    bottom: 60 * (panelH / 1080) + 12,
+                    bottom: 60 * ((framePx?.h ?? 1080) / 1080) + 12,
                     transform: "translateX(-50%)",
                     color: st.color,
-                    fontSize: Math.max(10, (st.font_size * panelH) / 1080),
+                    fontSize: Math.max(10, (st.font_size * (framePx?.h ?? 1080)) / 1080),
                     fontWeight: st.bold ? 700 : 500,
                     WebkitTextStroke: st.outline ? `1px ${st.outline}` : undefined,
                     whiteSpace: "pre",
@@ -1716,31 +1685,6 @@ const [url, setUrl] = useState<string | null>(null);
         </span>
       )}
 
-      {/* 面板高度拖拽手柄 */}
-      {!isPlayer && (
-      <div
-        style={{
-          position: "absolute",
-          right: 0,
-          bottom: 0,
-          width: 16,
-          height: 16,
-          cursor: "ns-resize",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "var(--text-dim)",
-          fontSize: 10,
-          zIndex: 11,
-        }}
-        title="拖拽调整预览高度"
-        onPointerDown={onPanelResizeDown}
-        onPointerMove={onPanelResizeMove}
-        onPointerUp={onPanelResizeUp}
-      >
-        ⌃⌄
-      </div>
-      )}
     </div>
   );
 }
