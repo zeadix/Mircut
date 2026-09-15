@@ -642,12 +642,54 @@ pub(crate) fn drop_asset(
     // GIF 动画(多帧、真实时长)不走定格:按视频片段正常处理,速度可调
     let is_still = asset.has_video && !asset.has_audio && asset.duration_secs < 0.2
         && !is_animated_gif(&asset.path);
+    // 文本素材(txt/srt/ass 等):拖入即生成文字块,内容 = 文件文本(截断 500 字)
+    let ext = asset.path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let is_text_asset = matches!(ext.as_str(), "txt" | "srt" | "ass" | "md" | "lrc");
     let tps_f = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
     let duration = if is_still {
         (3.0 * tps_f).round() as i64
     } else {
         (asset.duration_secs * tps_f).round() as i64
     };
+
+    // ---- 文本素材:生成文字块(置顶文字轨;内容 = 文件文本截断 500 字) ----
+    if is_text_asset {
+        let content = std::fs::read_to_string(&asset.path)
+            .map(|t| t.chars().take(500).collect::<String>())
+            .unwrap_or_default();
+        let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "文字");
+        let mut fx = veditor_core::ClipFx::default();
+        fx.rect = Some(veditor_core::FxRect {
+            x: 0.5,
+            y: 0.5,
+            w: 0.8,
+            h: (64.0f64 / 1080.0).clamp(0.02, 0.9),
+            stretch: false,
+        });
+        let mut tdata = TextClipData::default();
+        tdata.content = content;
+        let mut seq = inner.doc.clips.len();
+        let clip = Clip {
+            id: next_typed_clip_id(&inner.doc, "t", &mut seq),
+            track_id,
+            start: start.max(0),
+            duration: (3.0 * tps_f).round() as i64,
+            asset: AssetRef {
+                asset_id: asset.id.clone(),
+                source_in: 0.0,
+                source_out: 3.0,
+            },
+            speed: 0.0,
+            volume: 1.0,
+            muted: false,
+            lane: Some(veditor_core::Lane::Video),
+            fx,
+            text: Some(tdata),
+        };
+        let id = clip.id.clone();
+        inner.exec(Box::new(AddClip { clip }));
+        return Ok(id);
+    }
 
     // ---- 文件轨道语义 ----
     // 目标轨道解析:

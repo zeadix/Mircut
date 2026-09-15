@@ -87,6 +87,15 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
+    /// 文本素材占用 MediaInfo(无流;时长 0)。
+    pub fn default_for_text() -> Self {
+        Self {
+            streams: vec![],
+            format: Format { duration: None },
+        }
+    }
+
+
     /// 返回首个视频流。
     pub fn video(&self) -> Option<&Stream> {
         self.streams.iter().find(|s| s.codec_type == "video")

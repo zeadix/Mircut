@@ -265,6 +265,36 @@ pub(crate) fn import_media(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<ImportResult, String> {
+    // 文本素材(txt/srt/ass/md/lrc):无媒体流,直接建素材(时长 0,拖入轨道生成文字块)
+    let ext = PathBuf::from(&path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if matches!(ext.as_str(), "txt" | "srt" | "ass" | "md" | "lrc") {
+        let asset = Asset {
+            id: format!("a{}", uuid_of(&path)),
+            path: path.clone(),
+            duration_secs: 0.0,
+            has_video: false,
+            has_audio: false,
+            width: None,
+            height: None,
+            name: None,
+            fps: None,
+            tags: vec![],
+            size_bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+        };
+        let mut inner = state.inner.lock().unwrap();
+        inner.ensure();
+        if inner.doc.asset(&asset.id).is_none() {
+            inner.doc.assets.push(asset.clone());
+        }
+        return Ok(ImportResult {
+            asset,
+            info: veditor_media::MediaInfo::default_for_text(),
+        });
+    }
     let info = veditor_media::probe(&PathBuf::from(&path)).map_err(|e| e.to_string())?;
     let asset = Asset {
         id: format!("a{}", uuid_of(&path)),

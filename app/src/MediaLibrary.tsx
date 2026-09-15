@@ -155,6 +155,15 @@ function MediaLibraryInner({
     if (n < 1024 ** 3) return `${(n / 1024 / 1024).toFixed(1)} MB`;
     return `${(n / 1024 ** 3).toFixed(2)} GB`;
   }
+  /// 文本素材(txt/srt/ass 等文本文件,拖入轨道生成文字块)。
+  const isTextAsset = (a: { path: string }): boolean => {
+    const ext = a.path.split(".").pop()?.toLowerCase() ?? "";
+    return ["txt", "srt", "ass", "md", "lrc"].includes(ext);
+  };
+  /// 是否显示时长秒数:视频/音频显示;图片/文本不显示。
+  const showDuration = (a: { has_video: boolean; has_audio: boolean; path: string }): boolean =>
+    isTextAsset(a) ? false : a.has_video || a.has_audio;
+
   /// 类型图标色:视频绿 / 音频蓝 / 其他灰(与拖拽虚影配色一致)。
   function kindColor(a: { has_video: boolean; has_audio: boolean }): string {
     return a.has_video ? "#5f9e73" : a.has_audio ? "#5f83b8" : "#8b93a1";
@@ -253,6 +262,10 @@ function MediaLibraryInner({
       >
         <FileIcon size={14} weight="fill" style={{ color: kindColor(a), flexShrink: 0 }} />
         <span className="media-list-name">{a.name ?? a.path.split("/").pop()}</span>
+        <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 11 }}>
+          {showDuration(a) ? `${a.duration_secs.toFixed(1)}s` : ""}
+        </span>
+        <span className="media-list-size">{fmtSize(a.size_bytes)}</span>
         <button
           className="btn sm"
           style={{ padding: "0 4px", flexShrink: 0, opacity: 0.7 }}
@@ -264,7 +277,6 @@ function MediaLibraryInner({
         >
           ✎
         </button>
-        <span className="media-list-size">{fmtSize(a.size_bytes)}</span>
       </div>
     );
   };
@@ -309,13 +321,16 @@ function MediaLibraryInner({
         <img src={thumbs[a.id]} style={{ width: "100%", borderRadius: "var(--radius-ctl)" }} />
       ) : (
         <div style={{ background: "var(--surface)", height: 70, borderRadius: "var(--radius-ctl)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 11 }}>
-          {a.has_video ? "视频" : "音频"}
+          {isTextAsset(a) ? "文本" : a.has_video ? "视频" : "音频"}
         </div>
       )}
       <div style={{ fontSize: 11, marginTop: 4, color: "var(--text)", display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
         <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {a.name ?? a.path.split("/").pop()}
         </span>
+        <div style={{ color: "var(--text-dim)", flexShrink: 0 }}>
+          {showDuration(a) ? `${a.duration_secs.toFixed(1)}s` : ""}
+        </div>
         <Dropdown
           trigger={["click"]}
           placement="bottomRight"
@@ -343,7 +358,6 @@ function MediaLibraryInner({
             <DotsThreeOutlineVertical size={12} weight="fill" />
           </button>
         </Dropdown>
-        <div style={{ color: "var(--text-dim)", flexShrink: 0 }}>{a.duration_secs.toFixed(1)}s</div>
         {(a.tags ?? []).length > 0 && (
           <div style={{ marginTop: 2, display: "flex", gap: 4, flexWrap: "wrap", width: "100%" }}>
             {a.tags!.map((t) => (

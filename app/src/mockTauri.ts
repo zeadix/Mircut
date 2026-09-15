@@ -88,6 +88,19 @@ let mockDoc: Document = {
       size_bytes: 1_048_576,
     },
     {
+      id: "a5",
+      path: "/tmp/mock-subtitle.txt",
+      duration_secs: 0,
+      has_video: false,
+      has_audio: false,
+      width: null,
+      height: null,
+      fps: null,
+      name: null,
+      tags: [],
+      size_bytes: 128,
+    },
+    {
       id: "a3",
       path: "/tmp/mock-sticker.png",
       duration_secs: 0.04,
@@ -197,7 +210,10 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       const compH = mockDoc.height ?? 1080;
       // 动态 GIF(多帧、真实时长)与后端 is_animated_gif 同语义:不定格
       const isAnimatedGif = !!asset && asset.path.toLowerCase().endsWith(".gif") && asset.duration_secs >= 0.2;
-      const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2 && !isAnimatedGif;
+      const isAnimatedGif2 = !!asset && asset.path.toLowerCase().endsWith(".gif") && asset.duration_secs >= 0.2;
+      const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2 && !isAnimatedGif2;
+      // 文本素材:生成文字块(content = 文件名提示),置于文字轨
+      const isTextAsset = !!asset && ["txt", "srt", "ass", "md", "lrc"].includes(asset.path.split(".").pop()?.toLowerCase() ?? "");
       const mk = (lane: "Video" | "Audio") => ({
         id: `${isStill ? "img" : lane === "Audio" ? "a" : "v"}${++counter}`,
         track_id: tid,
@@ -216,6 +232,28 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
           return fx;
         })(),
       });
+      if (isTextAsset && asset) {
+        const aid = asset.id;
+        const trackId = `text${aid}`;
+        if (!mockDoc.tracks.some((t) => t.id === trackId)) {
+          mockDoc.tracks.push({ id: trackId, kind: "File", name: "文字", locked: false, hidden: false, muted: false } as any);
+        }
+        const tps = (mockDoc.timebase.num / mockDoc.timebase.den) || 30;
+        mockDoc.clips.push({
+          id: `t${++counter}`,
+          track_id: trackId,
+          start: Number(args.start ?? 0),
+          duration: 3 * tps,
+          asset: { asset_id: aid, source_in: 0, source_out: 3 },
+          speed: 0,
+          volume: 1,
+          muted: false,
+          lane: "Video",
+          fx: { opacity: { keyframes: [] }, scale: { keyframes: [] }, rotate: { keyframes: [] }, x_offset: { keyframes: [] }, y_offset: { keyframes: [] }, speed: { keyframes: [] }, grade: { brightness: 0, contrast: 1, saturation: 1, temperature: 0 }, volume: { keyframes: [] }, chroma_key: { similarity: 0, color: "#00ff00", blend: 0.1 }, audio_fx: { fade_in: 0, fade_out: 0, denoise: 0, pitch_semitones: 0, eq_low: 0, eq_mid: 0, eq_high: 0, stem: "None" }, lut: { path: "", strength: 0 } },
+          text: { content: `文本:${asset.name ?? asset.path.split("/").pop()}`, font_size: 64, color: "#ffffff", outline: "#000000", bold: false, shadow: false, align_h: "center", align_v: "middle" },
+        } as unknown as Document["clips"][number]);
+        return true;
+      }
       for (const l of lanes) mockDoc.clips.push(mk(l) as Document["clips"][number]);
       return true;
     }
