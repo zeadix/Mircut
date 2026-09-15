@@ -324,8 +324,8 @@ function MediaLibraryInner({
           {a.name ?? a.path.split("/").pop()}
         </span>
         <button
-          className="btn"
-          style={{ padding: "1px 4px", fontSize: 10, flexShrink: 0 }}
+          className="btn icon sm"
+          style={{ fontSize: 10, flexShrink: 0 }}
           title="重命名/标签"
           onClick={(e) => {
             e.stopPropagation();

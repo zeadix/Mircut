@@ -2429,10 +2429,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       {/* 顶部刻度尺行(图层区上方):左侧创建图层按钮 + 右侧刻度 */}
       <div style={{ display: "flex", flexShrink: 0 }}>
-        <div style={{ width: headW + 6, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px" }}>
+        <div style={{ width: headW + 6, flexShrink: 0, background: "var(--header)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", padding: "0 8px", gap: 6 }}>
           <button
-            className="btn"
-            style={{ padding: "1px 8px", fontSize: 10 }}
+            className="tb-btn"
             title="创建新图层(空白图层,可拖入任意元素)"
             onClick={() => {
               Promise.all([import("./api"), import("./store")])
@@ -2443,8 +2442,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             + 图层
           </button>
           <button
-            className="btn"
-            style={{ padding: "1px 8px", fontSize: 10, marginLeft: 6 }}
+            className="tb-btn"
+            style={{ marginLeft: "auto" }}
             title="标记列表:跳转/改名/颜色(也可在窗口菜单打开标记面板)"
             onClick={() => onOpenMarkersPanel?.()}
           >

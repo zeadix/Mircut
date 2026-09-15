@@ -75,8 +75,8 @@ export default function MarkersPanel({
                 跳转
               </button>
               <button
-                className="btn"
-                style={{ padding: "1px 6px" }}
+                className="btn sm"
+                style={{ width: "var(--ctl-h-sm)", padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
                 title="删除标记"
                 onClick={() => onRemoveMarker(m.t)}
               >
