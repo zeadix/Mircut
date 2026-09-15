@@ -289,7 +289,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snap, setSnap] = useState(true);
   const [ripple, setRipple] = useState(false);
   /// 点击定位:开启后单击时间轴空白处,播放头跳到点击位置(拖拽仍是框选)。
-  const [clickSeek, setClickSeek] = useState(true);
   const [scrollX, setScrollX] = useState(0);
   /// 横向滚动合帧:同帧多次 scroll 事件只提交一次 setState。
   const scrollRafRef = useRef(0);
@@ -298,6 +297,24 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollTopRef = useRef(0);
   /// 轨道头列纵向同步(画布滚动时 translate,不经 React)。
   const [pxPerTick, setPxPerTick] = useState(0.5);
+
+  const [clickSeek, setClickSeek] = useState(true);
+  /// 自动跟随时间帧:播放/定位时滚动视口使播放头处于窗口中心。
+  const [autoFollow, setAutoFollow] = useState(true);
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || !autoFollow) return;
+    const viewW = wrap.clientWidth;
+    const contentPx = contentEndTick * pxPerTick;
+    if (contentPx <= viewW) {
+      wrap.scrollLeft = 0;
+      return;
+    }
+    const headPx = playheadTicks * pxPerTick;
+    const target = Math.min(Math.max(0, headPx - viewW / 2), contentPx - viewW);
+    wrap.scrollLeft = target;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playheadTicks, pxPerTick, autoFollow]);
   const [ghost, setGhost] = useState<{ clipId: string; start: number; duration: number; trackIdx: number; laneOff: number; h: number } | null>(null);
   const [trimHint, setTrimHint] = useState<{ clipId: string; edge: "left" | "right"; newStart: number; newDuration: number; srcIn: number; srcOut: number; x: number; y: number } | null>(null);
   const [hoverEdge, setHoverEdge] = useState<"left" | "right" | null>(null);
@@ -1283,21 +1300,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     []
   );
 
-  // ================= 播放头自动跟随 =================
-  // 任意来源的 seek(时间码/预览进度条/播放)把播放头带到可视区之外时,
-  // 滚动视口将其带入(带 24px 边距);已在区内不滚动。
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const headPx = playheadTicks * pxPerTick;
-    const margin = 24;
-    if (headPx < wrap.scrollLeft + margin) {
-      wrap.scrollLeft = Math.max(0, headPx - margin);
-    } else if (headPx > wrap.scrollLeft + wrap.clientWidth - margin) {
-      wrap.scrollLeft = headPx - wrap.clientWidth + margin;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playheadTicks, pxPerTick]);
+
 
   // ================= 播放头(DOM 单元素) =================
   // 刻度尺与轨道共用同一播放头元素(横跨两区、z 最高、React 提交定位),
@@ -1341,16 +1344,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // 播放跟随
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const headPx = playheadRef.current * pxPerTick;
-    const viewR = scrollX + wrap.clientWidth;
-    if (headPx > viewR - 60) {
-      setScrollX(Math.max(0, headPx - wrap.clientWidth * 0.15));
-    }
-  }, [playheadTicks, pxPerTick, scrollX]);
+
 
   function ticksFromClientX(clientX: number): number {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -2395,6 +2389,12 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: clickSeek ? "var(--accent)" : undefined }}
         >
           <input type="checkbox" checked={clickSeek} onChange={(e) => setClickSeek(e.target.checked)} /> 点击定位
+        </label>
+        <label
+          title="自动跟随时间帧:播放/定位时滚动条自动移动,使播放头处于窗口中心;取消后播放头走出视野即消失"
+          style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: autoFollow ? "var(--accent)" : undefined }}
+        >
+          <input type="checkbox" checked={autoFollow} onChange={(e) => setAutoFollow(e.target.checked)} /> 自动跟随
         </label>
         <label>
           轨高
