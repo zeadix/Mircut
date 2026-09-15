@@ -537,3 +537,53 @@ fieldset legend {
 .mini-icon:hover { background: var(--btn-hover); color: var(--text); }
 .mini-icon.on { color: var(--primary); }
 .mini-icon.danger:hover { background: rgba(229, 72, 77, 0.12); color: #e5484d; }
+
+
+/* ===== 预览(player 形态)播放器进度条 ===== */
+.player-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.62));
+  z-index: 14;
+}
+.player-bar-time {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 44px;
+}
+.player-bar-time:last-child { text-align: right; }
+.player-bar-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.24);
+  cursor: pointer;
+  transition: height 0.12s ease;
+}
+.player-bar:hover .player-bar-track { height: 6px; }
+.player-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.player-bar-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}

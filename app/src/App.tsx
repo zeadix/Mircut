@@ -193,6 +193,7 @@ const panelComponents: Record<string, () => ReactElement> = {
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <Preview
+            variant="canvas"
             playheadTicks={c.playhead}
             fps={c.fps}
             playing={c.playing}
@@ -242,6 +243,30 @@ const panelComponents: Record<string, () => ReactElement> = {
             onSeek={c.setPlayhead}
             onSetMarker={c.onSetMarker}
             onRemoveMarker={c.onRemoveMarker}
+          />
+        </ErrorBoundary>
+      </div>
+    );
+  },
+  player: () => {
+    const c = usePanel();
+    return (
+      <div data-panel="player" style={{ height: "100%", overflow: "hidden" }}>
+        <ErrorBoundary label="预览面板">
+          <Preview
+            variant="player"
+            playheadTicks={c.playhead}
+            fps={c.fps}
+            playing={c.playing}
+            renderMode={c.renderMode}
+            assetPreview={null}
+            onAssetPreviewDone={() => {}}
+            doc={c.doc}
+            selectedClipIds={[]}
+            onSeek={(t) => {
+              c.playheadRef.current = t;
+              c.setPlayhead(t);
+            }}
           />
         </ErrorBoundary>
       </div>
@@ -402,7 +427,7 @@ const buildDefaultLayout = (): IJsonModel => ({
         type: "row",
         weight: 60.5,
         children: [
-          { type: "tabset", weight: 34, children: [tabJson("preview")] },
+          { type: "tabset", weight: 34, children: [tabJson("preview"), tabJson("player")] },
           { type: "tabset", weight: 66, children: [tabJson("timeline")] },
         ],
       },
@@ -438,6 +463,7 @@ const firstTabsetId = (m: Model): string | null => {
 const PANEL_IDS = [
   "media",
   "preview",
+  "player",
   "timeline",
   "inspector",
   "scopes",
@@ -451,8 +477,10 @@ const panelTitle = (id: string): string =>
   id === "media"
     ? t("menu.panelMedia")
     : id === "preview"
-      ? t("menu.panelPreview")
-      : id === "timeline"
+      ? t("menu.panelCanvas")
+      : id === "player"
+        ? t("menu.panelPlayer")
+        : id === "timeline"
         ? t("menu.panelTimeline")
           : id === "inspector"
             ? t("menu.panelInspector")
@@ -1777,11 +1805,12 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               label: t("menu.window"),
               items: [
                 { label: t("menu.panelMedia"), checked: !hiddenPanels.includes("media"), fn: () => togglePanelVisible("media") },
-                { label: t("menu.panelPreview"), checked: !hiddenPanels.includes("preview"), fn: () => togglePanelVisible("preview") },
+                { label: t("menu.panelCanvas"), checked: !hiddenPanels.includes("preview"), fn: () => togglePanelVisible("preview") },
+                { label: t("menu.panelPlayer"), checked: !hiddenPanels.includes("player"), fn: () => togglePanelVisible("player") },
                 { label: t("menu.panelTimeline"), checked: !hiddenPanels.includes("timeline"), fn: () => togglePanelVisible("timeline") },
                 { label: t("menu.panelInspector"), checked: !hiddenPanels.includes("inspector"), fn: () => togglePanelVisible("inspector") },
                 { separator: true },
-                ...PANEL_IDS.slice(4).map((id) => ({
+                ...PANEL_IDS.slice(5).map((id) => ({
                   label: panelTitle(id),
                   checked: !hiddenPanels.includes(id),
                   fn: () => togglePanelVisible(id),

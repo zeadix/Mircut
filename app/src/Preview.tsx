@@ -10,6 +10,9 @@ type TransitionKind = Transition["kind"];
 
 interface Props {
   playheadTicks: number;
+  /// 面板形态:canvas = 视频画布(编辑交互);player = 预览(纯播放器,
+  /// contain 适配 + 常显进度条,无编辑交互/无缩放平移)。
+  variant?: "canvas" | "player";
   fps: number;
   playing: boolean;
   /** 播放条 seek(点击/拖拽进度条)。 */
@@ -273,7 +276,9 @@ function PreviewInner({
   onSelectClip,
   onEditTextClip,
   onSetRotate,
+  variant = "canvas",
 }: Props) {
+  const isPlayer = variant === "player";
 const [url, setUrl] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /// 层帧缓存:clipId -> url(拖拽/播放时持续刷新)。
@@ -418,6 +423,7 @@ const [url, setUrl] = useState<string | null>(null);
     const host = frameHostRef.current;
     if (!host) return;
     const onWheel = (e: WheelEvent) => {
+      if (isPlayer) return;
       if (!e.deltaY) return;
       e.preventDefault();
       const prev = stageZoomRef.current;
@@ -1098,25 +1104,28 @@ const [url, setUrl] = useState<string | null>(null);
     <div
       ref={rootRef}
       style={{
-        background: "var(--bg)",
+        background: isPlayer ? "#000" : "var(--bg)",
         color: "var(--text-dim)",
-        height: panelH,
+        height: isPlayer ? "100%" : panelH,
         flexShrink: 0,
         display: "flex",
+        flexDirection: isPlayer ? "column" : "row",
         alignItems: "center",
         justifyContent: "center",
         position: "relative",
         overflow: "hidden",
-        resize: "both",
+        resize: isPlayer ? undefined : "both",
       }}
       onMouseMove={(e) => {
+        if (isPlayer) return;
         const r = e.currentTarget.getBoundingClientRect();
         const inStrip = e.clientY - r.top > r.height - 24;
         if (inStrip !== progressHover) setProgressHover(inStrip);
       }}
       onMouseLeave={() => setProgressHover(false)}
     >
-      {/* 预览工具浮动组(React Bits · Dock:悬停视差放大):画布右上角 */}
+      {/* 预览工具浮动组(React Bits · Dock:悬停视差放大):画布右上角(仅画布形态) */}
+      {!isPlayer && (
       <div style={{ position: "absolute", right: 8, top: 8, zIndex: 12 }}>
       <Dock baseSize={22} magnification={30}>
         <button
@@ -1140,6 +1149,7 @@ const [url, setUrl] = useState<string | null>(null);
         >
           <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
         </button>
+        {!isPlayer && (
         <button
           className="chip"
           onClick={() =>
@@ -1149,25 +1159,15 @@ const [url, setUrl] = useState<string | null>(null);
         >
           <ChartLine size={14} weight={progressMode !== "hide" ? "fill" : "light"} />
         </button>
+        )}
       </Dock>
       </div>
+      )}
 
-      {/* 播放条:显示进度;点击/拖拽 seek;与时间码同源同步 */}
-      {(progressMode === "show" || (progressMode === "auto" && progressHover)) && totalTicks > 0 && (
+      {/* 播放条:player 形态专属(播放器风格常显,点击/拖拽 seek,与时间轴帧同步) */}
+      {isPlayer && totalTicks > 0 && (
         <div
-          id="preview-progress-bar"
-          style={{
-            position: "absolute",
-            left: 12,
-            right: 12,
-            bottom: 6,
-            height: 10,
-            zIndex: 12,
-            background: "var(--surface)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-ctl)",
-            cursor: "pointer",
-          }}
+          className="player-bar"
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId);
             seekFromBar(e.clientX, e.currentTarget);
@@ -1176,15 +1176,12 @@ const [url, setUrl] = useState<string | null>(null);
             if (e.buttons & 1) seekFromBar(e.clientX, e.currentTarget);
           }}
         >
-          <div
-            style={{
-              width: `${Math.min(100, (playheadTicks / totalTicks) * 100)}%`,
-              height: "100%",
-              background: "var(--accent)",
-              borderRadius: "var(--radius-ctl)",
-              pointerEvents: "none",
-            }}
-          />
+          <span className="player-bar-time">{(playheadTicks / fps).toFixed(2)}s</span>
+          <div className="player-bar-track">
+            <div className="player-bar-fill" style={{ width: `${Math.min(100, (playheadTicks / totalTicks) * 100)}%` }} />
+            <div className="player-bar-thumb" style={{ left: `${Math.min(100, (playheadTicks / totalTicks) * 100)}%` }} />
+          </div>
+          <span className="player-bar-time">{(totalTicks / fps).toFixed(2)}s</span>
         </div>
       )}
       {/* 画布缩放徽标:滚轮缩放的当前倍率 + 点击复位(不随内容滚动) */}
@@ -1230,7 +1227,7 @@ const [url, setUrl] = useState<string | null>(null);
             frameHostRef.current = el;
             setHostNode(el);
           }}
-          data-veditor-comp-host=""
+          data-veditor-comp-host={isPlayer ? undefined : ""}
           className={stageZoom === 1 ? "no-scrollbar" : undefined}
           style={{
             width: "100%",
@@ -1301,20 +1298,22 @@ const [url, setUrl] = useState<string | null>(null);
           >
           <div
             ref={stageRef}
-            data-veditor-comp-frame=""
+            data-veditor-comp-frame={isPlayer ? undefined : ""}
+            data-veditor-player-frame={isPlayer ? "" : undefined}
             style={{
               position: framePx ? "absolute" : "relative",
               left: 0,
               top: 0,
               width: framePx?.w ?? "100%",
               height: framePx?.h ?? "100%",
-              // 不裁剪:元素超出视频区域时延伸到画布区(边界框仍置顶提示边界)
-              overflow: "visible",
-              background: "var(--surface)",
+              // 画布形态不裁剪(元素可延伸,边界框提示边界);
+              // player 形态裁剪(显示的即导出输出画面,黑底)
+              overflow: isPlayer ? "hidden" : "visible",
+              background: isPlayer ? "#000" : "var(--surface)",
               transform: framePx && stageZoom !== 1 ? `scale(${stageZoom})` : undefined,
               transformOrigin: "top left",
             }}
-            onDoubleClick={(e) => {
+            onDoubleClick={isPlayer ? undefined : (e) => {
               const l = layerAtPoint(e.clientX, e.clientY);
               // 双击文字层:进入编辑模式(属性面板);双击视频层:铺满切换;
               // 双击空白:复位画布缩放(滚轮缩放的快捷还原)
@@ -1329,7 +1328,7 @@ const [url, setUrl] = useState<string | null>(null);
               }
               toggleLayerFit(l);
             }}
-            onPointerDown={onStagePointerDown}
+            onPointerDown={isPlayer ? undefined : onStagePointerDown}
             onPointerMove={(e) => {
               if (gripRef.current) onGripMove(e);
             }}
@@ -1394,7 +1393,7 @@ const [url, setUrl] = useState<string | null>(null);
             return (
               <div
                 key={l.clipId}
-                data-veditor-layer={l.clipId}
+                data-veditor-layer={isPlayer ? undefined : l.clipId}
                 style={{
                   ...stageRectStyle(r),
                   opacity: op,
@@ -1682,9 +1681,8 @@ const [url, setUrl] = useState<string | null>(null);
             </>
           )}
 
-          {/* 画布边界框:1px 高亮描边,置于任何元素上层 —— 元素超出视频区域
-              延伸到画布区时,边界线仍然可见(明确告诉用户画布边界在哪) */}
-          {framePx && (
+          {/* 画布边界框:1px 高亮描边(仅画布形态;player 显示的是输出画面) */}
+          {framePx && !isPlayer && (
             <div
               style={{
                 position: "absolute",
@@ -1719,6 +1717,7 @@ const [url, setUrl] = useState<string | null>(null);
       )}
 
       {/* 面板高度拖拽手柄 */}
+      {!isPlayer && (
       <div
         style={{
           position: "absolute",
@@ -1741,6 +1740,7 @@ const [url, setUrl] = useState<string | null>(null);
       >
         ⌃⌄
       </div>
+      )}
     </div>
   );
 }
