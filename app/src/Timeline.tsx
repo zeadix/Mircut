@@ -2466,6 +2466,12 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         {/* 轨道头 */}
         <div
           style={{ width: headW, flexShrink: 0, overflow: "hidden", display: "flex" }}
+          onWheel={(e) => {
+            // 轨头列滚轮 → 转发到时间轴视口纵向滚动(与内容区一致)
+            const wrap = wrapRef.current;
+            if (!wrap) return;
+            wrap.scrollTop += e.deltaY;
+          }}
           onDragOver={(e) => {
             if (reorderFrom.current === null) return;
             e.preventDefault();

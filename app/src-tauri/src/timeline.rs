@@ -639,7 +639,9 @@ pub(crate) fn drop_asset(
         .ok_or("素材不存在,请先导入")?;
     // 图片素材(单帧:有视频无音频且时长可疑地短)→ 定格片段语义:
     // 默认 3 秒、speed=0(复用定格 tpad 管线),否则 ffprobe 的 0.04s 会让片段不可用
-    let is_still = asset.has_video && !asset.has_audio && asset.duration_secs < 0.2;
+    // GIF 动画(多帧、真实时长)不走定格:按视频片段正常处理,速度可调
+    let is_still = asset.has_video && !asset.has_audio && asset.duration_secs < 0.2
+        && !is_animated_gif(&asset.path);
     let tps_f = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
     let duration = if is_still {
         (3.0 * tps_f).round() as i64
@@ -1584,5 +1586,31 @@ mod inspector_target_tests {
                 .count();
             assert_eq!((v2, a2), (2, 2), "撤销一刀后回到 2+2");
         }
+    }
+}
+
+
+/// 动态 GIF 判定:扩展名 .gif 且能探测到多帧(ffprobe nb_frames > 1)。
+/// 静态 GIF / 其它图片格式返回 false(保持定格语义)。
+fn is_animated_gif(path: &str) -> bool {
+    if !path.to_ascii_lowercase().ends_with(".gif") {
+        return false;
+    }
+    let out = std::process::Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-count_frames",
+            "-show_entries", "stream=nb_read_frames",
+            "-of", "csv=p=0",
+            path,
+        ])
+        .output();
+    match out {
+        Ok(o) => {
+            let txt = String::from_utf8_lossy(&o.stdout);
+            txt.trim().parse::<u32>().map(|n| n > 1).unwrap_or(false)
+        }
+        Err(_) => false,
     }
 }

@@ -9,7 +9,7 @@ async function setupKeyframes(page: import("@playwright/test").Page) {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
 
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();

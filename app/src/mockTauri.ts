@@ -75,6 +75,19 @@ let mockDoc: Document = {
       size_bytes: 4_194_304,
     },
     {
+      id: "a4",
+      path: "/tmp/mock-sticker-anim.gif",
+      duration_secs: 2,
+      has_video: true,
+      has_audio: false,
+      width: 320,
+      height: 240,
+      fps: 15,
+      name: null,
+      tags: [],
+      size_bytes: 1_048_576,
+    },
+    {
       id: "a3",
       path: "/tmp/mock-sticker.png",
       duration_secs: 0.04,
@@ -163,7 +176,18 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "drop_asset": {
       // 双块语义(与后端一致):视频素材同时生成视频块+音频块
       const asset = mockDoc.assets.find((a) => a.id === String(args.assetId));
-      const tid = (args.trackId as string) ?? mockDoc.tracks[0]?.id ?? "f1";
+      let tid = (args.trackId as string) ?? mockDoc.tracks[0]?.id ?? "f1";
+      // __newlayer__:新建 File 轨(与后端 fresh_file_track 语义一致)
+      if (tid === "__newlayer__") {
+        let maxF = 0;
+        for (const t of mockDoc.tracks) {
+          const m = /^f(\d+)$/.exec(t.id);
+          if (m) maxF = Math.max(maxF, Number(m[1]));
+        }
+        const nt = { id: `f${maxF + 1}`, kind: "File" as const, name: `图层 ${mockDoc.tracks.filter((t: any) => t.kind === "File").length + 1}`, locked: false, hidden: false, muted: false };
+        mockDoc.tracks.push(nt);
+        tid = nt.id;
+      }
       const lanes: ("Video" | "Audio")[] = [];
       if (asset?.has_video !== false) lanes.push("Video");
       if (asset?.has_audio !== false) lanes.push("Audio");
@@ -171,7 +195,9 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       // 图片素材(单帧)→ 定格片段:3s、speed=0
       const compW = mockDoc.width ?? 1920;
       const compH = mockDoc.height ?? 1080;
-      const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2;
+      // 动态 GIF(多帧、真实时长)与后端 is_animated_gif 同语义:不定格
+      const isAnimatedGif = !!asset && asset.path.toLowerCase().endsWith(".gif") && asset.duration_secs >= 0.2;
+      const isStill = !!asset && asset.has_video && !asset.has_audio && asset.duration_secs < 0.2 && !isAnimatedGif;
       const mk = (lane: "Video" | "Audio") => ({
         id: `${isStill ? "img" : lane === "Audio" ? "a" : "v"}${++counter}`,
         track_id: tid,

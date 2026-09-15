@@ -20,6 +20,9 @@ pub struct Stream {
     /// 音频采样率(Hz;ffprobe 输出字符串,此处兼容转换)。
     #[serde(default, deserialize_with = "de_opt_u32_from_maybe_string")]
     pub sample_rate: Option<u32>,
+    /// 视频总帧数(GIF 动画判定用;ffprobe 输出字符串,静态图缺省)。
+    #[serde(default, alias = "nb_frames", deserialize_with = "de_opt_u32_from_maybe_string")]
+    pub nb_frames: Option<u32>,
     /// 视频帧率(来自 r_frame_rate 分数,如 "30000/1001")。
     #[serde(
         default,

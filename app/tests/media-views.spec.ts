@@ -17,19 +17,20 @@ test("媒体库:排列按钮组四形态切换,列表行显示文件大小", asy
   // 列表形态:行含文件名与大小(mock:15MB 视频 / 4MB 音频 / 512KB 图片)
   await page.locator(".seg-btn[title*='文件名列表']").click();
   const rows = page.locator(".media-list-row");
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(4);
   await expect(rows.first()).toContainText("mock-video.mp4");
   await expect(rows.first()).toContainText("15.0 MB");
-  await expect(rows.nth(1)).toContainText("4.0 MB");
-  await expect(rows.nth(2)).toContainText("512.0 KB");
+  await expect(rows.filter({ hasText: "mock-audio.mp3" })).toContainText("4.0 MB");
+  await expect(rows.filter({ hasText: "mock-sticker.png" })).toContainText("512.0 KB");
+  await expect(rows.filter({ hasText: "mock-sticker-anim.gif" })).toContainText("1.0 MB");
 
   // 密集形态:窄格
   await page.locator(".seg-btn[title*='密集']").click();
-  await expect(page.locator(".media-compact-cell")).toHaveCount(3);
+  await expect(page.locator(".media-compact-cell")).toHaveCount(4);
 
   // 平铺形态(默认)
   await page.locator(".seg-btn[title*='平铺']").click();
-  await expect(page.locator(".asset-card")).toHaveCount(3);
+  await expect(page.locator(".asset-card")).toHaveCount(4);
 
   // 持久化:reload 后仍为所选形态(切到列表 → reload → 仍是列表)
   await page.locator(".seg-btn[title*='文件名列表']").click();

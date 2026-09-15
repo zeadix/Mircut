@@ -11,7 +11,7 @@ test("标记:打点、改名与换色写入文档", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
 
   // M 键在播放头(0)打点
   await page.keyboard.press("m");

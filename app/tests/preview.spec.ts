@@ -10,7 +10,7 @@ async function addAssetToTimeline(page: import("@playwright/test").Page) {
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
 }
 
 test("合成分辨率:预设下拉选择立即生效,画布比例随设置变化", async ({ page }) => {
@@ -87,7 +87,8 @@ test("双击视频层:原始分辨率 ↔ 铺满画布 切换", async ({ page })
   await addAssetToTimeline(page);
 
   // mock 素材 320x240 @ 1920x1080:默认原始分辨率 w=16.67%(样式为百分比)
-  const layer = page.locator("[data-veditor-layer]").first();
+  // (定位初始素材层 c1;双击素材卡生成的 v2 与其重叠)
+  const layer = page.locator('[data-veditor-layer="c1"]');
   const layerW = () =>
     layer.evaluate((el) => parseFloat((el as HTMLElement).style.width));
   await expect.poll(layerW).toBeCloseTo(100 * (320 / 1920), 2);
@@ -306,15 +307,16 @@ test("图像菜单:三种尺寸模式作用于选中片段", async ({ page }) =>
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
 
   // 选中时间轴上的片段
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
   const cb = await canvas.boundingBox();
   await page.mouse.click(cb!.x + 20, cb!.y + 30);
 
+  // 选中并断言目标 = 初始块 c1(双击素材卡生成的 v2 与其重叠,勿混定位)
   const layerBox = () =>
-    page.locator("[data-veditor-layer]").first().evaluate((el) => {
+    page.locator('[data-veditor-layer="c1"]').evaluate((el) => {
       const s = (el as HTMLElement).style;
       return { w: parseFloat(s.width), h: parseFloat(s.height) };
     });
@@ -353,7 +355,7 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
   await page.goto("/");
   await expect(page.locator(".asset-card").first()).toBeVisible();
   await page.locator(".asset-card").first().dblclick();
-  await expect(page.locator("[data-veditor-layer]")).toBeVisible({ timeout: 10000 });
+  await expect(page.locator("[data-veditor-layer]").first()).toBeVisible({ timeout: 10000 });
 
   // 选中时间轴片段(mock 初始片段 c1 在 0~1s)
   const canvas = page.locator('[data-veditor-drop="timeline"] canvas').first();
@@ -377,8 +379,8 @@ test("Inspector 动画:入场/出场预设写入 fx 并作用于预览", async (
     });
   await expect.poll(fxCheck).toEqual(expect.objectContaining({ enter: { kind: "Fade", dur_secs: 0.5 } }));
 
-  // 播放头在片段开头(0)→ 入场动画进行中,层透明度 = 0
-  const layer = page.locator("[data-veditor-layer]").first();
+  // 播放头在片段开头(0)→ 入场动画进行中,c1 层透明度 = 0
+  const layer = page.locator('[data-veditor-layer="c1"]');
   const layerOp = () =>
     layer.evaluate((el) => parseFloat((el as HTMLElement).style.opacity || "1"));
   await expect.poll(layerOp).toBeCloseTo(0, 2);
