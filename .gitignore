@@ -7,3 +7,4 @@ app/dist
 .zcode/
 app/test-results/
 app/playwright-report/
+app/test-results/
