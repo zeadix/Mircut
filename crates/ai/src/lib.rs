@@ -7,6 +7,8 @@
 //!   无则降级 `ffmpeg silencedetect` 静音切分(只打轴无文本)。
 //! - TTS:可插拔外部命令(espeak-ng / piper),存在则调用。
 
+pub mod embedded;
+
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

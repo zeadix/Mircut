@@ -13,17 +13,15 @@ test("缺引擎时自动安装并完成识别", async ({ page }) => {
   await page.getByRole("menuitem", { name: "字幕" }).click();
   await page.waitForTimeout(500);
 
-  // 横幅:自动安装按钮可见
-  await expect(page.getByRole("button", { name: /自动安装识别引擎/ })).toBeVisible();
+  // 引擎已内置:不再出现「缺引擎」提示;AI 模型区只显示 ASR 模型
+  await expect(page.getByText("语音识别引擎未就绪")).toHaveCount(0);
+  await expect(page.getByText("缺引擎")).toHaveCount(0);
+  await expect(page.getByText("Whisper base")).toBeVisible();
 
-  // 点 AI 识别 → 自动装引擎 → mock 完成识别(生成字幕)
+  // 点 AI 识别 → mock 完成识别(生成字幕)
   await page.getByRole("button", { name: "AI 识别字幕" }).click();
   await expect
     .poll(async () => page.evaluate(() => (window.__veditorMock.doc.subtitles?.cues ?? []).length), { timeout: 8000 })
     .toBeGreaterThan(0);
   await expect(page.getByText(/完成\(/)).toBeVisible({ timeout: 8000 });
-
-  // 引擎就绪 → 横幅消失,模型清单显示「引擎可用」不再缺引擎
-  await expect(page.getByText("语音识别引擎未就绪")).toHaveCount(0);
-  await expect(page.locator("span", { hasText: "缺引擎" })).toHaveCount(0);
 });

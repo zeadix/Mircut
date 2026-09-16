@@ -282,40 +282,6 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
       {/* AI 模型管理 */}
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>AI 模型</legend>
-        {engineMissing && (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              marginBottom: 8,
-              padding: 8,
-              border: "1px solid var(--accent)",
-              borderRadius: "var(--radius-ctl)",
-              background: "var(--accent-dim)",
-            }}
-          >
-            <span style={{ fontSize: 11 }}>
-              语音识别引擎未就绪(已下载的模型需要引擎驱动)。点击下方按钮,应用将<b>自动下载并配置</b>,无需手动操作。
-            </span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <button
-                className="btn sm primary"
-                disabled={installing}
-                onClick={() => void installEngineInner()}
-                title="自动下载预编译的 whisper-cli 引擎并完成配置(需要网络)"
-              >
-                {installing ? "安装中…" : "自动安装识别引擎"}
-              </button>
-              <button className="btn sm" disabled={installing || settingEngine} onClick={() => void onPickEngine()}>
-                {settingEngine ? "设置中…" : "我已有引擎,指定路径"}
-              </button>
-            </div>
-            {installing && installStage && (
-              <span style={{ fontSize: 10, color: "var(--primary)" }}>{installStage}</span>
-            )}
-          </div>
-        )}
         {models.map((m) => (
           <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
             <span
@@ -344,11 +310,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
                 {dlId === m.id ? "下载中…" : "下载"}
               </button>
             )}
-            {!m.engineAvailable && m.downloaded && (
-              <span style={{ color: "var(--accent)", fontSize: 10, flexShrink: 0 }} title="需要 whisper-cli 引擎:见上方说明">
-                缺引擎
-              </span>
-            )}
+
           </div>
         ))}
       </fieldset>
@@ -389,7 +351,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button
           className="btn"
-          title={engineMissing ? "未检测到 whisper-cli:将降级为静音切分(无文字识别)" : "使用已下载模型识别语音"}
+          title="使用已下载模型识别语音,生成字幕"
           onClick={onAsr}
         >
           AI 识别字幕

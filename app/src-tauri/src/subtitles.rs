@@ -19,19 +19,35 @@ fn transcribe_media(media: &std::path::Path) -> Result<AsrResult, String> {
         .iter()
         .map(|n| models_dir.join(n))
         .find(|p| p.exists());
-    let cli = crate::config::resolve_whisper_cli();
+    // 优先内置引擎(whisper-rs 进程内推理,模型即用);再退回外部 whisper-cli;最后静音切分
     let engine;
-    let segments = if let (Some(model), Some(cli)) = (&model, &cli) {
-        let mut w = veditor_ai::WhisperCli::new(model).with_cli_path(cli.clone());
-        match w.transcribe(media) {
+    let segments = if let Some(model) = &model {
+        let mut emb = veditor_ai::embedded::WhisperEmbedded::new(model);
+        match emb.transcribe(media) {
             Ok(s) => {
-                engine = "whisper-cli".into();
+                engine = "whisper-embedded".into();
                 s
             }
-            Err(_) => {
-                let mut sil = veditor_ai::SilenceSegments::default();
-                engine = "silence".into();
-                sil.transcribe(media).map_err(|e| e.to_string())?
+            Err(e) => {
+                eprintln!("内置引擎识别失败,尝试外部 whisper-cli: {e}");
+                if let Some(cli) = crate::config::resolve_whisper_cli() {
+                    let mut w = veditor_ai::WhisperCli::new(model).with_cli_path(cli);
+                    match w.transcribe(media) {
+                        Ok(s) => {
+                            engine = "whisper-cli".into();
+                            s
+                        }
+                        Err(_) => {
+                            let mut sil = veditor_ai::SilenceSegments::default();
+                            engine = "silence".into();
+                            sil.transcribe(media).map_err(|e| e.to_string())?
+                        }
+                    }
+                } else {
+                    let mut sil = veditor_ai::SilenceSegments::default();
+                    engine = "silence".into();
+                    sil.transcribe(media).map_err(|e| e.to_string())?
+                }
             }
         }
     } else {

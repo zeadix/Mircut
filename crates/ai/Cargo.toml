@@ -10,3 +10,5 @@ veditor-media = { path = "../media" }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+whisper-rs = "0.14"
+hound = "3.5.1"
