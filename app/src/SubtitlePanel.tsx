@@ -32,7 +32,9 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
 
   useEffect(() => {
     load();
-    api.listModels().then((ms) => {
+    api.listModels().then((all) => {
+      // 字幕面板只管语音识别:过滤出 ASR 模型(抠像 RVM/配音音色 Piper 属各自功能面板)
+      const ms = all.filter((m) => m.id.startsWith("ggml-"));
       setModels(ms);
       setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
     }).catch(() => {});

@@ -106,7 +106,7 @@ function TextPanelInner({ doc, playheadTicks, onSeek, onRefresh }: Props) {
       setStatus(
         r.engine === "piper"
           ? `配音已生成并导入: ${r.path}(双击媒体库加入音频轨)`
-          : `配音已生成(espeak-ng 机械音;安装 piper-tts 并在字幕面板下载音色可获得自然语音)`
+          : `配音已生成(espeak-ng 机械音;安装 piper-tts 可获得自然语音)`
       );
     } catch (e) {
       setStatus(`TTS 失败: ${e}`);

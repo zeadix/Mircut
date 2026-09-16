@@ -43,9 +43,11 @@ test("AI 模型面板:清单与下载入口可见", async ({ page }) => {
   const subPanel = await toggleWorkPanel(page, "subtitle", "字幕");
   await expect(subPanel).toBeVisible();
   await expect(subPanel.getByText("AI 模型")).toBeVisible();
-  // 注册表条目(含 piper 音色/RVM/whisper;模型区在字幕工作面板内)
-  for (const name of ["Whisper base", "Whisper small", "RVM 视频抠像", "Piper 中文音色"]) {
+  // 字幕面板只显示 ASR 模型(Whisper);RVM 抠像/ Piper 音色属各自功能面板
+  for (const name of ["Whisper base", "Whisper small"]) {
     await expect(subPanel.getByText(name).first()).toBeVisible();
   }
+  await expect(subPanel.getByText("RVM 视频抠像")).toHaveCount(0);
+  await expect(subPanel.getByText("Piper 中文音色")).toHaveCount(0);
   await expect(subPanel.getByRole("button", { name: /下载/ }).first()).toBeVisible();
 });
