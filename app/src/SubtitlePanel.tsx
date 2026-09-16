@@ -17,6 +17,9 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   const [status, setStatus] = useState("");
   /// AI 模型管理。
   const [models, setModels] = useState<api.ModelInfo[]>([]);
+  /// whisper-cli 引擎是否可用(任意模型缺引擎时显示设置入口)。
+  const [engineMissing, setEngineMissing] = useState(false);
+  const [settingEngine, setSettingEngine] = useState(false);
   const [dlId, setDlId] = useState<string | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -27,18 +30,47 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
 
   useEffect(() => {
     load();
-    api.listModels().then(setModels).catch(() => {});
+    api.listModels().then((ms) => {
+      setModels(ms);
+      setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+    }).catch(() => {});
     const un = listen<{ id: string; percent: number; done?: boolean }>(
       "model-download-progress",
       () => {
         // 下载完成事件:刷新清单
-        api.listModels().then(setModels).catch(() => {});
+        api.listModels().then((ms) => {
+          setModels(ms);
+          setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+        }).catch(() => {});
       }
     );
     return () => {
       un.then((f) => f());
     };
   }, []);
+
+  /// 选择 whisper-cli 可执行文件并保存(修复「缺引擎」)。
+  async function onPickEngine() {
+    const picked = await openDialog({ multiple: false });
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    if (!path) return;
+    setSettingEngine(true);
+    try {
+      await api.setWhisperCliPath(path);
+      const ms = await api.listModels();
+      setModels(ms);
+      setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+      setStatus(
+        ms.some((m) => m.downloaded && !m.engineAvailable)
+          ? "引擎仍不可用:请确认选择的是 whisper-cli 可执行文件"
+          : "whisper-cli 引擎设置成功,现在可以 AI 识别字幕了"
+      );
+    } catch (e) {
+      setStatus(`设置失败: ${String(e).slice(0, 160)}`);
+    } finally {
+      setSettingEngine(false);
+    }
+  }
 
   async function onDownloadModel(id: string) {
     setDlId(id);
@@ -167,6 +199,33 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
       {/* AI 模型管理 */}
       <fieldset style={{ borderColor: "var(--border)" }}>
         <legend>AI 模型</legend>
+        {engineMissing && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginBottom: 8,
+              padding: 8,
+              border: "1px solid var(--accent)",
+              borderRadius: "var(--radius-ctl)",
+              background: "var(--accent-dim)",
+            }}
+          >
+            <span style={{ fontSize: 11 }}>
+              语音识别引擎未就绪:已下载的模型需要 <b>whisper-cli</b>(whisper.cpp 命令行工具)驱动。
+            </span>
+            <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
+              安装方式(任选其一):包管理器安装(如 brew install whisper-cpp)、
+              从 whisper.cpp 发布页下载,或自行编译;也可以直接指定已有的可执行文件。
+            </span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button className="btn sm primary" disabled={settingEngine} onClick={() => void onPickEngine()}>
+                {settingEngine ? "设置中…" : "指定 whisper-cli 路径"}
+              </button>
+            </div>
+          </div>
+        )}
         {models.map((m) => (
           <div key={m.id} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
             <span
@@ -196,7 +255,7 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
               </button>
             )}
             {!m.engineAvailable && m.downloaded && (
-              <span style={{ color: "var(--accent)", fontSize: 10 }} title="需安装 whisper.cpp(whisper-cli)">
+              <span style={{ color: "var(--accent)", fontSize: 10, flexShrink: 0 }} title="需要 whisper-cli 引擎:见上方说明">
                 缺引擎
               </span>
             )}
@@ -205,7 +264,13 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
       </fieldset>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <button className="btn" onClick={onAsr}>AI 识别字幕</button>
+        <button
+          className="btn"
+          title={engineMissing ? "未检测到 whisper-cli:将降级为静音切分(无文字识别)" : "使用已下载模型识别语音"}
+          onClick={onAsr}
+        >
+          AI 识别字幕
+        </button>
         <button className="btn" onClick={onImportSrt}>导入 SRT</button>
         <button className="btn" onClick={onExportSrt}>导出 SRT</button>
         <button className="btn" onClick={onImportAss}>导入 ASS</button>

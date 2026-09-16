@@ -31,6 +31,9 @@ pub struct WhisperCli {
     pub model_path: PathBuf,
     /// whisper 输出格式:默认 srt。
     pub language: String,
+    /// 显式指定 whisper-cli 可执行文件(用户配置/常见位置解析结果;
+    /// None = 依赖 PATH)。
+    pub cli_path: Option<PathBuf>,
 }
 
 impl WhisperCli {
@@ -38,10 +41,20 @@ impl WhisperCli {
         Self {
             model_path: model_path.into(),
             language: "auto".into(),
+            cli_path: None,
         }
     }
 
+    /// 指定 whisper-cli 可执行文件路径。
+    pub fn with_cli_path(mut self, p: impl Into<PathBuf>) -> Self {
+        self.cli_path = Some(p.into());
+        self
+    }
+
     pub fn is_available(&self) -> bool {
+        if let Some(p) = &self.cli_path {
+            return self.model_path.exists() && p.exists();
+        }
         which_bin("whisper-cli") && self.model_path.exists()
     }
 }
@@ -61,7 +74,11 @@ impl Transcriber for WhisperCli {
             "whisper-cli 不可用:请安装 whisper.cpp 并提供模型文件 {}",
             self.model_path.display()
         );
-        let out = Command::new("whisper-cli")
+        let cli = self
+            .cli_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("whisper-cli"));
+        let out = Command::new(cli)
             .args(["-m"])
             .arg(&self.model_path)
             .args(["-l", &self.language, "-osrt", "-of", "-"])

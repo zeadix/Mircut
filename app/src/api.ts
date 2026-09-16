@@ -457,8 +457,14 @@ export interface ModelInfo {
   downloaded: boolean;
   engineAvailable: boolean;
 }
+
 export async function listModels(): Promise<ModelInfo[]> {
   return invoke("list_models");
+}
+
+/// 设置 whisper-cli 引擎路径(用户经文件选择器指定)。
+export async function setWhisperCliPath(path: string): Promise<boolean> {
+  return invoke("set_whisper_cli_path", { path });
 }
 export async function downloadModel(id: string): Promise<void> {
   await invoke("download_model", { id });

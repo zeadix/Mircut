@@ -68,7 +68,8 @@ pub(crate) fn models_dir() -> std::path::PathBuf {
 #[tauri::command]
 pub(crate) fn list_models() -> Vec<serde_json::Value> {
     let dir = models_dir();
-    let whisper_ok = cmd_available("whisper-cli");
+    let whisper_ok = cmd_available("whisper-cli")
+        || crate::config::resolve_whisper_cli().is_some();
     MODELS
         .iter()
         .map(|m| {

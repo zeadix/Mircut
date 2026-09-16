@@ -6,7 +6,10 @@ mod export;
 mod fx;
 mod media;
 mod migrate;
+mod config;
 mod models;
+
+use crate::config::set_whisper_cli_path;
 mod packs;
 mod plugins;
 mod project;
@@ -235,6 +238,7 @@ fn main() {
             probe_media,
             scan_media_dir,
             remove_asset,
+            set_whisper_cli_path,
             delete_asset_file,
             get_document,
             undo,

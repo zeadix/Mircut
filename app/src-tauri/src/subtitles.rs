@@ -23,8 +23,10 @@ pub(crate) fn transcribe(path: String, state: State<'_, AppState>) -> Result<Asr
         .find(|p| p.exists());
     let media = PathBuf::from(&path);
     let engine;
-    let segments = if let Some(model) = &model {
-        let mut w = veditor_ai::WhisperCli::new(&model);
+    // 引擎解析:用户配置路径/常见位置/PATH
+    let cli = crate::config::resolve_whisper_cli();
+    let segments = if let (Some(model), Some(cli)) = (&model, &cli) {
+        let mut w = veditor_ai::WhisperCli::new(&model).with_cli_path(cli.clone());
         match w.transcribe(&media) {
             Ok(s) => {
                 engine = "whisper-cli".into();
