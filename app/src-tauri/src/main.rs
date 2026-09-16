@@ -10,6 +10,7 @@ mod config;
 mod models;
 
 use crate::config::set_whisper_cli_path;
+use crate::models::install_whisper_engine;
 mod packs;
 mod plugins;
 mod project;
@@ -239,6 +240,7 @@ fn main() {
             scan_media_dir,
             remove_asset,
             set_whisper_cli_path,
+            install_whisper_engine,
             delete_asset_file,
             get_document,
             undo,

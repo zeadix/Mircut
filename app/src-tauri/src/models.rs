@@ -201,3 +201,147 @@ pub(crate) fn delete_model(id: String, _state: State<'_, AppState>) -> Result<()
     }
     Ok(())
 }
+
+
+/// whisper.cpp 预编译引擎资产(官方 releases;latest 自动跟随最新版)。
+fn whisper_engine_asset() -> Option<(&'static str, &'static str)> {
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    match (os, arch) {
+        ("linux", "x86_64") => Some(("whisper-bin-x64.tar.xz", "tar")),
+        ("linux", "aarch64") => Some(("whisper-bin-arm64.tar.xz", "tar")),
+        ("windows", _) => Some(("whisper-bin-x64.zip", "zip")),
+        _ => None,
+    }
+}
+
+fn emit_engine(app: &tauri::AppHandle, stage: &str) {
+    let _ = tauri::Emitter::emit(
+        app,
+        "engine-install-progress",
+        serde_json::json!({ "stage": stage }),
+    );
+}
+
+/// 一键安装语音识别引擎(whisper-cli 预编译版):
+/// Linux/Windows 下载官方预编译包解压到 ~/.veditor/bin;
+/// macOS 无官方预编译包,自动经 Homebrew 安装 whisper-cpp。
+#[tauri::command(async)]
+pub(crate) fn install_whisper_engine(app: tauri::AppHandle) -> Result<(), String> {
+    use crate::config::{set_config_str, veditor_dir};
+
+    if crate::config::resolve_whisper_cli().is_some() {
+        return Ok(()); // 已就绪
+    }
+
+    let os = std::env::consts::OS;
+    let bin_dir = veditor_dir().join("bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+
+    if os == "macos" {
+        if !cmd_available("brew") {
+            return Err(
+                "macOS 需要 Homebrew 才能自动安装(未检测到 brew)。可从 https://brew.sh 安装后再试,或手动指定 whisper-cli 路径。".into(),
+            );
+        }
+        emit_engine(&app, "正在通过 Homebrew 安装 whisper-cpp(可能需要数分钟)…");
+        let st = std::process::Command::new("brew")
+            .args(["install", "whisper-cpp"])
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !st.success() {
+            return Err("Homebrew 安装失败,请重试或手动安装".into());
+        }
+        if let Some(p) = crate::config::resolve_whisper_cli() {
+            let _ = set_config_str("whisper_cli", &p.to_string_lossy());
+        }
+        let _ = tauri::Emitter::emit(&app, "engine-install-progress", serde_json::json!({ "stage": "done" }));
+        return Ok(());
+    }
+
+    let Some((asset, kind)) = whisper_engine_asset() else {
+        return Err(format!(
+            "暂不支持的平台: {}/{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
+    };
+    let url = format!("https://github.com/ggml-org/whisper.cpp/releases/latest/download/{asset}");
+
+    emit_engine(&app, "正在下载引擎(约 10~40MB)…");
+    let tmp = bin_dir.join("engine.dl");
+    let dl = if cmd_available("curl") {
+        std::process::Command::new("curl")
+            .args(["-L", "--fail", "--retry", "2", "--max-time", "1800", "-o"])
+            .arg(&tmp)
+            .arg(&url)
+            .status()
+            .map_err(|e| e.to_string())?
+    } else if cmd_available("wget") {
+        std::process::Command::new("wget")
+            .args(["-O"])
+            .arg(&tmp)
+            .arg(&url)
+            .status()
+            .map_err(|e| e.to_string())?
+    } else {
+        return Err("需要 curl 或 wget 下载引擎".into());
+    };
+    if !dl.success() || !tmp.exists() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err("引擎下载失败,请检查网络后重试".into());
+    }
+
+    emit_engine(&app, "正在解压引擎…");
+    let extract = if kind == "tar" {
+        std::process::Command::new("tar")
+            .args(["-xJf"])
+            .arg(&tmp)
+            .arg("-C")
+            .arg(&bin_dir)
+            .status()
+            .map_err(|e| e.to_string())?
+    } else {
+        let ps = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+            tmp.display(),
+            bin_dir.display()
+        );
+        std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps])
+            .status()
+            .map_err(|e| e.to_string())?
+    };
+    let _ = std::fs::remove_file(&tmp);
+    if !extract.success() {
+        return Err("引擎解压失败,请重试".into());
+    }
+
+    fn find_cli(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+        const NAME: &str = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
+        for e in std::fs::read_dir(dir).ok()?.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if let Some(f) = find_cli(&p) {
+                    return Some(f);
+                }
+            } else if p.file_name().map(|n| n == NAME).unwrap_or(false) {
+                return Some(p);
+            }
+        }
+        None
+    }
+    let Some(cli) = find_cli(&bin_dir) else {
+        return Err("引擎解压后未找到 whisper-cli".into());
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755));
+    }
+    let _ = set_config_str("whisper_cli", &cli.to_string_lossy());
+    if let Some(p) = crate::config::resolve_whisper_cli() {
+        let _ = set_config_str("whisper_cli", &p.to_string_lossy());
+    }
+    emit_engine(&app, "done");
+    Ok(())
+}

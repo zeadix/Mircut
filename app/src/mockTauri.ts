@@ -537,7 +537,7 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "list_models":
       // AI 模型清单 mock(与 Rust MODELS 注册表对齐;未下载)
       return [
-        { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: false, engineAvailable: false },
+        { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: true, engineAvailable: false },
         { id: "ggml-small.bin", name: "Whisper small", desc: "AI 字幕识别(更高精度)", size: 487000000, downloaded: false, engineAvailable: false },
         { id: "piper-zh_CN-huayan-medium.onnx", name: "Piper 中文音色(华燕 medium)", desc: "TTS 音色", size: 62000000, downloaded: false, engineAvailable: false },
         { id: "piper-zh_CN-huayan-medium.onnx.json", name: "Piper 中文音色配置", desc: "音色配置", size: 1000000, downloaded: false, engineAvailable: false },

@@ -20,6 +20,8 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   /// whisper-cli 引擎是否可用(任意模型缺引擎时显示设置入口)。
   const [engineMissing, setEngineMissing] = useState(false);
   const [settingEngine, setSettingEngine] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installStage, setInstallStage] = useState("");
   const [dlId, setDlId] = useState<string | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
@@ -44,10 +46,41 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
         }).catch(() => {});
       }
     );
+    const unEngine = listen<{ stage: string }>("engine-install-progress", (e) => {
+      setInstallStage(e.payload.stage);
+      if (e.payload.stage === "done") {
+        api.listModels().then((ms) => {
+          setModels(ms);
+          setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+        }).catch(() => {});
+      }
+    });
+    return () => {
+      un.then((f) => f());
+      unEngine.then((f) => f());
+    };
     return () => {
       un.then((f) => f());
     };
   }, []);
+
+  /// 一键安装引擎(自动下载预编译 whisper-cli;macOS 走 Homebrew)。
+  async function onInstallEngine() {
+    setInstalling(true);
+    setInstallStage("准备安装…");
+    try {
+      await api.installWhisperEngine();
+      const ms = await api.listModels();
+      setModels(ms);
+      setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+      setStatus("语音识别引擎安装完成,现在可以 AI 识别字幕了");
+    } catch (e) {
+      setStatus(`引擎安装失败: ${String(e).slice(0, 160)}`);
+    } finally {
+      setInstalling(false);
+      setInstallStage("");
+    }
+  }
 
   /// 选择 whisper-cli 可执行文件并保存(修复「缺引擎」)。
   async function onPickEngine() {
@@ -219,11 +252,22 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
               安装方式(任选其一):包管理器安装(如 brew install whisper-cpp)、
               从 whisper.cpp 发布页下载,或自行编译;也可以直接指定已有的可执行文件。
             </span>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button className="btn sm primary" disabled={settingEngine} onClick={() => void onPickEngine()}>
-                {settingEngine ? "设置中…" : "指定 whisper-cli 路径"}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                className="btn sm primary"
+                disabled={installing}
+                onClick={() => void onInstallEngine()}
+                title="自动下载预编译的 whisper-cli 引擎并完成配置(需要网络)"
+              >
+                {installing ? "安装中…" : "一键安装引擎"}
+              </button>
+              <button className="btn sm" disabled={installing || settingEngine} onClick={() => void onPickEngine()}>
+                {settingEngine ? "设置中…" : "指定已有引擎路径"}
               </button>
             </div>
+            {installing && installStage && (
+              <span style={{ fontSize: 10, color: "var(--primary)" }}>{installStage}</span>
+            )}
           </div>
         )}
         {models.map((m) => (

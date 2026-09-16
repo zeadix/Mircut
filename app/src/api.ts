@@ -466,6 +466,11 @@ export async function listModels(): Promise<ModelInfo[]> {
 export async function setWhisperCliPath(path: string): Promise<boolean> {
   return invoke("set_whisper_cli_path", { path });
 }
+
+/// 一键安装语音识别引擎(自动下载预编译 whisper-cli / macOS 走 Homebrew)。
+export async function installWhisperEngine(): Promise<boolean> {
+  return invoke("install_whisper_engine");
+}
 export async function downloadModel(id: string): Promise<void> {
   await invoke("download_model", { id });
 }
