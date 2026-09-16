@@ -125,6 +125,7 @@ let mockDoc: Document = {
 };
 
 let markerT = 0;
+let engineReady = false;
 let counter = 1;
 
 /// 性能测量/测试注入:页面端可读写当前文档(window.__veditorMock)。
@@ -535,14 +536,18 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
     case "apply_pack_item":
       return true;
     case "list_models":
-      // AI 模型清单 mock(与 Rust MODELS 注册表对齐;未下载)
+      // AI 模型清单 mock(与 Rust MODELS 注册表对齐;engineReady 后 ggml 系可用)
       return [
-        { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: true, engineAvailable: false },
-        { id: "ggml-small.bin", name: "Whisper small", desc: "AI 字幕识别(更高精度)", size: 487000000, downloaded: false, engineAvailable: false },
+        { id: "ggml-base.bin", name: "Whisper base", desc: "AI 字幕识别(mock)", size: 147000000, downloaded: true, engineAvailable: engineReady },
+        { id: "ggml-small.bin", name: "Whisper small", desc: "AI 字幕识别(更高精度)", size: 487000000, downloaded: false, engineAvailable: engineReady },
         { id: "piper-zh_CN-huayan-medium.onnx", name: "Piper 中文音色(华燕 medium)", desc: "TTS 音色", size: 62000000, downloaded: false, engineAvailable: false },
         { id: "piper-zh_CN-huayan-medium.onnx.json", name: "Piper 中文音色配置", desc: "音色配置", size: 1000000, downloaded: false, engineAvailable: false },
         { id: "rvm_mobilenetv3.onnx", name: "RVM 视频抠像", desc: "AI 人像抠像", size: 26000000, downloaded: false, engineAvailable: false },
       ];
+    case "install_whisper_engine":
+    case "set_whisper_cli_path":
+      engineReady = true;
+      return true;
     case "download_model":
     case "delete_model":
       return true;

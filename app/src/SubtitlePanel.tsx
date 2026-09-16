@@ -38,11 +38,17 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
     }).catch(() => {});
     const un = listen<{ id: string; percent: number; done?: boolean }>(
       "model-download-progress",
-      () => {
-        // 下载完成事件:刷新清单
-        api.listModels().then((ms) => {
+      (e) => {
+        // 下载完成事件:刷新清单;若引擎未就绪自动补装(一次性)
+        if (!e.payload.done) return;
+        api.listModels().then(async (ms) => {
           setModels(ms);
-          setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
+          const missing = ms.some((m) => m.downloaded && !m.engineAvailable);
+          if (missing && !installing) {
+            await installEngineInner();
+          } else {
+            setEngineMissing(missing);
+          }
         }).catch(() => {});
       }
     );
@@ -64,22 +70,30 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
     };
   }, []);
 
-  /// 一键安装引擎(自动下载预编译 whisper-cli;macOS 走 Homebrew)。
-  async function onInstallEngine() {
+  /// 安装识别引擎(自动下载预编译 whisper-cli;macOS 走 Homebrew)。
+  /// 返回是否就绪;进度/结果写入状态栏。
+  async function installEngineInner(): Promise<boolean> {
     setInstalling(true);
     setInstallStage("准备安装…");
     try {
       await api.installWhisperEngine();
       const ms = await api.listModels();
       setModels(ms);
-      setEngineMissing(ms.some((m) => m.downloaded && !m.engineAvailable));
-      setStatus("语音识别引擎安装完成,现在可以 AI 识别字幕了");
+      const missing = ms.some((m) => m.downloaded && !m.engineAvailable);
+      setStatus(missing ? "引擎仍不可用:请检查所选 whisper-cli" : "识别引擎已就绪");
+      setEngineMissing(missing);
+      return !missing;
     } catch (e) {
       setStatus(`引擎安装失败: ${String(e).slice(0, 160)}`);
+      return false;
     } finally {
       setInstalling(false);
       setInstallStage("");
     }
+  }
+
+  async function onInstallEngine() {
+    await installEngineInner();
   }
 
   /// 选择 whisper-cli 可执行文件并保存(修复「缺引擎」)。
@@ -135,7 +149,13 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
       setStatus("请先导入含音频的素材");
       return;
     }
-    setStatus("识别中...(无 whisper 模型时按静音切分)");
+    // 缺引擎:自动下载安装(一次性),完成后继续真实识别
+    if (engineMissing) {
+      setStatus("首次使用需下载识别引擎(约 20MB),正在自动安装…");
+      const ok = await installEngineInner();
+      if (!ok) return; // 安装失败:状态栏已提示
+    }
+    setStatus("识别中…");
     try {
       const r = await invoke<{ segments: { start_secs: number; end_secs: number; text: string }[]; engine: string }>(
         "transcribe",
@@ -246,23 +266,19 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
             }}
           >
             <span style={{ fontSize: 11 }}>
-              语音识别引擎未就绪:已下载的模型需要 <b>whisper-cli</b>(whisper.cpp 命令行工具)驱动。
-            </span>
-            <span style={{ fontSize: 10, color: "var(--text-dim)" }}>
-              安装方式(任选其一):包管理器安装(如 brew install whisper-cpp)、
-              从 whisper.cpp 发布页下载,或自行编译;也可以直接指定已有的可执行文件。
+              语音识别引擎未就绪(已下载的模型需要引擎驱动)。点击下方按钮,应用将<b>自动下载并配置</b>,无需手动操作。
             </span>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <button
                 className="btn sm primary"
                 disabled={installing}
-                onClick={() => void onInstallEngine()}
+                onClick={() => void installEngineInner()}
                 title="自动下载预编译的 whisper-cli 引擎并完成配置(需要网络)"
               >
-                {installing ? "安装中…" : "一键安装引擎"}
+                {installing ? "安装中…" : "自动安装识别引擎"}
               </button>
               <button className="btn sm" disabled={installing || settingEngine} onClick={() => void onPickEngine()}>
-                {settingEngine ? "设置中…" : "指定已有引擎路径"}
+                {settingEngine ? "设置中…" : "我已有引擎,指定路径"}
               </button>
             </div>
             {installing && installStage && (
