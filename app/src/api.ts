@@ -478,6 +478,19 @@ export async function setWhisperCliPath(path: string): Promise<boolean> {
   return invoke("set_whisper_cli_path", { path });
 }
 
+export interface UpdateResult {
+  updateAvailable: boolean;
+  latest: string;
+  current: string;
+  changes: string[];
+  changesEn: string[];
+}
+
+/// 检查软件更新(拉取公开清单并与当前版本比较)。
+export async function checkUpdate(): Promise<UpdateResult> {
+  return invoke("check_update");
+}
+
 /// 一键安装语音识别引擎(自动下载预编译 whisper-cli / macOS 走 Homebrew)。
 export async function installWhisperEngine(): Promise<boolean> {
   return invoke("install_whisper_engine");

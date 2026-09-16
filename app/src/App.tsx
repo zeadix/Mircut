@@ -35,10 +35,11 @@ import ResPresetSelect from "./ResPreset";
 import PopupSelect from "./PopupSelect";
 import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
-import { ConfigProvider, Button as AntdButton, Tag } from "antd";
+import { ConfigProvider, Button as AntdButton, Tag, Modal as AntdModal } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import { buildAntdTheme } from "./ui/antdTheme";
+import type { UpdateResult } from "./api";
 import ClickSpark from "./bits/ClickSpark";
 import SplitText from "./bits/SplitText";
 import AnimatedContent from "./bits/AnimatedContent";
@@ -540,6 +541,27 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [editMode, setEditMode] = useState(true);
   const [snapOn, setSnapOn] = useState(true);
   /// 主题(仅用于触发重渲染;真值在 documentElement.dataset.theme)。
+  /// 检查更新结果(Modal 展示)。
+  const [updateInfo, setUpdateInfo] = useState<UpdateResult | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateOpen(true);
+    setUpdateChecking(true);
+    setUpdateError(null);
+    setUpdateInfo(null);
+    try {
+      const r = await api.checkUpdate();
+      setUpdateInfo(r);
+    } catch (e) {
+      setUpdateError(String(e).slice(0, 160));
+    } finally {
+      setUpdateChecking(false);
+    }
+  }, []);
+
   /// 主题 state 与 main.tsx initTheme() 同源(data-theme 已在启动时恢复,
   /// antd ConfigProvider 需要同值,否则持久化浅色重启后 antd 组件仍是暗色白字)
   const [theme, setTheme] = useState<"dark" | "light">(
@@ -1760,6 +1782,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 { label: t("menu.saveAs"), fn: onSaveAsProject },
                 { label: t("menu.importJianying"), fn: onImportJianying },
                 { separator: true },
+                { label: t("menu.checkUpdate"), fn: () => void checkForUpdates() },
                 ...(recentProjects.length > 0
                   ? ([{ label: t("menu.recent"), disabled: true }] as MenuItem[])
                   : []),
@@ -1889,6 +1912,60 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           <span className="statusbar-text">{status}</span>
         </div>
       </div>
+
+      {/* 检查更新结果弹窗 */}
+      <AntdModal
+        open={updateOpen}
+        title={t("menu.checkUpdate")}
+        footer={null}
+        onCancel={() => setUpdateOpen(false)}
+        width={420}
+      >
+        {updateChecking && <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("update.checking")}</div>}
+        {updateError && <div style={{ fontSize: 12, color: "#e5484d" }}>{updateError}</div>}
+        {updateInfo && !updateChecking && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "var(--text-dim)" }}>{t("update.current")}</span>
+                <span style={{ fontFamily: "monospace" }}>v{updateInfo.current}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: "var(--text-dim)" }}>{t("update.latest")}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontFamily: "monospace", color: updateInfo.updateAvailable ? "var(--primary)" : undefined }}>
+                    v{updateInfo.latest}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: "1px 8px",
+                      borderRadius: 999,
+                      fontWeight: 600,
+                      color: updateInfo.updateAvailable ? "#fff" : "var(--text-dim)",
+                      background: updateInfo.updateAvailable ? "var(--primary)" : "var(--surface)",
+                    }}
+                  >
+                    {updateInfo.updateAvailable ? t("update.available") : t("update.uptodate")}
+                  </span>
+                </span>
+              </div>
+            </div>
+            {updateInfo.updateAvailable && updateInfo.changes.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 4 }}>
+                  {t("update.whatsNew")}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.7 }}>
+                  {updateInfo.changes.map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </AntdModal>
 
       {/* 导出操作窗口(所有导出配置集中于此) */}
       {exportDialog && doc && (

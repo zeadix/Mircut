@@ -1,0 +1,14 @@
+{
+  "_comment": "软件更新清单样例。发布时托管到 UPDATE_MANIFEST_URL(app/src-tauri/src/main.rs 中常量)指向的地址;version 与发布包一致。",
+  "version": "1.1.0",
+  "changes": [
+    "新增字幕样式配置与卡拉OK逐字效果",
+    "新增 GIF 动画素材支持",
+    "修复若干问题"
+  ],
+  "changes_en": [
+    "Added subtitle style config and karaoke effect",
+    "Added animated GIF asset support",
+    "Bug fixes"
+  ]
+}

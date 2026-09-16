@@ -11,6 +11,64 @@ mod models;
 
 use crate::config::set_whisper_cli_path;
 use crate::models::install_whisper_engine;
+
+/// 软件更新:公开清单地址(发布后指向实际托管地址,内容格式见
+/// docs/latest.manifest.example.json)。
+const UPDATE_MANIFEST_URL: &str = "https://updates.veditor.app/latest.json";
+
+#[derive(serde::Deserialize)]
+struct LatestManifest {
+    version: String,
+    #[serde(default)]
+    changes: Vec<String>,
+    #[serde(default)]
+    changes_en: Vec<String>,
+}
+
+fn version_newer(remote: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.trim_start_matches('v')
+            .split('.')
+            .filter_map(|n| n.parse::<u64>().ok())
+            .collect()
+    };
+    let (r, c) = (parse(remote), parse(current));
+    for i in 0..r.len().max(c.len()) {
+        let rv = r.get(i).copied().unwrap_or(0);
+        let cv = c.get(i).copied().unwrap_or(0);
+        if rv != cv {
+            return rv > cv;
+        }
+    }
+    false
+}
+
+/// 检查更新:拉取公开清单,与当前版本比较,返回新版双语更新说明。
+#[tauri::command(async)]
+async fn check_update() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let resp = ureq::get(UPDATE_MANIFEST_URL)
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+            .map_err(|e| format!("request failed: {e}"))?;
+        let m: LatestManifest = resp
+            .into_json()
+            .map_err(|e| format!("parse failed: {e}"))?;
+        let current = env!("CARGO_PKG_VERSION");
+        let newer = version_newer(&m.version, current);
+        Ok(serde_json::json!({
+            "updateAvailable": newer,
+            "latest": m.version,
+            "current": current,
+            "changes": m.changes,
+            "changesEn": m.changes_en,
+        }))
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
+}
+
+
 mod packs;
 mod plugins;
 mod project;
@@ -240,6 +298,7 @@ fn main() {
             scan_media_dir,
             remove_asset,
             set_whisper_cli_path,
+            check_update,
             install_whisper_engine,
             delete_asset_file,
             get_document,

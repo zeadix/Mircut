@@ -8,6 +8,7 @@ edition.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ureq = { version = "2", features = ["json"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde = { workspace = true }
