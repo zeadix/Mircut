@@ -645,6 +645,50 @@ pub(crate) fn drop_asset(
     // 文本素材(txt/srt/ass 等):拖入即生成文字块,内容 = 文件文本(截断 500 字)
     let ext = asset.path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let is_text_asset = matches!(ext.as_str(), "txt" | "srt" | "ass" | "md" | "lrc");
+    // 字幕文件(srt):按 cue 拆分为多个文字块(时间与文本来自字幕文件)
+    if ext == "srt" {
+        let content = std::fs::read_to_string(&asset.path).unwrap_or_default();
+        let tps_f = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
+        let cues = veditor_core::parse_srt(&content, tps_f as i64);
+        if cues.is_empty() {
+            return Err("字幕文件中没有可用的字幕条目".into());
+        }
+        let track_id = crate::migrate::ensure_overlay_track(&mut inner.doc, "文字");
+        let mut fx = veditor_core::ClipFx::default();
+        fx.rect = Some(veditor_core::FxRect {
+            x: 0.5,
+            y: 0.5,
+            w: 0.8,
+            h: (64.0f64 / 1080.0).clamp(0.02, 0.9),
+            stretch: false,
+        });
+        let mut added = 0usize;
+        for cue in cues {
+            let mut tdata = TextClipData::default();
+            tdata.content = cue.text;
+            let clip = Clip {
+                id: next_typed_clip_id(&inner.doc, "t", &mut inner.doc.clips.len().clone()),
+                track_id: track_id.clone(),
+                start: cue.start.max(0),
+                duration: (cue.end - cue.start).max(1),
+                asset: AssetRef {
+                    asset_id: asset.id.clone(),
+                    source_in: 0.0,
+                    source_out: 3.0,
+                },
+                speed: 0.0,
+                volume: 1.0,
+                muted: false,
+                lane: Some(veditor_core::Lane::Video),
+                fx: fx.clone(),
+                text: Some(tdata),
+            };
+            let id = clip.id.clone();
+            inner.exec(Box::new(AddClip { clip }));
+            added += 1;
+        }
+        return Ok(format!("srt:{added}"));
+    }
     let tps_f = (inner.doc.timebase.num / inner.doc.timebase.den.max(1)) as f64;
     let duration = if is_still {
         (3.0 * tps_f).round() as i64

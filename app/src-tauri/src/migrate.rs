@@ -92,6 +92,7 @@ fn migrate_text_overlays(doc: &mut Document) {
                 align_v: "middle".into(),
                 font: String::new(),
                 italic: false,
+                karaoke_color: None,
             }),
         });
     }

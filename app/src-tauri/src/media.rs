@@ -216,10 +216,11 @@ pub(crate) fn delete_asset_file(asset_id: String, state: State<'_, AppState>) ->
 /// 覆盖音频/视频/图片(与"导入"文件对话框一致的媒体语义)。
 #[tauri::command(async)]
 pub(crate) fn scan_media_dir(dir: String) -> Result<Vec<String>, String> {
-    const MEDIA_EXTS: [&str; 20] = [
+    const MEDIA_EXTS: [&str; 22] = [
         "mp3", "wav", "aac", "ogg", "flac", "m4a", "opus", //
         "mp4", "mov", "mkv", "webm", "avi", "m4v", //
-        "png", "jpg", "jpeg", "webp", "gif", "bmp", "avif",
+        "png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", //
+        "srt", "ass",
     ];
     let root = PathBuf::from(&dir);
     if !root.is_dir() {

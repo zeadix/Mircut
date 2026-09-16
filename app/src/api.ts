@@ -462,6 +462,17 @@ export async function listModels(): Promise<ModelInfo[]> {
   return invoke("list_models");
 }
 
+/// 设置全局字幕样式。
+export async function setSubtitleStyle(style: {
+  font_size: number;
+  color: string;
+  outline: string | null;
+  bold: boolean;
+  pos_y?: number;
+}): Promise<boolean> {
+  return invoke("set_subtitle_style", { style });
+}
+
 /// 设置 whisper-cli 引擎路径(用户经文件选择器指定)。
 export async function setWhisperCliPath(path: string): Promise<boolean> {
   return invoke("set_whisper_cli_path", { path });

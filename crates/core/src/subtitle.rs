@@ -22,6 +22,13 @@ pub struct SubtitleStyle {
     /// 描边颜色(None = 无描边)。
     pub outline: Option<String>,
     pub bold: bool,
+    /// 垂直位置(画面高度百分比,文字底边;默认 90 = 底部)。
+    #[serde(default = "default_pos_y")]
+    pub pos_y: f64,
+}
+
+fn default_pos_y() -> f64 {
+    90.0
 }
 
 impl Default for SubtitleStyle {
@@ -31,6 +38,7 @@ impl Default for SubtitleStyle {
             color: "#ffffff".into(),
             outline: Some("#000000".into()),
             bold: false,
+            pos_y: 90.0,
         }
     }
 }

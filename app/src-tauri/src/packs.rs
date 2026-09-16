@@ -364,6 +364,7 @@ pub(crate) fn apply_pack_item(
                     bold,
                     shadow: false,
                     bg_color: None,
+                    karaoke_color: None,
                     align_h: "center".into(),
                     align_v: "middle".into(),
                     font: String::new(),

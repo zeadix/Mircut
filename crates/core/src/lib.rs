@@ -115,7 +115,10 @@ pub struct TextClipData {
     #[serde(default)]
     pub shadow: bool,
     #[serde(default)]
-    pub bg_color: Option<String>,
+    pub bg_color: Option<String>,    /// 卡拉OK高亮色(Some = 开启逐字变色效果)。
+    #[serde(default)]
+    pub karaoke_color: Option<String>,
+
     /// 水平对齐(left/center/right;默认 center,框内排版)。
     #[serde(default = "default_align_h")]
     pub align_h: String,
@@ -157,6 +160,7 @@ impl Default for TextClipData {
             bold: false,
             shadow: false,
             bg_color: None,
+            karaoke_color: None,
             align_h: default_align_h(),
             align_v: default_align_v(),
             font: String::new(),

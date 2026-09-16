@@ -1361,6 +1361,28 @@ function InspectorInner({ doc, clip, selectedCount = 0, selectedClipIds = [], cu
               </button>
             ))}
           </div>
+          {/* 卡拉OK:逐字变色(播放/导出按块内进度高亮已读文字) */}
+          <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 11 }}>
+            <input
+              type="checkbox"
+              checked={!!clip.text.karaoke_color}
+              onChange={(e) =>
+                applyTextClip({ karaoke_color: e.target.checked ? "#ffd75e" : null })
+              }
+            />
+            卡拉OK逐字变色
+          </label>
+          {!!clip.text.karaoke_color && (
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, marginTop: 4 }}>
+              高亮色
+              <input
+                type="color"
+                style={{ width: 26, height: 22, padding: 0, border: "none", background: "none" }}
+                value={clip.text.karaoke_color}
+                onChange={(e) => applyTextClip({ karaoke_color: e.target.value })}
+              />
+            </label>
+          )}
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
             <span style={{ fontSize: 11, color: "var(--text-dim)" }}>对齐</span>
             <PopupSelect

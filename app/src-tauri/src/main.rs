@@ -285,6 +285,7 @@ fn main() {
             set_transition,
             remove_transition,
             transcribe,
+            transcribe_timeline,
             apply_subtitle_segments,
             get_subtitles,
             set_subtitle_cue,

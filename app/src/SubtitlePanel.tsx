@@ -20,6 +20,14 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
   /// whisper-cli 引擎是否可用(任意模型缺引擎时显示设置入口)。
   const [engineMissing, setEngineMissing] = useState(false);
   const [settingEngine, setSettingEngine] = useState(false);
+  /// 全局字幕样式(字号/颜色/描边/粗体/垂直位置)。
+  const [style, setStyle] = useState({
+    font_size: 32,
+    color: "#ffffff",
+    outline: "#000000" as string | null,
+    bold: false,
+    pos_y: 90,
+  });
   const [installing, setInstalling] = useState(false);
   const [installStage, setInstallStage] = useState("");
   const [dlId, setDlId] = useState<string | null>(null);
@@ -28,6 +36,12 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
 
   async function load() {
     setTrack(await invoke("get_subtitles"));
+    try {
+      const d = await invoke<{ subtitles?: { style?: typeof style } }>("get_document");
+      if (d.subtitles?.style) setStyle({ ...style, ...d.subtitles.style });
+    } catch {
+      /* 忽略 */
+    }
   }
 
   useEffect(() => {
@@ -234,6 +248,20 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
     }
   }
 
+  /// 更新样式(即时写入工程,预览/导出实时生效)。
+  async function applyStyle(patch: Partial<typeof style>) {
+    const next = { ...style, ...patch };
+    setStyle(next);
+    await api.setSubtitleStyle({
+      font_size: Math.round(next.font_size),
+      color: next.color,
+      outline: next.outline,
+      bold: next.bold,
+      pos_y: next.pos_y,
+    });
+    await onRefresh();
+  }
+
   async function saveCue(i: number) {
     if (!track) return;
     const cue = { ...track.cues[i], text: draft };
@@ -323,6 +351,39 @@ function SubtitlePanelInner({ assetPaths, onRefresh, fps }: Props) {
             )}
           </div>
         ))}
+      </fieldset>
+
+      <fieldset style={{ borderColor: "var(--border)" }}>
+        <legend>字幕样式</legend>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            字号
+            <input type="number" className="ti sm" style={{ width: 56 }} min={12} max={200}
+              value={style.font_size}
+              onChange={(e) => void applyStyle({ font_size: Number(e.target.value) || 32 })} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            颜色
+            <input type="color" style={{ width: 26, height: 22, padding: 0, border: "none", background: "none" }}
+              value={style.color} onChange={(e) => void applyStyle({ color: e.target.value })} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            描边
+            <input type="color" style={{ width: 26, height: 22, padding: 0, border: "none", background: "none" }}
+              value={style.outline ?? "#000000"} onChange={(e) => void applyStyle({ outline: e.target.value })} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+            <input type="checkbox" checked={style.bold}
+              onChange={(e) => void applyStyle({ bold: e.target.checked })} /> 粗体
+          </label>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+          垂直位置
+          <input type="range" min={5} max={95} value={style.pos_y ?? 90}
+            onChange={(e) => void applyStyle({ pos_y: Number(e.target.value) })} style={{ flex: 1 }}
+            title="字幕底边在画面中的垂直位置" />
+          <span style={{ color: "var(--text-dim)", width: 34 }}>{Math.round(style.pos_y ?? 90)}%</span>
+        </label>
       </fieldset>
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

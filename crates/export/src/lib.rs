@@ -1898,8 +1898,9 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 let border = style.outline.as_deref().unwrap_or("black");
                 let sep = if first { "" } else { "," };
                 first = false;
+                let pos_y = style.pos_y.clamp(0.0, 100.0);
                 chain.push_str(&format!(
-                    "{sep}drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h-th-60:enable='between(t,{start:.3},{end:.3})'",
+                    "{sep}drawtext=text='{text}':fontcolor={color}:bordercolor={border}:borderw=2:fontsize={}:x=(w-text_w)/2:y=h*{pos_y:.4}-text_h:enable='between(t,{start:.3},{end:.3})'",
                     style.font_size
                 ));
             }
@@ -1926,6 +1927,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
             italic: bool,
             anim_in: Option<veditor_core::ClipAnim>,
             anim_out: Option<veditor_core::ClipAnim>,
+            karaoke_color: Option<String>,
         }
         let mut text_draws: Vec<TextDraw> = Vec::new();
         for c in doc.clips.iter().filter(|c| c.text.is_some()) {
@@ -1966,6 +1968,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 italic: tc.italic,
                 anim_in: c.fx.enter.clone(),
                 anim_out: c.fx.exit.clone(),
+                karaoke_color: tc.karaoke_color.clone(),
             });
         }
         for t in &doc.text_overlays {
@@ -2005,6 +2008,7 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                     }),
                 },
                 anim_out: None,
+                karaoke_color: None,
             });
         }
         for td in &text_draws {
@@ -2016,6 +2020,48 @@ pub fn compile_ffmpeg_cmd(doc: &Document, params: &ExportParams) -> Vec<String> 
                 .replace(':', "\\:")
                 .replace("'", "\\'");
             let color = td.color.trim_start_matches('#');
+
+            // ===== 卡拉OK:按字符均分块时长,逐字高亮(已读 = karaoke 色) =====
+            // 中文字符近似等宽(块字号);每字符一个时间窗,窗内两段 drawtext:
+            // 已读前缀(高亮)+ 未读后缀(默认色)。整行以画布中心锚定。
+            if let Some(kc) = &td.karaoke_color {
+                let kc_hex = kc.trim_start_matches('#');
+                let chars: Vec<char> = td.content.chars().collect();
+                let n = chars.len();
+                if n == 0 {
+                    continue;
+                }
+                let char_dur = (end - start) / n as f64;
+                let total_w = format!("{:.1}", n as f64 * td.font_size);
+                let x0 = format!("w*{:.3}-({total_w})/2", td.x * params.width as f64);
+                let y0 = format!("h*{:.3}-text_h/2", td.y * params.height as f64);
+                let font_px = ((td.font_size) * (params.height as f64 / 1080.0)).round() as u32;
+                let font_opt = drawtext_font_opt(td.font, td.bold, td.italic);
+                let border_sub = td.outline.as_deref().map(|o| o.trim_start_matches('#')).unwrap_or("black");
+                for i in 0..n {
+                    let t0 = start + char_dur * i as f64;
+                    let t1 = if i + 1 == n { end } else { start + char_dur * (i + 1) as f64 };
+                    let read: String = chars[..=i].iter().collect();
+                    let read = read.replace('\\', "\\\\").replace(':', "\\:").replace("'", "\\'");
+                    let unread: String = chars[i + 1..].iter().collect();
+                    let unread = unread.replace('\\', "\\\\").replace(':', "\\:").replace("'", "\\'");
+                    let win = format!("enable='between(t,{t0:.3},{t1:.3})'");
+                    let sep = if first { "" } else { "," };
+                    first = false;
+                    chain.push_str(&format!(
+                        "{sep}drawtext=text='{text}':fontcolor=0x{color}:bordercolor=0x{border_sub}:borderw=2:fontsize={font_px}{font_opt}:x={x0}+text_w/2-({total_w})/2:y={y0}:{win}"
+                    ));
+                    chain.push_str(&format!(
+                        ",drawtext=text='{read}':fontcolor=0x{kc_hex}:fontsize={font_px}{font_opt}:x={x0}:y={y0}:{win}"
+                    ));
+                    chain.push_str(&format!(
+                        ",drawtext=text='{unread}':fontcolor=0x{color}:fontsize={font_px}{font_opt}:x={x0}+{}:y={y0}:{win}",
+                        ((i + 1) as f64 * td.font_size).round()
+                    ));
+                }
+                continue;
+            }
+
             let font_px = ((td.font_size) * (params.height as f64 / 1080.0)).round() as u32;
             // 双层描边(花字):先画加粗外层,再画正常主层
             if let Some(oc2) = &td.outline2 {

@@ -170,10 +170,16 @@ export function rectsEq(a: FxRect, b: FxRect, eps = 1e-3): boolean {
   return dx && dy && dw && dh;
 }
 
+/// 卡拉OK高亮色(文字块开启时返回;null = 关闭)。
+function karaokeOf(l: { text?: { karaoke_color?: string | null } }): string | null {
+  return l.text?.karaoke_color ?? null;
+}
+
 interface Layer {
   clipId: string;
   path: string;
   secs: number;
+  blockProgress?: number;
   rect: FxRect;
   z: number;
   /// 素材像素尺寸(双击全屏/恢复原始分辨率的计算依据;未知为 null)。
@@ -501,6 +507,8 @@ const [url, setUrl] = useState<string | null>(null);
         clipId: c.id,
         path: asset.path,
         secs: Math.max(0, Math.min(rawSecs, asset.duration_secs - 0.05)),
+        /// 块内已播放比例(卡拉OK逐字变色用;文字块 speed=0 定格)。
+        blockProgress: c.duration > 0 ? Math.min(1, Math.max(0, tLocalTicks / c.duration)) : 0,
         rect,
         z: 0,
         assetW: asset.width ?? null,
@@ -1403,7 +1411,22 @@ const [url, setUrl] = useState<string | null>(null);
                       wordBreak: "break-all",
                     }}
                   >
-                    {l.text.content}
+                    {/* 卡拉OK:按层进度把文字拆为已读(高亮)/未读两段 */}
+                    {karaokeOf(l) ? (
+                      (() => {
+                        const chars = [...(l.text?.content ?? "")];
+                        const progress = l.blockProgress ?? 0;
+                        const n = Math.floor(progress * chars.length);
+                        return (
+                          <>
+                            <span style={{ color: karaokeOf(l) ?? undefined }}>{chars.slice(0, n).join("")}</span>
+                            <span>{chars.slice(n).join("")}</span>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      l.text?.content
+                    )}
                   </div>
                 ) : img ? (
                   <img
@@ -1530,7 +1553,7 @@ const [url, setUrl] = useState<string | null>(null);
                   style={{
                     position: "absolute",
                     left: "50%",
-                    bottom: 60 * ((framePx?.h ?? 1080) / 1080) + 12,
+                    bottom: ((st.pos_y ?? 90) / 100) * (framePx?.h ?? 1080) * 0.5,
                     transform: "translateX(-50%)",
                     color: st.color,
                     fontSize: Math.max(10, (st.font_size * (framePx?.h ?? 1080)) / 1080),

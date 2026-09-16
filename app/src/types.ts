@@ -143,6 +143,8 @@ export interface TextClipData {
   bold: boolean;
   shadow: boolean;
   bg_color?: string;
+  /** 卡拉OK高亮色(非空 = 开启逐字变色)。 */
+  karaoke_color?: string | null;
   /// 框内水平对齐(left/center/right;默认 center)。
   align_h?: "left" | "center" | "right";
   /// 框内垂直对齐(top/middle/bottom;默认 middle)。
@@ -209,6 +211,8 @@ export interface SubtitleStyle {
   color: string;
   outline: string | null;
   bold: boolean;
+  /// 垂直位置(画面高度百分比,文字底边)。
+  pos_y?: number;
 }
 
 export interface SubtitleTrack {
