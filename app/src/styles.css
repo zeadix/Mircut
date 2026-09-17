@@ -32,6 +32,130 @@
 .track-head-audio { background: var(--track-audio); }
 .track-head-video { background: var(--track-video); }
 
+[data-theme="ocean"] {
+  /* 深海蓝调:蓝黑基底 + 青蓝主色 */
+  --bg: #0d1420;
+  --panel: #101a29;
+  --header: #12203a;
+  --card: #14202f;
+  --border: #1e3048;
+  --border-strong: #2b4468;
+  --accent: #7ee0ff;
+  --accent-dim: rgba(126, 224, 255, 0.12);
+  --text: #dfeaf5;
+  --text-dim: #7e9ab8;
+  --surface: #18263a;
+  --btn-bg: #16233a;
+  --btn-border: #243a58;
+  --btn-hover: #1d3050;
+  --tag-bg: #24406b;
+  --tag-text: #9cc7f5;
+  --ok: #4fd6b8;
+  --link: #58c7f0;
+  --progress: #2f6db3;
+  --code: #8fb3d9;
+  --track-audio: #16222e;
+  --track-video: #16202e;
+  --primary: #58c7f0;
+  --primary-hover: #7fd4f5;
+  --primary-dim: rgba(88, 199, 240, 0.15);
+  --shadow-pop: 0 8px 28px rgba(0, 10, 25, 0.5);
+  --focus-ring: 0 0 0 2px rgba(88, 199, 240, 0.22);
+}
+
+[data-theme="sepia"] {
+  /* 复古暖棕:暖褐基底 + 琥珀主色(深色系变体) */
+  --bg: #171310;
+  --panel: #1c1712;
+  --header: #201a14;
+  --card: #251e17;
+  --border: #35291e;
+  --border-strong: #4a3a2b;
+  --accent: #ffcf7a;
+  --accent-dim: rgba(255, 207, 122, 0.12);
+  --text: #ede4d8;
+  --text-dim: #a89880;
+  --surface: #2b231b;
+  --btn-bg: #2b231a;
+  --btn-border: #403325;
+  --btn-hover: #382c20;
+  --tag-bg: #4a3a26;
+  --tag-text: #e0c9a0;
+  --ok: #b5cc74;
+  --link: #e0a458;
+  --progress: #8a6a3b;
+  --code: #c9b799;
+  --track-audio: #241d14;
+  --track-video: #221b16;
+  --primary: #e0a458;
+  --primary-hover: #ecb877;
+  --primary-dim: rgba(224, 164, 88, 0.15);
+  --shadow-pop: 0 8px 28px rgba(10, 5, 0, 0.5);
+  --focus-ring: 0 0 0 2px rgba(224, 164, 88, 0.22);
+}
+
+[data-theme="ocean"] {
+  /* 深海蓝调:蓝黑基底 + 青蓝主色 */
+  --bg: #0d1420;
+  --panel: #101a29;
+  --header: #12203a;
+  --card: #14202f;
+  --border: #1e3048;
+  --border-strong: #2b4468;
+  --accent: #7ee0ff;
+  --accent-dim: rgba(126, 224, 255, 0.12);
+  --text: #dfeaf5;
+  --text-dim: #7e9ab8;
+  --surface: #18263a;
+  --btn-bg: #16233a;
+  --btn-border: #243a58;
+  --btn-hover: #1d3050;
+  --tag-bg: #24406b;
+  --tag-text: #9cc7f5;
+  --ok: #4fd6b8;
+  --link: #58c7f0;
+  --progress: #2f6db3;
+  --code: #8fb3d9;
+  --track-audio: #16222e;
+  --track-video: #16202e;
+  --primary: #58c7f0;
+  --primary-hover: #7fd4f5;
+  --primary-dim: rgba(88, 199, 240, 0.15);
+  --shadow-pop: 0 8px 28px rgba(0, 10, 25, 0.5);
+  --focus-ring: 0 0 0 2px rgba(88, 199, 240, 0.22);
+}
+
+[data-theme="sepia"] {
+  /* 复古暖棕:暖褐基底 + 琥珀主色 */
+  --bg: #171310;
+  --panel: #1c1712;
+  --header: #201a14;
+  --card: #251e17;
+  --border: #35291e;
+  --border-strong: #4a3a2b;
+  --accent: #ffcf7a;
+  --accent-dim: rgba(255, 207, 122, 0.12);
+  --text: #ede4d8;
+  --text-dim: #a89880;
+  --surface: #2b231b;
+  --btn-bg: #2b231a;
+  --btn-border: #403325;
+  --btn-hover: #382c20;
+  --tag-bg: #4a3a26;
+  --tag-text: #e0c9a0;
+  --ok: #b5cc74;
+  --link: #e0a458;
+  --progress: #8a6a3b;
+  --code: #c9b799;
+  --track-audio: #241d14;
+  --track-video: #221b16;
+  --primary: #e0a458;
+  --primary-hover: #ecb877;
+  --primary-dim: rgba(224, 164, 88, 0.15);
+  --shadow-pop: 0 8px 28px rgba(10, 5, 0, 0.5);
+  --focus-ring: 0 0 0 2px rgba(224, 164, 88, 0.22);
+}
+
 [data-theme="light"] {
   /* 浅色主题:纸面中性色,蓝色交互主色 */
   --bg: #eef0f3;

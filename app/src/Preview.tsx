@@ -10,6 +10,8 @@ type TransitionKind = Transition["kind"];
 
 interface Props {
   playheadTicks: number;
+  /// 按住空格(手型)拖拽平移。
+  spaceHeld?: boolean;
   /// 面板形态:canvas = 视频画布(编辑交互);player = 预览(纯播放器,
   /// contain 适配 + 常显进度条,无编辑交互/无缩放平移)。
   variant?: "canvas" | "player";
@@ -283,6 +285,7 @@ function PreviewInner({
   onEditTextClip,
   onSetRotate,
   variant = "canvas",
+  spaceHeld = false,
 }: Props) {
   const isPlayer = variant === "player";
 const [url, setUrl] = useState<string | null>(null);
@@ -1092,6 +1095,25 @@ const [url, setUrl] = useState<string | null>(null);
         justifyContent: "center",
         position: "relative",
         overflow: "hidden",
+        cursor: spaceHeld ? "grab" : undefined,
+      }}
+      onMouseDown={(e) => {
+        // 按住空格(手型):预览面板任意处按下拖拽 = 平移画布视口
+        if (!spaceHeld || e.button !== 0) return;
+        const host = frameHostRef.current;
+        if (!host) return;
+        panRef.current = { x: e.clientX, y: e.clientY, sl: host.scrollLeft, st: host.scrollTop };
+        const move = (ev: MouseEvent) => {
+          if (!panRef.current) return;
+          host.scrollLeft = panRef.current.sl - (ev.clientX - panRef.current.x);
+          host.scrollTop = panRef.current.st - (ev.clientY - panRef.current.y);
+        };
+        const up = () => {
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
       }}
       onMouseMove={(e) => {
         if (isPlayer) return;

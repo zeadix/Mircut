@@ -21,7 +21,7 @@ import {
 } from "flexlayout-react";
 import "flexlayout-react/style/dark.css";
 import { useEditor } from "./store";
-import { toggleTheme } from "./theme";
+import { toggleTheme, type Theme as ThemeName } from "./theme";
 import { t } from "./i18n";
 import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
@@ -31,6 +31,7 @@ import TextPanel from "./TextPanel";
 import StickerPanel from "./StickerPanel";
 import PackPanel from "./PackPanel";
 import MarkersPanel from "./MarkersPanel";
+import SettingsModal from "./components/SettingsModal";
 import ResPresetSelect from "./ResPreset";
 import PopupSelect from "./PopupSelect";
 import ErrorBoundary from "./ErrorBoundary";
@@ -40,6 +41,7 @@ import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import { buildAntdTheme } from "./ui/antdTheme";
 import type { UpdateResult } from "./api";
+import { useAppSettings } from "./settings";
 import ClickSpark from "./bits/ClickSpark";
 import SplitText from "./bits/SplitText";
 import AnimatedContent from "./bits/AnimatedContent";
@@ -85,6 +87,7 @@ const panelComponents: Record<string, () => ReactElement> = {
             onRefresh={c.refresh}
             onRemoveAsset={c.onRemoveAsset}
             onDeleteAssetFile={c.onDeleteAssetFile}
+            spaceHeld={c.spaceHeld}
           />
         </ErrorBoundary>
       </div>
@@ -197,6 +200,7 @@ const panelComponents: Record<string, () => ReactElement> = {
         <div style={{ flex: 1, minHeight: 0 }}>
           <Preview
             variant="canvas"
+            spaceHeld={c.spaceHeld}
             playheadTicks={c.playhead}
             fps={c.fps}
             playing={c.playing}
@@ -258,6 +262,7 @@ const panelComponents: Record<string, () => ReactElement> = {
         <ErrorBoundary label="预览面板">
           <Preview
             variant="player"
+            spaceHeld={c.spaceHeld}
             playheadTicks={c.playhead}
             fps={c.fps}
             playing={c.playing}
@@ -288,6 +293,8 @@ const panelComponents: Record<string, () => ReactElement> = {
             onSelectMany={c.selectMany}
             onClipAction={c.onClipAction}
             onSetVolumeKeyframe={c.onSetVolumeKeyframe}
+            spaceHeld={c.spaceHeld}
+            markSpacePan={c.markSpacePan}
             curveEditIds={c.curveEditIds}
             onOpenMarkersPanel={c.openMarkersPanel}
             onSetAudioFade={c.onSetAudioFade}
@@ -564,12 +571,16 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
 
   /// 主题 state 与 main.tsx initTheme() 同源(data-theme 已在启动时恢复,
   /// antd ConfigProvider 需要同值,否则持久化浅色重启后 antd 组件仍是暗色白字)
-  const [theme, setTheme] = useState<"dark" | "light">(
-    document.documentElement.dataset.theme === "light" ? "light" : "dark"
+  const [theme, setTheme] = useState<ThemeName>(
+    (document.documentElement.dataset.theme as ThemeName) || "dark"
   );
   /// 语言(zh/en)。
   const [lang, setLangState] = useLang();
   const [renderMode, setRenderMode] = useState<"proxy" | "realtime">("proxy");
+  const spaceHandSetting = useAppSettings((st) => st.spaceHand);
+  const setSettings = useAppSettings((st) => st.set);
+
+
 
   const [assetPreview, setAssetPreview] = useState<{ path: string; secs: number } | null>(null);
   // 拖拽中的素材类型(缝隙建轨提示用)
@@ -632,6 +643,51 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.assets]);
+
+  /// 空格手型(按住空格拖拽滚动/画布)。
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spacePanUsedRef = useRef(false);
+  const markSpacePan = useCallback(() => {
+    spacePanUsedRef.current = true;
+  }, []);
+  /// 设置弹窗。
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  /// 外观设置:主色 / 界面字体(设置弹窗配置,即时应用)。
+  const appAccent = useAppSettings((st) => st.accent);
+  const appFont = useAppSettings((st) => st.fontFamily);
+
+  /// 外观应用:主色覆盖 --primary 组;界面字体写到根元素。
+  useEffect(() => {
+    const root = document.documentElement;
+    if (appAccent) {
+      root.style.setProperty("--primary", appAccent);
+      root.style.setProperty("--link", appAccent);
+    } else {
+      root.style.removeProperty("--primary");
+      root.style.removeProperty("--link");
+    }
+  }, [appAccent]);
+
+  useEffect(() => {
+    document.body.style.fontFamily = appFont ? appFont : "";
+  }, [appFont]);
+
+  /// 空格手型松开:未发生拖拽 → 切换播放;拖拽过 → 不切换。
+  useEffect(() => {
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== " " || !spaceHeld) return;
+      setSpaceHeld(false);
+      if (!spacePanUsedRef.current && !playing) setPlaying(true);
+      else if (!spacePanUsedRef.current && playing) setPlaying(false);
+      spacePanUsedRef.current = false;
+    };
+    window.addEventListener("keyup", onKeyUp);
+    return () => window.removeEventListener("keyup", onKeyUp);
+  }, [spaceHeld, playing]);
+
+
+  /// 空格手型拖拽发生标记(Timeline 上报;松开空格时不切换播放)。
+
 
   // 播放循环:推进播放头(JKL 变速);超出最末片段自动停
   useEffect(() => {
@@ -1601,6 +1657,12 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           break;
         case " ":
           e.preventDefault();
+          // 空格手型模式(设置开启):按住 = 手型拖拽,松开时若未拖拽才切换播放
+          if (spaceHandSetting) {
+            setSpaceHeld(true);
+            spacePanUsedRef.current = false;
+            break;
+          }
           if (playing) setPlayhead(playheadRef.current); // C4 同上
           setPlaying(!playing);
           break;
@@ -1693,14 +1755,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       setPlaying, setPlayhead, setPlaySpeed, setDragKind, setDragAssetId,
       setAssetPreview, setTcDraft, setStatus, selectMany, onClipClick, onClipAction,
       onClipMove, onClipTrim, onSetVolumeKeyframe, onSetAudioFade, onRollEdit,
-      onRemoveMarker, onSetMarker, curveEditIds, enterCurveEdit, exitCurveEdit, openMarkersPanel,
+      onRemoveMarker, onSetMarker, markSpacePan, curveEditIds, enterCurveEdit, exitCurveEdit, openMarkersPanel,
       onMoveClips, onDropPackItem, onDropAsset, onReorderTrack,
       onClipRangeSet, onRenameTrack, onRemoveTrack, onDuplicateClip,
       onToggleTrack, onToggleTrackMedia, onToggleLaneView,
       onPickFolder, onImportFiles, onImportFolder, onImportPack, onApplyPackItem,
       addToTimeline, refresh, onSwitchRenderMode, onSetRect, onStickerMove,
       clearAssetPreview, fmtTimecode, parseTimecode, onBatchRemove, onBatchAudio,
-      onRemoveAsset, onDeleteAssetFile,
+      onRemoveAsset, onDeleteAssetFile, spaceHeld,
       tcDraft, onDetectBeats, onRemoveSilence, onSelectClipPlain,
       editingTextClipId, beginTextEdit, onSetRotate,
       tps: doc ? doc.timebase.num / Math.max(1, doc.timebase.den) : 30,
@@ -1718,6 +1780,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       onReorderTrack, onClipRangeSet, onDropAsset, onImportFolder, onToggleTrackMedia,
       onToggleLaneView, onToggleTrack, onSwitchRenderMode, onDetectBeats,
       onRemoveSilence, onSelectClipPlain, editingTextClipId, beginTextEdit, onSetRotate,
+      spaceHeld,
     ]
   );
 
@@ -1762,7 +1825,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   };
 
   return (
-    <ConfigProvider theme={buildAntdTheme(theme !== "light")} locale={lang === "zh" ? zhCN : enUS} autoInsertSpaceInButton={false}>
+    <ConfigProvider theme={buildAntdTheme(theme, appAccent)} locale={lang === "zh" ? zhCN : enUS} autoInsertSpaceInButton={false}>
     <ClickSpark sparkColor={theme !== "light" ? "#4ec9ff" : "#1c7ed6"}>
     <div style={{ fontFamily: "sans-serif", background: "var(--bg)", color: "var(--text)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       {/* 顶栏:Logo + 菜单栏 + 导出 */}
@@ -1783,6 +1846,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 { label: t("menu.importJianying"), fn: onImportJianying },
                 { separator: true },
                 { label: t("menu.checkUpdate"), fn: () => void checkForUpdates() },
+                { separator: true },
+                { label: t("menu.settings"), hint: "Ctrl+,", fn: () => setSettingsOpen(true) },
                 ...(recentProjects.length > 0
                   ? ([{ label: t("menu.recent"), disabled: true }] as MenuItem[])
                   : []),
@@ -1912,6 +1977,9 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           <span className="statusbar-text">{status}</span>
         </div>
       </div>
+
+      {/* 设置弹窗(左 tab 右内容) */}
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* 检查更新结果弹窗 */}
       <AntdModal

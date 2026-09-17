@@ -35,6 +35,8 @@ interface Props {
   /// 从列表移除素材(可撤销)/ 删除素材磁盘文件(不可撤销)。
   onRemoveAsset: (assetId: string) => void;
   onDeleteAssetFile: (assetId: string) => void;
+  /// 按住空格手型拖拽滚动列表。
+  spaceHeld?: boolean;
 }
 
 const MEDIA_EXTS = {
@@ -70,6 +72,7 @@ function MediaLibraryInner({
   onRefresh,
   onRemoveAsset,
   onDeleteAssetFile,
+  spaceHeld = false,
 }: Props) {
   const [importMenu, setImportMenu] = useState(false);
   const importBtnRef = useRef<HTMLButtonElement>(null);
@@ -373,7 +376,28 @@ function MediaLibraryInner({
   );
 
   return (
-    <aside style={{ width: "100%", height: "100%", background: "var(--panel)", padding: 8, overflowY: "auto" }}>
+    <aside
+      style={{ width: "100%", height: "100%", background: "var(--panel)", padding: 8, overflowY: "auto", cursor: spaceHeld ? "grab" : undefined }}
+      onPointerDown={(e) => {
+        if (!spaceHeld || e.button !== 0) return;
+        const el = e.currentTarget as HTMLElement;
+        const sx = e.clientX;
+        const sy = e.clientY;
+        const st = el.scrollTop;
+        const sl = el.scrollLeft;
+        el.setPointerCapture(e.pointerId);
+        const move = (ev: PointerEvent) => {
+          el.scrollTop = st - (ev.clientY - sy);
+          el.scrollLeft = sl - (ev.clientX - sx);
+        };
+        const up = () => {
+          el.removeEventListener("pointermove", move);
+          el.removeEventListener("pointerup", up);
+        };
+        el.addEventListener("pointermove", move);
+        el.addEventListener("pointerup", up);
+      }}
+    >
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
         <button
           ref={importBtnRef}

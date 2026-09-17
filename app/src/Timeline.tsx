@@ -4,6 +4,7 @@ import { snapToEdges, cascadePushBlocks, buildFileBlocks } from "./snap";
 import { isDropYValid, resolveDropTarget, insertToMoveIdx } from "./drop";
 import { sourceSecsAt, valueAt } from "./anim";
 import { registerThemeInvalidate } from "./theme";
+import { useAppSettings } from "./settings";
 import { Lock, LockOpen, Eye, EyeSlash, Image as ImageIcon, SpeakerHigh, SpeakerLow, SpeakerSlash, TextAa, Video, VideoCameraSlash, X } from "@phosphor-icons/react";
 
 interface Props {
@@ -27,6 +28,10 @@ interface Props {
   /// 音量曲线编辑模式:进入编辑的纯音频块集合(null = 非编辑模式)。
   /// 编辑中:曲线可编辑;其它块遮罩封锁;曲线本身常显(非编辑模式只读)。
   curveEditIds?: Set<string> | null;
+  /// 按住空格手型模式(全局按下状态;拖拽滚动条/画布)。
+  spaceHeld?: boolean;
+  /// 空格手型拖拽发生时上报(松开空格不触发播放切换)。
+  markSpacePan?: () => void;
   /// 打开标记面板(独立 dock 面板;App 侧经窗口菜单/面板聚焦)。
   onOpenMarkersPanel?: () => void;
   /// 批量移动提交(组合命令)。
@@ -257,6 +262,8 @@ function TimelineInner({
   onRemoveMarker,
   onSetMarker,
   curveEditIds,
+  spaceHeld,
+  markSpacePan,
   onOpenMarkersPanel,
   onMoveClips,
   onDropPackItem,
@@ -287,7 +294,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRowH = Math.round((trackH * VIDEO_ROW_H) / 56);
   const audioRowH = Math.round((trackH * AUDIO_ROW_H) / 56);
   const [snap, setSnap] = useState(true);
-  const [ripple, setRipple] = useState(false);
+  const ripple = useAppSettings((st) => st.ripple);
+  const setRipple = (v: boolean) => useAppSettings.getState().set({ ripple: v });
   /// 点击定位:开启后单击时间轴空白处,播放头跳到点击位置(拖拽仍是框选)。
   const [scrollX, setScrollX] = useState(0);
   /// 横向滚动合帧:同帧多次 scroll 事件只提交一次 setState。
@@ -298,9 +306,11 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   /// 轨道头列纵向同步(画布滚动时 translate,不经 React)。
   const [pxPerTick, setPxPerTick] = useState(0.5);
 
-  const [clickSeek, setClickSeek] = useState(true);
+  const clickSeek = useAppSettings((st) => st.clickSeek);
+  const setClickSeek = (v: boolean) => useAppSettings.getState().set({ clickSeek: v });
   /// 自动跟随时间帧:播放/定位时滚动视口使播放头处于窗口中心。
-  const [autoFollow, setAutoFollow] = useState(true);
+  const autoFollow = useAppSettings((st) => st.autoFollow);
+  const setAutoFollow = (v: boolean) => useAppSettings.getState().set({ autoFollow: v });
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap || !autoFollow) return;
@@ -1556,6 +1566,26 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     target.setPointerCapture?.(e.pointerId);
     downPosRef.current = { x: e.clientX, y: e.clientY };
     clickSeekHandledRef.current = false;
+    // 按住空格(手型):拖拽滚动时间轴视口,不触发块编辑
+    if (spaceHeld) {
+      const wrap = wrapRef.current!;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const sl = wrap.scrollLeft;
+      const st = wrap.scrollTop;
+      const move = (ev: PointerEvent) => {
+        wrap.scrollLeft = sl - (ev.clientX - sx);
+        wrap.scrollTop = st - (ev.clientY - sy);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      markSpacePan?.();
+      return;
+    }
     const t = ticksFromClientX(e.clientX);
     const yIn = e.clientY - canvasRef.current!.getBoundingClientRect().top;
     // 播放头拖拽(触发宽度 6px):按住播放头线即可左右拖动时间针
@@ -2770,7 +2800,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           <div style={{ position: "relative", width: contentW, height: canvasH }}>
             <canvas
               ref={canvasRef}
-              style={{ display: "block", width: contentW, height: canvasH }}
+              style={{ display: "block", width: contentW, height: canvasH, cursor: spaceHeld ? "grab" : undefined }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}

@@ -1,47 +1,52 @@
 import { theme as antdTheme, type ThemeConfig } from "antd";
+import type { Theme } from "../theme";
 
 /**
- * antd 主题桥:深/浅两套完整 token(与 styles.css 的 CSS 变量同源取值)。
- * 颜色使用实际色值(antd 需要可派生 hover/active 的数值色),
- * 与 CSS 变量保持一致;经 ConfigProvider 随 data-theme 切换。
+ * antd 主题桥:每套主题独立完整色板(与 styles.css 的 CSS 变量同源取值),
+ * 主交互色可由用户设置覆盖(accent)。
  */
 
-const DARK = {
-  bg: "#121317",
-  panel: "#17181c",
-  header: "#1a1b20",
-  card: "#1e2026",
-  border: "#2a2c33",
-  borderStrong: "#3a3d46",
-  text: "#e6e8ec",
-  textDim: "#8b93a1",
-  surface: "#24262c",
-  primary: "#4ec9ff",
-  ok: "#7ed957",
+interface Palette {
+  bg: string; panel: string; header: string; card: string;
+  border: string; borderStrong: string; text: string; textDim: string;
+  surface: string; primary: string; ok: string;
+}
+
+const PALETTES: Record<Theme, Palette> = {
+  dark: {
+    bg: "#101116", panel: "#16171c", header: "#191a20", card: "#1d1f25",
+    border: "#26282f", borderStrong: "#34363f", text: "#e7e9ee", textDim: "#9098a6",
+    surface: "#22242b", primary: "#4ec9ff", ok: "#7ed957",
+  },
+  light: {
+    bg: "#eef0f3", panel: "#ffffff", header: "#f7f8fa", card: "#ffffff",
+    border: "#d8dce2", borderStrong: "#b6bcc6", text: "#1c2127", textDim: "#667080",
+    surface: "#e7eaee", primary: "#1c7ed6", ok: "#2f9e44",
+  },
+  ocean: {
+    bg: "#0d1420", panel: "#101a29", header: "#12203a", card: "#14202f",
+    border: "#1e3048", borderStrong: "#2b4468", text: "#dfeaf5", textDim: "#7e9ab8",
+    surface: "#18263a", primary: "#58c7f0", ok: "#4fd6b8",
+  },
+  sepia: {
+    bg: "#171310", panel: "#1c1712", header: "#201a14", card: "#251e17",
+    border: "#35291e", borderStrong: "#4a3a2b", text: "#ede4d8", textDim: "#a89880",
+    surface: "#2b231b", primary: "#e0a458", ok: "#b5cc74",
+  },
 };
 
-const LIGHT = {
-  bg: "#f2f3f5",
-  panel: "#ffffff",
-  header: "#fafbfc",
-  card: "#ffffff",
-  border: "#d9dce1",
-  borderStrong: "#b9bfc8",
-  text: "#1d2126",
-  textDim: "#6b7280",
-  surface: "#e9ebee",
-  primary: "#1c7ed6",
-  ok: "#2f9e44",
-};
+const DARK_THEMES: Theme[] = ["dark", "ocean", "sepia"];
 
-export function buildAntdTheme(dark: boolean): ThemeConfig {
-  const c = dark ? DARK : LIGHT;
-  const hoverBg = dark ? "rgba(78, 201, 255, 0.10)" : "rgba(28, 126, 214, 0.08)";
+export function buildAntdTheme(theme: Theme, accent?: string): ThemeConfig {
+  const dark = DARK_THEMES.includes(theme);
+  const c = PALETTES[theme] ?? PALETTES.dark;
+  const primary = accent || c.primary;
+  const hoverBg = dark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.05)";
   return {
     algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
     token: {
-      colorPrimary: c.primary,
-      colorInfo: c.primary,
+      colorPrimary: primary,
+      colorInfo: primary,
       colorSuccess: c.ok,
       colorWarning: dark ? "#ffd75e" : "#b8860b",
       colorError: dark ? "#e5484d" : "#d64545",
@@ -62,28 +67,14 @@ export function buildAntdTheme(dark: boolean): ThemeConfig {
     },
     components: {
       Menu: {
-        itemHeight: 30,
-        fontSize: 12,
-        itemMarginInline: 6,
-        itemBorderRadius: 5,
-        // 菜单文字颜色:显式指定(暗色下确保高对比,悬停主色)
-        itemColor: c.text,
-        itemHoverColor: c.primary,
-        itemSelectedColor: c.primary,
+        itemHeight: 30, fontSize: 12, itemMarginInline: 6, itemBorderRadius: 5,
+        itemColor: c.text, itemHoverColor: primary, itemSelectedColor: primary,
         itemSelectedBg: hoverBg,
         popupBg: dark ? "#22242c" : "#ffffff",
-        activeBarBorderWidth: 0,
       },
-      Button: {
-        paddingInlineSM: 8,
-        primaryShadow: "0 2px 6px rgba(0, 0, 0, 0.22)",
-        defaultShadow: "none",
-      },
+      Button: { paddingInlineSM: 8, primaryShadow: "0 2px 6px rgba(0, 0, 0, 0.22)", defaultShadow: "none" },
       Dropdown: { fontSize: 12 },
-      Modal: {
-        paddingContentHorizontalLG: 20,
-        titleFontSize: 13,
-      },
+      Modal: { paddingContentHorizontalLG: 20, titleFontSize: 13 },
       Tooltip: { fontSize: 11 },
       Checkbox: { fontSize: 12 },
       Slider: { handleSize: 12 },
