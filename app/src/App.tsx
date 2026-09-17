@@ -2019,6 +2019,16 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 </span>
               </div>
             </div>
+            {updateInfo.updateAvailable && updateInfo.downloadUrl && (
+              <a
+                href={updateInfo.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 12, color: "var(--primary)" }}
+              >
+                {t("update.gotoDownload")}
+              </a>
+            )}
             {updateInfo.updateAvailable && updateInfo.changes.length > 0 && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 4 }}>

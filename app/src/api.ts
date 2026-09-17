@@ -482,6 +482,8 @@ export interface UpdateResult {
   updateAvailable: boolean;
   latest: string;
   current: string;
+  /** 新版下载页(清单未提供时为空)。 */
+  downloadUrl?: string;
   changes: string[];
   changesEn: string[];
 }

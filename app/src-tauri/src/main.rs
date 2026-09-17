@@ -19,6 +19,9 @@ const UPDATE_MANIFEST_URL: &str = "https://updates.veditor.app/latest.json";
 #[derive(serde::Deserialize)]
 struct LatestManifest {
     version: String,
+    /// 新版安装包/便携包下载页(可选)。
+    #[serde(default)]
+    download_url: String,
     #[serde(default)]
     changes: Vec<String>,
     #[serde(default)]
@@ -60,6 +63,7 @@ async fn check_update() -> Result<serde_json::Value, String> {
             "updateAvailable": newer,
             "latest": m.version,
             "current": current,
+            "downloadUrl": m.download_url,
             "changes": m.changes,
             "changesEn": m.changes_en,
         }))
