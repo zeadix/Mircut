@@ -152,7 +152,11 @@ pub(crate) fn set_clips_audio(
 pub(crate) fn add_marker(t: Ticks, label: String, state: State<'_, AppState>) -> bool {
     let mut inner = state.inner.lock().unwrap();
     inner.exec(Box::new(AddMarker {
-        marker: Marker { t, label, color: None },
+        marker: Marker {
+            t,
+            label,
+            color: None,
+        },
     }));
     true
 }
@@ -640,10 +644,17 @@ pub(crate) fn drop_asset(
     // 图片素材(单帧:有视频无音频且时长可疑地短)→ 定格片段语义:
     // 默认 3 秒、speed=0(复用定格 tpad 管线),否则 ffprobe 的 0.04s 会让片段不可用
     // GIF 动画(多帧、真实时长)不走定格:按视频片段正常处理,速度可调
-    let is_still = asset.has_video && !asset.has_audio && asset.duration_secs < 0.2
+    let is_still = asset.has_video
+        && !asset.has_audio
+        && asset.duration_secs < 0.2
         && !is_animated_gif(&asset.path);
     // 文本素材(txt/srt/ass 等):拖入即生成文字块,内容 = 文件文本(截断 500 字)
-    let ext = asset.path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let ext = asset
+        .path
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let is_text_asset = matches!(ext.as_str(), "txt" | "srt" | "ass" | "md" | "lrc");
     // 字幕文件(srt):按 cue 拆分为多个文字块(时间与文本来自字幕文件)
     if ext == "srt" {
@@ -1675,7 +1686,6 @@ mod inspector_target_tests {
     }
 }
 
-
 /// 动态 GIF 判定:扩展名 .gif 且能探测到多帧(ffprobe nb_frames > 1)。
 /// 静态 GIF / 其它图片格式返回 false(保持定格语义)。
 fn is_animated_gif(path: &str) -> bool {
@@ -1684,11 +1694,15 @@ fn is_animated_gif(path: &str) -> bool {
     }
     let out = std::process::Command::new("ffprobe")
         .args([
-            "-v", "error",
-            "-select_streams", "v:0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
             "-count_frames",
-            "-show_entries", "stream=nb_read_frames",
-            "-of", "csv=p=0",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "csv=p=0",
             path,
         ])
         .output();

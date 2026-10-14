@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { installMockTauri } from "./mockTauri";
-import { initTheme } from "./theme";
+import { initTheme, applyTheme, type Theme } from "./theme";
 import { initLang } from "./i18n";
 import App from "./App";
 import "./styles.css";
@@ -10,6 +10,14 @@ import "./styles.css";
 installMockTauri();
 // 主题恢复(暗色默认,亮色经 localStorage 持久化)
 initTheme();
+// 设置弹窗选择的主题(veditor-settings)优先于旧 veditor-theme 键
+try {
+  const raw = localStorage.getItem("veditor-settings");
+  const t = raw ? (JSON.parse(raw)?.theme as string) : "";
+  if (t && ["light", "dark", "ocean", "sepia", "glass", "cinema", "platinum", "aurora", "filmlab"].includes(t)) applyTheme(t as Theme);
+} catch {
+  /* 忽略 */
+}
 initLang();
 
 // 全局错误捕获 -> 后端落盘(~/.veditor/js.log),崩溃诊断用

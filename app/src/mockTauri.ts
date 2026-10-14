@@ -341,8 +341,60 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
         fx: mockDoc.clips[0]?.fx ?? undefined,
       } as Document["clips"][number]);
       return true;
-    case "move_clip":
-    case "trim_clip":
+    case "move_clip": {
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      if (!c) return false;
+      c.start = Math.max(0, Number(args.newStart) || 0);
+      if (args.newTrackId) c.track_id = String(args.newTrackId);
+      if (args.lane != null) c.lane = args.lane as import("./types").Lane;
+      return true;
+    }
+    case "trim_clip": {
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      if (!c) return false;
+      const edge = String(args.edge);
+      if (edge === "left") {
+        const ns = Math.max(0, Number(args.newStart) || 0);
+        c.duration = Math.max(1, Number(args.newDuration) || c.duration);
+        c.asset.source_in += ns - c.start;
+        c.start = ns;
+      } else {
+        c.duration = Math.max(1, Number(args.newDuration) || c.duration);
+      }
+      return true;
+    }
+    case "move_clips": {
+      const entries = (args.entries as Array<Record<string, unknown>>) ?? [];
+      for (const e of entries) {
+        const c = mockDoc.clips.find((x) => x.id === String(e.clip_id));
+        if (!c) continue;
+        c.start = Math.max(0, Number(e.new_start) || 0);
+        if (e.new_track_id) c.track_id = String(e.new_track_id);
+        if (e.lane != null) c.lane = e.lane as import("./types").Lane;
+      }
+      return true;
+    }
+    case "roll_edit": {
+      const l = mockDoc.clips.find((x) => x.id === String(args.leftId));
+      const r = mockDoc.clips.find((x) => x.id === String(args.rightId));
+      const delta = Number(args.delta) || 0;
+      if (l) l.duration = Math.max(1, l.duration + delta);
+      if (r) {
+        r.start = Math.max(0, r.start + delta);
+        r.duration = Math.max(1, r.duration - delta);
+        r.asset.source_in = Math.max(0, r.asset.source_in + delta);
+      }
+      return true;
+    }
+    case "set_clip_range": {
+      const c = mockDoc.clips.find((x) => x.id === String(args.clipId));
+      if (!c) return false;
+      const ns = Math.max(0, Number(args.timelineStartSecs) || 0);
+      c.start = ns;
+      c.duration = Math.max(1, Number(args.timelineDurationSecs) || c.duration);
+      c.asset.source_in = Math.max(0, Number(args.sourceInSecs) || 0);
+      return true;
+    }
     case "set_clip_audio":
     case "set_clips_audio": {
       // 与 Rust audio_write_target 同语义:File 轨视频半区重定向到配对音频块
@@ -647,6 +699,18 @@ function mockInvoke(cmd: string, args: Record<string, unknown> = {}): unknown {
       return true;
     case "ping":
       return "pong";
+    case "check_update":
+      return {
+        updateAvailable: true,
+        latest: "0.3.0",
+        current: "0.2.0",
+        date: "",
+        downloadUrl: "https://example.com/veditor-v0.3.0-linux-x86_64.AppImage",
+        changes: ["新增: 曲线变速与速度关键帧", "修复: 时间轴拖动卡顿"],
+        changesEn: ["mock release notes"],
+      };
+    case "download_update":
+      return "/tmp/veditor-mock-installer";
     default:
       // 未列出的命令静默成功,保证前端不炸
       console.warn("[mockTauri] 未实现的命令:", cmd);

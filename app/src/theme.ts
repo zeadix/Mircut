@@ -1,11 +1,16 @@
 /// 亮/暗主题:data-theme 属性 + localStorage 持久化。
 export type ThemeName = Theme;
-export type Theme = "dark" | "light" | "ocean" | "sepia";
+export type Theme = "dark" | "light" | "ocean" | "sepia" | "glass" | "cinema" | "platinum" | "aurora" | "filmlab";
 export const THEME_NAMES: Record<Theme, { zh: string; en: string }> = {
   dark: { zh: "深邃暗色", en: "Dark" },
   light: { zh: "清爽浅色", en: "Light" },
   ocean: { zh: "深海蓝调", en: "Ocean" },
   sepia: { zh: "复古暖棕", en: "Sepia" },
+  glass: { zh: "玻璃浮层", en: "Glass" },
+  cinema: { zh: "影院暗房", en: "Cinema" },
+  platinum: { zh: "铂金硬核", en: "Platinum" },
+  aurora: { zh: "极光玻璃", en: "Aurora" },
+  filmlab: { zh: "胶片暗房", en: "Film Lab" },
 };
 
 const KEY = "veditor-theme";
@@ -32,7 +37,7 @@ export function initTheme() {
   let t: Theme = "dark";
   try {
     const saved = localStorage.getItem(KEY);
-    if (["light", "dark", "ocean", "sepia"].includes(saved ?? "")) t = saved as Theme;
+    if (["light", "dark", "ocean", "sepia", "glass", "cinema", "platinum", "aurora", "filmlab"].includes(saved ?? "")) t = saved as Theme;
   } catch {
     /* 忽略 */
   }
@@ -42,7 +47,7 @@ export function initTheme() {
 
 export function toggleTheme(): Theme {
   const cur = (document.documentElement.dataset.theme ?? "dark") as Theme;
-  const order: Theme[] = ["dark", "light", "ocean", "sepia"];
+  const order: Theme[] = ["dark", "light", "ocean", "sepia", "glass", "cinema", "platinum", "aurora", "filmlab"];
   const next = order[(order.indexOf(cur) + 1) % order.length];
   applyTheme(next);
   return next;

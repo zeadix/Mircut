@@ -8,7 +8,7 @@ import Preview, { fitRect, nativeRect, rectsEq } from "./Preview";
 import Scopes from "./Scopes";
 import ExportDialog from "./ExportDialog";
 import AudioBus from "./AudioBus";
-import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, Play, Pause, Stop } from "@phosphor-icons/react";
+import { FilmSlate, Export, Crosshair, FrameCorners, Magnet, ChartLine, Play, Pause, Stop } from "@phosphor-icons/react";
 import TimecodeScrub from "./TimecodeScrub";
 import {
   Layout,
@@ -18,10 +18,11 @@ import {
   type TabNode,
   type IJsonModel,
   type IJsonTabNode,
+  Rect,
 } from "flexlayout-react";
 import "flexlayout-react/style/dark.css";
 import { useEditor } from "./store";
-import { toggleTheme, type Theme as ThemeName } from "./theme";
+import { toggleTheme, THEME_NAMES, applyTheme, type Theme as ThemeName } from "./theme";
 import { t } from "./i18n";
 import { useLang } from "./useLang";
 import MediaLibrary from "./MediaLibrary";
@@ -31,17 +32,19 @@ import TextPanel from "./TextPanel";
 import StickerPanel from "./StickerPanel";
 import PackPanel from "./PackPanel";
 import MarkersPanel from "./MarkersPanel";
-import SettingsModal from "./components/SettingsModal";
+import SettingsModal, { type SettingsTabKey } from "./components/SettingsModal";
 import ResPresetSelect from "./ResPreset";
 import PopupSelect from "./PopupSelect";
 import ErrorBoundary from "./ErrorBoundary";
 import MenuBar, { type MenuItem } from "./MenuBar";
-import { ConfigProvider, Button as AntdButton, Tag, Modal as AntdModal } from "antd";
+import { ConfigProvider, Button as AntdButton, Tag, Modal as AntdModal, Progress } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import enUS from "antd/locale/en_US";
 import { buildAntdTheme } from "./ui/antdTheme";
 import type { UpdateResult } from "./api";
-import { useAppSettings } from "./settings";
+import { APP_VERSION } from "./version";
+import { listen } from "@tauri-apps/api/event";
+import { useAppSettings, DEFAULT_SHORTCUTS, normalizeCombo, isShortcutCapturing } from "./settings";
 import ClickSpark from "./bits/ClickSpark";
 import SplitText from "./bits/SplitText";
 import AnimatedContent from "./bits/AnimatedContent";
@@ -183,18 +186,48 @@ const panelComponents: Record<string, () => ReactElement> = {
               />
             </div>
           </div>
-          {/* 引擎:最右贴边 */}
-          <div style={{ justifySelf: "end" }}>
-          <PopupSelect
-            testId="play-engine"
-            value={c.renderMode}
-            onChange={(v) => c.onSwitchRenderMode(v as "proxy" | "realtime")}
-            title={t("play.engine")}
-            options={[
-              { value: "proxy", label: t("play.proxy") },
-              { value: "realtime", label: t("play.realtime") },
-            ]}
-          />
+          {/* 画布工具组 + 引擎:最右贴边 */}
+          <div style={{ justifySelf: "end", display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="seg-group" role="group" aria-label="预览画布工具">
+              <button
+                className={`seg-btn${c.autoSelect ? " on" : ""}`}
+                title={c.autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
+                onClick={() => c.setAutoSelect(!c.autoSelect)}
+              >
+                <Crosshair size={13} weight={c.autoSelect ? "fill" : "regular"} />
+              </button>
+              <button
+                className={`seg-btn${c.editMode ? " on" : ""}`}
+                title={c.editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
+                onClick={() => c.setEditMode(!c.editMode)}
+              >
+                <FrameCorners size={13} weight={c.editMode ? "fill" : "regular"} />
+              </button>
+              <button
+                className={`seg-btn${c.snapOn ? " on" : ""}`}
+                title={c.snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
+                onClick={() => c.setSnapOn(!c.snapOn)}
+              >
+                <Magnet size={13} weight={c.snapOn ? "fill" : "regular"} />
+              </button>
+              <button
+                className={`seg-btn${c.progressMode !== "hide" ? " on" : ""}`}
+                title={`进度条:${c.progressMode === "show" ? "常显" : c.progressMode === "hide" ? "隐藏" : "自动"}(点击切换)`}
+                onClick={() => c.setProgressMode(c.progressMode === "show" ? "hide" : c.progressMode === "hide" ? "auto" : "show")}
+              >
+                <ChartLine size={13} weight={c.progressMode !== "hide" ? "fill" : "light"} />
+              </button>
+            </div>
+            <PopupSelect
+              testId="play-engine"
+              value={c.renderMode}
+              onChange={(v) => c.onSwitchRenderMode(v as "proxy" | "realtime")}
+              title={t("play.engine")}
+              options={[
+                { value: "proxy", label: t("play.proxy") },
+                { value: "realtime", label: t("play.realtime") },
+              ]}
+            />
           </div>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
@@ -547,27 +580,89 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   const [autoSelect, setAutoSelect] = useState(true);
   const [editMode, setEditMode] = useState(true);
   const [snapOn, setSnapOn] = useState(true);
+  /// 预览底部进度条显示模式(show/hide/auto),顶栏按钮组用。
+  const [progressMode, setProgressMode] = useState<"show" | "hide" | "auto">("auto");
   /// 主题(仅用于触发重渲染;真值在 documentElement.dataset.theme)。
   /// 检查更新结果(Modal 展示)。
   const [updateInfo, setUpdateInfo] = useState<UpdateResult | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateOpen, setUpdateOpen] = useState(false);
+  /// 顶栏徽标:服务端存在新版本时为 true(按钮显示「有新版本」)。
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  /// 升级流程:downloading(进度条)/ done(提示运行安装包)。
+  const [updatePhase, setUpdatePhase] = useState<"idle" | "downloading" | "done">("idle");
+  const [updatePercent, setUpdatePercent] = useState(0);
+  const [updatePath, setUpdatePath] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
-  const checkForUpdates = useCallback(async () => {
-    setUpdateOpen(true);
+  /// 检查更新:openModal = 用户点按钮(弹窗展示);启动时静默检查只更新顶栏徽标。
+  const applyCheck = useCallback(async (openModal: boolean) => {
+    if (openModal) setUpdateOpen(true);
     setUpdateChecking(true);
     setUpdateError(null);
     setUpdateInfo(null);
+    setUpdatePhase("idle");
+    setUpdatePercent(0);
     try {
       const r = await api.checkUpdate();
       setUpdateInfo(r);
+      setUpdateAvailable(r.updateAvailable);
     } catch (e) {
       setUpdateError(String(e).slice(0, 160));
     } finally {
       setUpdateChecking(false);
     }
   }, []);
+  const checkForUpdates = useCallback(() => void applyCheck(true), [applyCheck]);
+  /// 启动静默检查一次:服务端有新版本时顶栏按钮自动变「有新版本」。
+  useEffect(() => {
+    void applyCheck(false);
+  }, [applyCheck]);
+
+  /// 升级:下载清单里的平台安装包(进度条),完成后后端自动打开所在文件夹。
+  const startUpgrade = useCallback(async () => {
+    if (!updateInfo?.downloadUrl || updatePhase === "downloading") return;
+    setUpdatePhase("downloading");
+    setUpdatePercent(0);
+    setUpdateError(null);
+    try {
+      const path = await api.downloadUpdate(updateInfo.downloadUrl);
+      setUpdatePath(path);
+      setUpdatePercent(100);
+      setUpdatePhase("done");
+    } catch (e) {
+      setUpdateError(String(e).slice(0, 160));
+      setUpdatePhase("idle");
+    }
+  }, [updateInfo, updatePhase]);
+
+  /// 下载进度事件(后端流式推送;mock 模式无事件,靠命令 resolve 兜底)。
+  useEffect(() => {
+    if (updatePhase !== "downloading") return;
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    (async () => {
+      const p = await listen<{ percent: number; done?: boolean; path?: string }>(
+        "update-download-progress",
+        (e) => {
+          if (!alive) return;
+          setUpdatePercent(Math.round(e.payload.percent ?? 0));
+          if (e.payload.done) {
+            if (e.payload.path) setUpdatePath(e.payload.path);
+            setUpdatePhase("done");
+          }
+        }
+      );
+      if (alive) unlisten = p;
+      else p();
+    })();
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [updatePhase]);
 
   /// 主题 state 与 main.tsx initTheme() 同源(data-theme 已在启动时恢复,
   /// antd ConfigProvider 需要同值,否则持久化浅色重启后 antd 组件仍是暗色白字)
@@ -652,6 +747,8 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
   }, []);
   /// 设置弹窗。
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /// 设置弹窗初始 tab(菜单直达:设置 -> 快捷键/外观;null = 记住上次)。
+  const [settingsTab, setSettingsTab] = useState<SettingsTabKey | null>(null);
   /// 外观设置:主色 / 界面字体(设置弹窗配置,即时应用)。
   const appAccent = useAppSettings((st) => st.accent);
   const appFont = useAppSettings((st) => st.fontFamily);
@@ -1624,6 +1721,10 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       ) {
         return;
       }
+      // 设置弹窗正在录制新快捷键:全局按键让位,避免按 S 录制时真的分割片段
+      if (isShortcutCapturing()) {
+        return;
+      }
       const seekTo = (t: number) => {
         playheadRef.current = Math.max(0, t);
         setPlayhead(playheadRef.current);
@@ -1646,19 +1747,25 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       }
       if (e.altKey) return;
       const { playhead: ph, doc: docNow, selected: selNow } = useEditor.getState();
-      switch (e.key) {
-        case "s":
+      // 快捷键可配置(设置 -> 快捷键):按键 -> 动作,用户映射优先,缺项回退默认表。
+      // 字母键统一小写比较(i/I 同键),空格/方向键用规范名。
+      const combo = normalizeCombo(e);
+      if (!combo) return;
+      const bound = { ...DEFAULT_SHORTCUTS, ...useAppSettings.getState().shortcuts };
+      const action = Object.entries(bound).find(([, c]) => c === combo)?.[1];
+      if (!action) return;
+      e.preventDefault();
+      switch (action) {
+        case "split":
           onSplit();
           break;
-        case "Delete":
-          // 仅 Delete 删除选中元素;退格(Backspace)专用于文字编辑,
-          // 不承担删除元素功能(否则编辑文字内容时误删块)
+        case "remove":
+          // 退格(Backspace)专用于文字编辑,不承担删除元素功能
           onRemove();
           break;
-        case " ":
-          e.preventDefault();
+        case "playPause":
           // 空格手型模式(设置开启):按住 = 手型拖拽,松开时若未拖拽才切换播放
-          if (spaceHandSetting) {
+          if (useAppSettings.getState().spaceHand) {
             setSpaceHeld(true);
             spacePanUsedRef.current = false;
             break;
@@ -1666,7 +1773,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           if (playing) setPlayhead(playheadRef.current); // C4 同上
           setPlaying(!playing);
           break;
-        case "j": {
+        case "speedReverse": {
           setPlaying(true);
           const cur = useEditor.getState().playSpeed;
           setPlaySpeed(
@@ -1674,14 +1781,14 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           );
           break;
         }
-        case "k":
+        case "pause":
           // C4:暂停先回写播放头真值(rAF 直写领先 store 最多 200ms,
           // 否则下一次渲染把 ref 拉回旧值 -> 播放头回跳)
           setPlayhead(playheadRef.current);
           setPlaying(false);
           setPlaySpeed(1);
           break;
-        case "l": {
+        case "speedForward": {
           setPlaying(true);
           const cur = useEditor.getState().playSpeed;
           setPlaySpeed(
@@ -1689,8 +1796,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           );
           break;
         }
-        case "i":
-        case "I": {
+        case "setIn": {
           // 播放头设为选中片段入点(剪映/PR 习惯)
           if (selNow.length === 1 && docNow) {
             const c = docNow.clips.find((x) => x.id === selNow[0]);
@@ -1704,8 +1810,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           }
           break;
         }
-        case "o":
-        case "O": {
+        case "setOut": {
           if (selNow.length === 1 && docNow) {
             const c = docNow.clips.find((x) => x.id === selNow[0]);
             if (c && ph > c.start) {
@@ -1717,22 +1822,19 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
           }
           break;
         }
-        case "m":
-        case "M":
+        case "marker":
           void toggleMarkerAtPlayhead();
           break;
-        case "ArrowLeft":
-          e.preventDefault();
+        case "prevFrame":
           seekTo(playheadRef.current - (e.shiftKey ? Math.round(fps) : 1));
           break;
-        case "ArrowRight":
-          e.preventDefault();
+        case "nextFrame":
           seekTo(playheadRef.current + (e.shiftKey ? Math.round(fps) : 1));
           break;
-        case "Home":
+        case "jumpStart":
           seekTo(0);
           break;
-        case "End": {
+        case "jumpEnd": {
           const end = doc?.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0) ?? 0;
           seekTo(end);
           break;
@@ -1767,6 +1869,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       editingTextClipId, beginTextEdit, onSetRotate,
       tps: doc ? doc.timebase.num / Math.max(1, doc.timebase.den) : 30,
       autoSelect, setAutoSelect, editMode, setEditMode, snapOn, setSnapOn,
+      progressMode, setProgressMode,
     }),
     [
       doc, thumbs, waveforms, playhead, selected, playing, playSpeed, renderMode, curveEditIds,
@@ -1810,9 +1913,29 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
         model.doAction(Actions.addTab(tabJson(id), toId, DockLocation.CENTER, -1, !FLOAT_PANELS.has(id)));
       }
       if (FLOAT_PANELS.has(id)) {
-        // 转浮动需读取新 tab 的容器矩形:等 React 渲染出 tab 后再 popout
+        // 转浮动需读取新 tab 的容器矩形:等 React 渲染出 tab 后再 popout。
+        // 级联错开:每个新浮动窗按既有浮窗数量偏移(不再全部叠在默认位置),
+        // 并给足宽高 —— 面板内容不再挤压堆叠。
         setTimeout(() => {
+          const layouts = (model as unknown as { getLayouts: () => Map<string, unknown> }).getLayouts();
+          const before = new Set(layouts.keys());
           model.doAction(Actions.popoutTab(id, "float"));
+          const newIds = [...layouts.keys()].filter((k) => !before.has(k));
+          const n = [...before].filter((k) => k !== Model.MAIN_LAYOUT_ID).length;
+          const newId = newIds[0];
+          if (newId) {
+            model.doAction(
+              Actions.moveFloat(
+                newId,
+                new Rect(
+                  16 + (n % 5) * 36,
+                  92 + (n % 5) * 30,
+                  420,
+                  Math.max(340, Math.round(window.innerHeight * 0.62))
+                )
+              )
+            );
+          }
           persistLayout(model);
         }, 50);
       } else {
@@ -1846,8 +1969,6 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 { label: t("menu.importJianying"), fn: onImportJianying },
                 { separator: true },
                 { label: t("menu.checkUpdate"), fn: () => void checkForUpdates() },
-                { separator: true },
-                { label: t("menu.settings"), hint: "Ctrl+,", fn: () => setSettingsOpen(true) },
                 ...(recentProjects.length > 0
                   ? ([{ label: t("menu.recent"), disabled: true }] as MenuItem[])
                   : []),
@@ -1938,7 +2059,21 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
             },
             {
               label: t("menu.theme"),
-              items: [{ label: t("menu.themeToggle"), fn: () => setTheme(toggleTheme()) }],
+              items: [
+                ...(["dark", "light", "ocean", "sepia", "glass", "cinema", "platinum", "aurora", "filmlab"] as ThemeName[]).map(
+                  (name) => ({
+                    label: THEME_NAMES[name][lang === "en" ? "en" : "zh"],
+                    checked: theme === name,
+                    fn: () => {
+                      setTheme(name);
+                      applyTheme(name);
+                      useAppSettings.getState().set({ theme: name });
+                    },
+                  })
+                ),
+                { separator: true },
+                { label: t("menu.themeToggle"), fn: () => setTheme(toggleTheme()) },
+              ],
             },
             {
               label: t("menu.language"),
@@ -1954,10 +2089,44 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
                 { label: t("menu.removeSilence"), fn: onRemoveSilence },
               ],
             },
+            {
+              label: t("menu.settings"),
+              items: [
+                { label: t("menu.openSettings"), hint: "Ctrl+,", fn: () => { setSettingsTab(null); setSettingsOpen(true); } },
+                { separator: true },
+                { label: t("menu.settingsAppearance"), fn: () => { setSettingsTab("appearance"); setSettingsOpen(true); } },
+                { label: t("menu.settingsShortcuts"), fn: () => { setSettingsTab("shortcuts"); setSettingsOpen(true); } },
+              ],
+            },
+            {
+              label: t("menu.help"),
+              items: [
+                { label: t("menu.about"), fn: () => setAboutOpen(true) },
+                { label: t("menu.helpTopics"), fn: () => setHelpOpen(true) },
+              ],
+            },
           ]}
         />
         <span style={{ flex: 1 }} />
         <AntdButton type="primary" icon={<Export size={14} />} onClick={() => setExportDialog(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 28 }}>{t("menu.export")}</AntdButton>
+        <span
+          title={`${t("about.version")} ${APP_VERSION}`}
+          style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-dim)", letterSpacing: "0.02em", userSelect: "none" }}
+        >
+          v{APP_VERSION}
+        </span>
+        <AntdButton
+          type={updateAvailable ? "primary" : "default"}
+          onClick={() => void checkForUpdates()}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6, height: 28,
+            ...(updateAvailable
+              ? { background: "linear-gradient(135deg, var(--accent), var(--primary))", borderColor: "transparent", color: "var(--bg)", fontWeight: 600 }
+              : {}),
+          }}
+        >
+          {updateAvailable ? t("update.hasNew") : t("menu.checkUpdate")}
+        </AntdButton>
       </header>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1979,19 +2148,19 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       </div>
 
       {/* 设置弹窗(左 tab 右内容) */}
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialTab={settingsTab} />
 
-      {/* 检查更新结果弹窗 */}
+      {/* 软件更新窗口:检查结果 / 升级下载进度 / 已是最新 */}
       <AntdModal
         open={updateOpen}
-        title={t("menu.checkUpdate")}
+        title={t("update.windowTitle")}
         footer={null}
         onCancel={() => setUpdateOpen(false)}
-        width={420}
+        width={440}
       >
         {updateChecking && <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("update.checking")}</div>}
         {updateError && <div style={{ fontSize: 12, color: "#e5484d" }}>{updateError}</div>}
-        {updateInfo && !updateChecking && (
+        {updateInfo && !updateChecking && updateInfo.updateAvailable && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -2001,48 +2170,128 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ color: "var(--text-dim)" }}>{t("update.latest")}</span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontFamily: "monospace", color: updateInfo.updateAvailable ? "var(--primary)" : undefined }}>
-                    v{updateInfo.latest}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      padding: "1px 8px",
-                      borderRadius: 999,
-                      fontWeight: 600,
-                      color: updateInfo.updateAvailable ? "#fff" : "var(--text-dim)",
-                      background: updateInfo.updateAvailable ? "var(--primary)" : "var(--surface)",
-                    }}
-                  >
-                    {updateInfo.updateAvailable ? t("update.available") : t("update.uptodate")}
+                  <span style={{ fontFamily: "monospace", color: "var(--primary)" }}>v{updateInfo.latest}</span>
+                  <span style={{ fontSize: 10, padding: "1px 8px", borderRadius: 999, fontWeight: 600, color: "#fff", background: "var(--primary)" }}>
+                    {t("update.available")}
                   </span>
                 </span>
               </div>
             </div>
-            {updateInfo.updateAvailable && updateInfo.downloadUrl && (
-              <a
-                href={updateInfo.downloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: 12, color: "var(--primary)" }}
-              >
-                {t("update.gotoDownload")}
-              </a>
-            )}
-            {updateInfo.updateAvailable && updateInfo.changes.length > 0 && (
+            {updateInfo.changes.length > 0 && (
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 4 }}>
-                  {t("update.whatsNew")}
-                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 4 }}>{t("update.releaseNotes")}</div>
                 <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.7 }}>
-                  {updateInfo.changes.map((c, i) => (
+                  {(lang === "en" && updateInfo.changesEn.length > 0 ? updateInfo.changesEn : updateInfo.changes).map((c, i) => (
                     <li key={i}>{c}</li>
                   ))}
                 </ul>
               </div>
             )}
+            {updatePhase === "idle" && (
+              <AntdButton type="primary" block onClick={() => void startUpgrade()} disabled={!updateInfo.downloadUrl}>
+                {t("update.upgrade")}
+              </AntdButton>
+            )}
+            {updatePhase === "downloading" && (
+              <div>
+                <Progress percent={updatePercent} size="small" />
+                <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>{t("update.downloading")}</div>
+              </div>
+            )}
+            {updatePhase === "done" && (
+              <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                <div style={{ color: "var(--ok)", fontWeight: 600 }}>✓ {t("update.downloaded")}</div>
+                <div style={{ color: "var(--text-dim)", wordBreak: "break-all", fontFamily: "monospace", fontSize: 11 }}>{updatePath}</div>
+                <div style={{ color: "var(--text-dim)" }}>{t("update.downloadedHint")}</div>
+              </div>
+            )}
+            {updateInfo.downloadUrl && (
+              <a href={updateInfo.downloadUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "var(--primary)" }}>
+                {t("update.gotoDownload")}
+              </a>
+            )}
           </div>
         )}
+        {updateInfo && !updateChecking && !updateInfo.updateAvailable && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ok)" }}>✓ {t("update.upToDateMsg")}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+              <span style={{ color: "var(--text-dim)" }}>{t("update.current")}</span>
+              <span style={{ fontFamily: "monospace" }}>v{updateInfo.current}</span>
+            </div>
+            {updateInfo.changes.length > 0 && (
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-dim)", marginBottom: 4 }}>{t("update.releaseNotes")}</div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.7 }}>
+                  {(lang === "en" && updateInfo.changesEn.length > 0 ? updateInfo.changesEn : updateInfo.changes).map((c, i) => (
+                    <li key={i}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <AntdButton onClick={() => void checkForUpdates()}>{t("update.recheck")}</AntdButton>
+          </div>
+        )}
+      </AntdModal>
+
+      {/* 关于弹窗(结构参考 opennex 关于窗口) */}
+      <AntdModal open={aboutOpen} title={null} footer={null} onCancel={() => setAboutOpen(false)} width={460}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textAlign: "center", marginBottom: 14 }}>
+          <FilmSlate size={40} />
+          <div style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>{t("about.title")}</div>
+          <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-dim)" }}>v{APP_VERSION}</span>
+          <p style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.8, margin: "6px 0 0" }}>{t("about.desc")}</p>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+            <span style={{ color: "var(--text-dim)" }}>{t("about.version")}</span>
+            <span style={{ fontFamily: "monospace" }}>v{APP_VERSION}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+            <span style={{ color: "var(--text-dim)" }}>{t("about.homepage")}</span>
+            <a href="https://veditor.app" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>veditor.app ↗</a>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+            <span style={{ color: "var(--text-dim)" }}>{t("about.source")}</span>
+            <a href="https://github.com/zeadix/Mircut" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>GitHub ↗</a>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+            <span style={{ color: "var(--text-dim)" }}>{t("about.license")}</span>
+            <span>{t("about.licenseValue")}</span>
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.8, marginBottom: 16 }}>
+          <span style={{ fontWeight: 600 }}>{t("about.credits")}</span>
+          <span style={{ marginLeft: 8 }}>{t("about.creditsText")}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <AntdButton onClick={() => setAboutOpen(false)}>{t("about.close")}</AntdButton>
+        </div>
+      </AntdModal>
+
+      {/* 使用帮助弹窗 */}
+      <AntdModal open={helpOpen} title={t("help.title")} footer={null} onCancel={() => setHelpOpen(false)} width={540}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, fontSize: 12, lineHeight: 1.85 }}>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("help.quick")}</div>
+            <div style={{ color: "var(--text-dim)", whiteSpace: "pre-line" }}>{t("help.quickSteps")}</div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("help.keys")}</div>
+            <div style={{ color: "var(--text-dim)", whiteSpace: "pre-line", fontFamily: "monospace", fontSize: 11.5 }}>{t("help.keysRows")}</div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("help.ai")}</div>
+            <div style={{ color: "var(--text-dim)" }}>{t("help.aiText")}</div>
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("help.feedback")}</div>
+            <div style={{ color: "var(--text-dim)" }}>
+              {t("help.feedbackText")}{" "}
+              <a href="https://github.com/zeadix/Mircut/issues" target="_blank" rel="noreferrer" style={{ color: "var(--primary)" }}>GitHub Issues ↗</a>
+            </div>
+          </div>
+        </div>
       </AntdModal>
 
       {/* 导出操作窗口(所有导出配置集中于此) */}

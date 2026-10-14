@@ -33,9 +33,35 @@ const PALETTES: Record<Theme, Palette> = {
     border: "#35291e", borderStrong: "#4a3a2b", text: "#ede4d8", textDim: "#a89880",
     surface: "#2b231b", primary: "#e0a458", ok: "#b5cc74",
   },
+  // 玻璃浮层:antd 弹层用实色近似(styles.css 里是真半透明 + blur)
+  glass: {
+    bg: "#0c1118", panel: "#131b26", header: "#16202c", card: "#1a2430",
+    border: "#263647", borderStrong: "#3a516b", text: "#eaf1f6", textDim: "#97aabb",
+    surface: "#223140", primary: "#4f9cf9", ok: "#4ade80",
+  },
+  cinema: {
+    bg: "#0a0c11", panel: "#11141b", header: "#151923", card: "#171b23",
+    border: "#222a35", borderStrong: "#2f3a47", text: "#e9edf3", textDim: "#8b93a3",
+    surface: "#1a1f28", primary: "#2dd4bf", ok: "#4ade80",
+  },
+  platinum: {
+    bg: "#0f1012", panel: "#17181b", header: "#131518", card: "#1d1f22",
+    border: "#2a2c31", borderStrong: "#3a3d43", text: "#dfe2e6", textDim: "#8b9198",
+    surface: "#22252a", primary: "#e8863c", ok: "#4fd6b8",
+  },
+  aurora: {
+    bg: "#0a1322", panel: "#131b26", header: "#16202c", card: "#1a2430",
+    border: "#263647", borderStrong: "#3a516b", text: "#eaf2f9", textDim: "#9db2c4",
+    surface: "#223140", primary: "#4f9cf9", ok: "#4ade80",
+  },
+  filmlab: {
+    bg: "#14100b", panel: "#1e1811", header: "#241d14", card: "#241d14",
+    border: "#3a2f1e", borderStrong: "#55452a", text: "#f0e4c8", textDim: "#a89877",
+    surface: "#2a2318", primary: "#ffb454", ok: "#a5cc74",
+  },
 };
 
-const DARK_THEMES: Theme[] = ["dark", "ocean", "sepia"];
+const DARK_THEMES: Theme[] = ["dark", "ocean", "sepia", "glass", "cinema", "platinum", "aurora", "filmlab"];
 
 export function buildAntdTheme(theme: Theme, accent?: string): ThemeConfig {
   const dark = DARK_THEMES.includes(theme);

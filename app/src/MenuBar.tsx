@@ -65,7 +65,9 @@ function toAntdItems(items: MenuItem[]): AntdItem[] {
 /**
  * 顶部菜单栏(antd Dropdown + Menu):点击展开、悬停切换分组;
  * 条目支持勾选位/快捷键提示/禁用/一级子菜单。
- * 弹层经 getPopupContainer 挂在本组件容器内(不逃逸顶栏堆叠上下文)。
+ * 弹层挂 body 并以全局最高层级渲染(styles.css .ant-dropdown 10000):
+ * 曾挂顶栏容器内,后被后绘制的面板区/浮动窗口遮挡 —— 顶栏弹出菜单
+ * 必须高于一切弹窗与浮窗。
  */
 export default function MenuBar({ menus }: { menus: MenuDef[] }) {
   return (
@@ -78,7 +80,6 @@ export default function MenuBar({ menus }: { menus: MenuDef[] }) {
           key={m.label}
           trigger={["click"]}
           placement="bottomLeft"
-          getPopupContainer={(trigger) => trigger.parentElement as HTMLElement}
           menu={{
             items: toAntdItems(m.items),
           }}

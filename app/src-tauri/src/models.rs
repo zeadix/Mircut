@@ -202,7 +202,6 @@ pub(crate) fn delete_model(id: String, _state: State<'_, AppState>) -> Result<()
     Ok(())
 }
 
-
 /// whisper.cpp 预编译引擎资产(官方 releases;latest 自动跟随最新版)。
 fn whisper_engine_asset() -> Option<(&'static str, &'static str)> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
@@ -254,7 +253,11 @@ pub(crate) fn install_whisper_engine(app: tauri::AppHandle) -> Result<(), String
         if let Some(p) = crate::config::resolve_whisper_cli() {
             let _ = set_config_str("whisper_cli", &p.to_string_lossy());
         }
-        let _ = tauri::Emitter::emit(&app, "engine-install-progress", serde_json::json!({ "stage": "done" }));
+        let _ = tauri::Emitter::emit(
+            &app,
+            "engine-install-progress",
+            serde_json::json!({ "stage": "done" }),
+        );
         return Ok(());
     }
 
@@ -317,7 +320,11 @@ pub(crate) fn install_whisper_engine(app: tauri::AppHandle) -> Result<(), String
     }
 
     fn find_cli(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-        const NAME: &str = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
+        const NAME: &str = if cfg!(windows) {
+            "whisper-cli.exe"
+        } else {
+            "whisper-cli"
+        };
         for e in std::fs::read_dir(dir).ok()?.flatten() {
             let p = e.path();
             if p.is_dir() {

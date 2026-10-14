@@ -1,31 +1,54 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai;
+mod config;
 mod diag;
 mod export;
 mod fx;
 mod media;
 mod migrate;
-mod config;
 mod models;
 
 use crate::config::set_whisper_cli_path;
 use crate::models::install_whisper_engine;
 
-/// 软件更新:公开清单地址(发布后指向实际托管地址,内容格式见
+/// 软件更新:公开清单地址(release CI 生成并上传到 R2,内容格式见
 /// docs/latest.manifest.example.json)。
 const UPDATE_MANIFEST_URL: &str = "https://updates.veditor.app/latest.json";
+const UPDATE_SIG_URL: &str = "https://updates.veditor.app/latest.json.sig";
+
+/// Ed25519 公钥(原始 32 字节),对应私钥只存在于 release CI 的
+/// `VEDITOR_UPDATE_SIGNING_KEY` secret。清单必须携带有效 detached 签名
+/// (latest.json.sig)才会被采信,防止 CDN/桶被投毒推送恶意"更新"。
+/// 轮换密钥时:换 CI secret + 同步替换此处字节。
+const MANIFEST_SIGNING_PUBKEY: [u8; 32] = [
+    0x3c, 0x45, 0x67, 0x3f, 0x63, 0x10, 0x80, 0xb6, 0x16, 0x5a, 0xf9, 0x53, 0xd8, 0x1c, 0xb7, 0x7d,
+    0x4a, 0x2b, 0x2d, 0xda, 0xde, 0xe7, 0xf6, 0xad, 0xcc, 0x93, 0xf8, 0x8d, 0xde, 0x77, 0x1e, 0x84,
+];
 
 #[derive(serde::Deserialize)]
 struct LatestManifest {
     version: String,
-    /// 新版安装包/便携包下载页(可选)。
+    #[serde(default)]
+    date: String,
+    /// 新版下载页(文件直链缺失时的兜底入口)。
     #[serde(default)]
     download_url: String,
     #[serde(default)]
     changes: Vec<String>,
     #[serde(default)]
     changes_en: Vec<String>,
+    /// 平台 -> 安装包/便携包直链(可选,老清单没有)。
+    #[serde(default)]
+    files: std::collections::BTreeMap<String, PlatformFiles>,
+}
+
+#[derive(serde::Deserialize)]
+struct PlatformFiles {
+    #[serde(default)]
+    installer: String,
+    #[serde(default)]
+    portable: String,
 }
 
 fn version_newer(remote: &str, current: &str) -> bool {
@@ -46,7 +69,72 @@ fn version_newer(remote: &str, current: &str) -> bool {
     false
 }
 
-/// 检查更新:拉取公开清单,与当前版本比较,返回新版双语更新说明。
+/// 校验清单的 detached Ed25519 签名。签名缺失/不匹配一律拒绝;
+/// `VEDITOR_ALLOW_UNSIGNED_UPDATES=1` 仅用于本地调试(响亮告警)。
+fn verify_manifest_signature(manifest_bytes: &[u8]) -> Result<(), String> {
+    if std::env::var("VEDITOR_ALLOW_UNSIGNED_UPDATES").as_deref() == Ok("1") {
+        eprintln!("警告:更新清单签名校验已通过环境变量绕过(仅限本地调试)");
+        return Ok(());
+    }
+    let sig_b64 = ureq::get(UPDATE_SIG_URL)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .map_err(|_| {
+            "更新清单缺少签名文件 (latest.json.sig),为防投毒已拒绝本次更新。请到官网手动下载。"
+                .to_string()
+        })?
+        .into_string()
+        .map_err(|_| "签名文件读取失败".to_string())?;
+    verify_signature_with(manifest_bytes, &sig_b64, &MANIFEST_SIGNING_PUBKEY)
+}
+
+/// 纯校验核心(公钥注入,便于测试在不持有发布私钥的情况下覆盖逻辑)。
+fn verify_signature_with(
+    manifest_bytes: &[u8],
+    sig_b64: &str,
+    pubkey: &[u8; 32],
+) -> Result<(), String> {
+    use base64::Engine as _;
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(
+            sig_b64
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
+        )
+        .map_err(|_| "签名 base64 解码失败".to_string())?;
+    let sig =
+        ed25519_dalek::Signature::from_slice(&sig_bytes).map_err(|_| "签名格式非法".to_string())?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(pubkey).expect("内置公钥字节合法");
+    use ed25519_dalek::Verifier as _;
+    key.verify(manifest_bytes, &sig)
+        .map_err(|_| "更新清单签名校验失败,可能被篡改。请到官网手动下载。".to_string())
+}
+
+/// 按当前平台从清单里挑直链:安装包优先,便携包兜底。
+fn platform_download_url(
+    files: &std::collections::BTreeMap<String, PlatformFiles>,
+) -> Option<String> {
+    let key = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    files.get(key).and_then(|f| {
+        if !f.installer.trim().is_empty() {
+            Some(f.installer.trim().to_string())
+        } else if !f.portable.trim().is_empty() {
+            Some(f.portable.trim().to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// 检查更新:拉取公开清单并验签,与当前版本比较,返回新版双语更新说明;
+/// 有平台直链时 downloadUrl 直接指向安装包,否则退到官网下载页。
 #[tauri::command(async)]
 async fn check_update() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -54,16 +142,26 @@ async fn check_update() -> Result<serde_json::Value, String> {
             .timeout(std::time::Duration::from_secs(15))
             .call()
             .map_err(|e| format!("request failed: {e}"))?;
-        let m: LatestManifest = resp
-            .into_json()
-            .map_err(|e| format!("parse failed: {e}"))?;
+        let manifest_bytes = {
+            use std::io::Read as _;
+            let mut buf = Vec::new();
+            resp.into_reader()
+                .read_to_end(&mut buf)
+                .map_err(|e| format!("read failed: {e}"))?;
+            buf
+        };
+        verify_manifest_signature(&manifest_bytes)?;
+        let m: LatestManifest =
+            serde_json::from_slice(&manifest_bytes).map_err(|e| format!("parse failed: {e}"))?;
         let current = env!("CARGO_PKG_VERSION");
         let newer = version_newer(&m.version, current);
+        let download_url = platform_download_url(&m.files).unwrap_or(m.download_url);
         Ok(serde_json::json!({
             "updateAvailable": newer,
             "latest": m.version,
             "current": current,
-            "downloadUrl": m.download_url,
+            "date": m.date,
+            "downloadUrl": download_url,
             "changes": m.changes,
             "changesEn": m.changes_en,
         }))
@@ -72,6 +170,96 @@ async fn check_update() -> Result<serde_json::Value, String> {
     .map_err(|e| format!("task failed: {e}"))?
 }
 
+/// 下载更新安装包到系统下载目录,进度经 `update-download-progress` 事件推送
+/// ({percent, received, total},完成时附加 {done, path});完成后打开所在文件夹。
+#[tauri::command(async)]
+async fn download_update(app: tauri::AppHandle, url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::{Read, Write};
+        let resp = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(1800))
+            .call()
+            .map_err(|e| format!("request failed: {e}"))?;
+        let total: Option<u64> = resp
+            .header("Content-Length")
+            .and_then(|v| v.parse::<u64>().ok());
+        // 文件名取 URL 末段(剥掉查询串);避免路径穿越
+        let raw_name = url.rsplit('/').next().unwrap_or("veditor-update.bin");
+        let file_name: String = raw_name
+            .split(['?', '#'])
+            .next()
+            .unwrap_or("veditor-update.bin")
+            .chars()
+            .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
+            .collect();
+        let file_name = if file_name.is_empty() {
+            "veditor-update.bin".to_string()
+        } else {
+            file_name
+        };
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map_err(|_| "无法定位用户主目录".to_string())?;
+        let dir = std::path::Path::new(&home).join("Downloads");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建下载目录失败: {e}"))?;
+        let dest = dir.join(&file_name);
+        let mut file = std::fs::File::create(&dest).map_err(|e| format!("写入失败: {e}"))?;
+        let mut reader = resp.into_reader();
+        let mut buf = [0u8; 64 * 1024];
+        let mut received: u64 = 0;
+        let mut last_pct: i64 = -1;
+        loop {
+            let n = reader
+                .read(&mut buf)
+                .map_err(|e| format!("下载中断: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])
+                .map_err(|e| format!("写入失败: {e}"))?;
+            received += n as u64;
+            if let Some(total) = total {
+                let pct = (received as f64 / total as f64 * 100.0).round() as i64;
+                if pct != last_pct {
+                    last_pct = pct;
+                    let _ = tauri::Emitter::emit(
+                        &app,
+                        "update-download-progress",
+                        serde_json::json!({ "percent": pct, "received": received, "total": total }),
+                    );
+                }
+            }
+        }
+        let _ = tauri::Emitter::emit(
+            &app,
+            "update-download-progress",
+            serde_json::json!({
+                "percent": 100, "done": true,
+                "path": dest.to_string_lossy(),
+            }),
+        );
+        // 打开所在文件夹,方便用户运行安装包
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt as _;
+            let _ = std::process::Command::new("explorer")
+                .raw_arg(format!("/select,\"{}\"", dest.display()))
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(&dest)
+            .spawn();
+        #[cfg(target_os = "linux")]
+        if let Some(parent) = dest.parent() {
+            let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+        }
+        Ok(dest.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("task failed: {e}"))?
+}
 
 mod packs;
 mod plugins;
@@ -303,6 +491,7 @@ fn main() {
             remove_asset,
             set_whisper_cli_path,
             check_update,
+            download_update,
             install_whisper_engine,
             delete_asset_file,
             get_document,
@@ -1748,5 +1937,33 @@ mod tests {
             });
             assert_eq!(inner.doc.clips.len(), 1);
         }
+    }
+}
+
+/// 更新清单签名校验(纯逻辑,不联网;发布私钥只存在于 release CI)。
+#[cfg(test)]
+mod update_sig_tests {
+    use super::*;
+    use base64::Engine as _;
+    use ed25519_dalek::Signer as _;
+
+    #[test]
+    fn signature_roundtrip_accepts_valid_and_rejects_tampered() {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let manifest = br#"{"version":"9.9.9","changes":["test only"]}"#;
+        let sig_b64 =
+            base64::engine::general_purpose::STANDARD.encode(sk.sign(manifest).to_bytes());
+        let pubkey = sk.verifying_key().to_bytes();
+
+        // 正确签名 + 正确公钥 + 原文 -> 通过
+        assert!(verify_signature_with(manifest, &sig_b64, &pubkey).is_ok());
+        // 公钥不匹配(模拟投毒) -> 拒绝
+        let mut bad_pub = pubkey;
+        bad_pub[0] ^= 0xff;
+        assert!(verify_signature_with(manifest, &sig_b64, &bad_pub).is_err());
+        // 内容被篡改 -> 拒绝
+        assert!(verify_signature_with(br#"{"version":"0.0.1"}"#, &sig_b64, &pubkey).is_err());
+        // 签名非法 base64 -> 拒绝
+        assert!(verify_signature_with(manifest, "not-base64!!!", &pubkey).is_err());
     }
 }

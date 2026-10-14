@@ -482,7 +482,9 @@ export interface UpdateResult {
   updateAvailable: boolean;
   latest: string;
   current: string;
-  /** 新版下载页(清单未提供时为空)。 */
+  /** 新版发布日期(YYYY-MM-DD,可选)。 */
+  date?: string;
+  /** 当前平台安装包直链(清单未提供时退化为官网下载页)。 */
   downloadUrl?: string;
   changes: string[];
   changesEn: string[];
@@ -491,6 +493,21 @@ export interface UpdateResult {
 /// 检查软件更新(拉取公开清单并与当前版本比较)。
 export async function checkUpdate(): Promise<UpdateResult> {
   return invoke("check_update");
+}
+
+export interface UpdateDownloadProgress {
+  percent: number;
+  received?: number;
+  total?: number;
+  done?: boolean;
+  /** 下载完成后安装包所在路径。 */
+  path?: string;
+}
+
+/// 下载更新安装包到系统下载目录(进度经 update-download-progress 事件推送;
+/// 完成后由后端自动打开所在文件夹)。返回安装包路径。
+export async function downloadUpdate(url: string): Promise<string> {
+  return invoke("download_update", { url });
 }
 
 /// 一键安装语音识别引擎(自动下载预编译 whisper-cli / macOS 走 Homebrew)。

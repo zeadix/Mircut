@@ -75,11 +75,17 @@ fn build_timeline_mixdown(state: &State<'_, AppState>) -> Result<PathBuf, String
     // 收集全部含音频的片段(时间轴绝对位置)
     let mut items: Vec<(String, i64, f64, f64)> = Vec::new(); // (path, start_ms, src_in, dur_secs)
     for c in inner.doc.clips.iter() {
-        let Some(a) = inner.doc.asset(&c.asset.asset_id) else { continue };
-        if !a.has_audio || a.path.contains("://") { continue; }
+        let Some(a) = inner.doc.asset(&c.asset.asset_id) else {
+            continue;
+        };
+        if !a.has_audio || a.path.contains("://") {
+            continue;
+        }
         let speed = if c.speed > 0.0 { c.speed } else { 1.0 };
         let dur_secs = c.duration as f64 / tps / speed;
-        if dur_secs <= 0.02 { continue; }
+        if dur_secs <= 0.02 {
+            continue;
+        }
         let start_ms = ((c.start as f64 / tps) * 1000.0).round() as i64;
         items.push((a.path.clone(), start_ms, c.asset.source_in as f64, dur_secs));
     }
@@ -98,20 +104,49 @@ fn build_timeline_mixdown(state: &State<'_, AppState>) -> Result<PathBuf, String
     let mut mix: Vec<String> = Vec::new();
     if items.len() == 1 {
         let (path, _, src_in, dur) = (&items[0].0, &items[0].1, &items[0].2, &items[0].3);
-        cmd.args(["-ss", &format!("{src_in:.3}"), "-t", &format!("{dur:.3}"), "-i", path]);
+        cmd.args([
+            "-ss",
+            &format!("{src_in:.3}"),
+            "-t",
+            &format!("{dur:.3}"),
+            "-i",
+            path,
+        ]);
         filters.push("[0:a]aresample=16000,pan=mono[c0]".to_string());
         cmd.args(["-map", "[c0]", "-ar", "16000", "-ac", "1"]);
     } else {
         for (i, (path, _start, src_in, dur)) in items.iter().enumerate() {
-            cmd.args(["-ss", &format!("{src_in:.3}"), "-t", &format!("{dur:.3}"), "-i", path]);
+            cmd.args([
+                "-ss",
+                &format!("{src_in:.3}"),
+                "-t",
+                &format!("{dur:.3}"),
+                "-i",
+                path,
+            ]);
             let ms = 0; // 各片段按素材内裁剪,延迟用 adelay 放到 filter 里按时间轴起点
             let _ = ms;
             let start_ms = items[i].1;
-            filters.push(format!("[{i}:a]aresample=16000,pan=mono,adelay={start_ms}|{start_ms}[a{i}]"));
+            filters.push(format!(
+                "[{i}:a]aresample=16000,pan=mono,adelay={start_ms}|{start_ms}[a{i}]"
+            ));
             mix.push(format!("[a{i}]"));
         }
-        filters.push(format!("{}amix=inputs={}:normalize=0[cm]", mix.join(""), mix.len()));
-        cmd.args(["-filter_complex", &filters.join("\n"), "-map", "[cm]", "-ar", "16000", "-ac", "1"]);
+        filters.push(format!(
+            "{}amix=inputs={}:normalize=0[cm]",
+            mix.join(""),
+            mix.len()
+        ));
+        cmd.args([
+            "-filter_complex",
+            &filters.join("\n"),
+            "-map",
+            "[cm]",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+        ]);
     }
     cmd.arg(&out);
     let st = cmd.status().map_err(|e| e.to_string())?;

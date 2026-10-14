@@ -1,6 +1,14 @@
 name: Release
 
-# 打 tag(v*) 触发:构建 Linux 包(AppImage/deb)并发布到 GitHub Release
+# 打 tag(v*)触发:三平台构建(Linux/Windows/macOS)→ 上传 R2 →
+# 生成并签名 latest.json 更新清单 → 发布 GitHub Release。
+# 官网下载页与客户端 check_update 均读取 R2 上的 latest.json。
+#
+# changelog 来源(与 opennex 同一套规则):
+#   1) 优先取 tag 注释里手写的说明(需要精确控制时用)
+#   2) 否则取上个 tag 以来的提交标题,只保留 feat/fix 并映射为"新增/修复",
+#      工程类 scope(ci/deps/docs/refactor/...)不入榜
+#   3) 双语写法:"新增: xxx | Add: xxx"(竖线分隔,zh 在前)
 on:
   push:
     tags: ["v*"]
@@ -9,7 +17,13 @@ on:
 permissions:
   contents: write
 
+env:
+  R2_BUCKET: veditor-releases
+  R2_PUBLIC_URL: https://updates.veditor.app
+  SITE_DOWNLOAD_URL: https://veditor.app/zh/download
+
 jobs:
+  # ---------------- Linux(deb / AppImage) ----------------
   build-linux:
     runs-on: ubuntu-22.04
     steps:
@@ -31,8 +45,6 @@ jobs:
           cache-dependency-path: app/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
 
@@ -52,25 +64,375 @@ jobs:
         working-directory: app
         run: pnpm tauri build
 
-      - name: 收集产物
+      - name: 收集产物与校验值
         run: |
           mkdir -p dist
-          find app/src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} dist/ \;
-          find app/src-tauri/target/release/bundle -name "*.deb" -exec cp {} dist/ \;
-          ls -la dist/
+          find app/src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-linux-x86_64.AppImage" \;
+          find app/src-tauri/target/release/bundle -name "*.deb" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-linux-amd64.deb" \;
+          cd dist
+          for f in *.AppImage *.deb; do sha256sum "$f" > "$f.sha256"; done
+          ls -la
 
-      - name: 发布到 GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 上传构建产物(workflow_dispatch 手动触发时)
-        if: github.ref_type != 'tag'
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: linux-packages
+          name: linux-build
           path: dist/*
+
+  # ---------------- Windows(msi / nsis) ----------------
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 构建前端
+        working-directory: app
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: 构建发布包(msi/nsis)
+        working-directory: app
+        run: pnpm tauri build
+
+      - name: 收集产物与校验值
+        shell: bash
+        run: |
+          mkdir -p dist
+          find app/src-tauri/target/release/bundle/msi -name "*.msi" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-windows-x64.msi" \;
+          find app/src-tauri/target/release/bundle/nsis -name "*-setup.exe" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-windows-x64-setup.exe" \;
+          cd dist
+          for f in *.msi *.exe; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+          ls -la
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/*
+
+  # ---------------- macOS(Apple Silicon:dmg / app.zip) ----------------
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 构建前端
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: 构建发布包(dmg/app)
+        working-directory: app
+        run: pnpm tauri build
+
+      - name: 收集产物与校验值
+        run: |
+          mkdir -p dist
+          find app/src-tauri/target/release/bundle/dmg -name "*.dmg" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-macos-aarch64.dmg" \;
+          APP=$(find app/src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" | head -1)
+          (cd app/src-tauri/target/release/bundle/macos && zip -qry "$GITHUB_WORKSPACE/dist/veditor-${GITHUB_REF_NAME}-macos-aarch64.app.zip" "$(basename "$APP")")
+          cd dist
+          for f in *.dmg *.zip; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done
+          ls -la
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: dist/*
+
+  # ---------------- 发布:R2 + latest.json + GitHub Release ----------------
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载三平台产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-build"
+          path: artifacts
+
+      - name: 列出产物
+        run: find artifacts/ -type f | sort
+
+      - name: 安装 Wrangler
+        run: npm install -g wrangler
+
+      - name: 上传安装包到 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cd artifacts
+          for dir in linux-build windows-build macos-build; do
+            for file in "$dir"/*; do
+              [ -f "$file" ] || continue
+              case "$file" in *.sha256) continue ;; esac
+              filename=$(basename "$file")
+              echo "上传 $filename 到 R2 ..."
+              wrangler r2 object put "${{ env.R2_BUCKET }}/${VERSION}/${filename}" --file="$file" --remote
+            done
+          done
+
+      - name: 生成 changelog(tag 注释优先,否则取 feat/fix 提交)
+        id: changelog
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          # actions/checkout 会把 annotated tag 剥成 commit,重新 fetch 保留注释对象
+          git fetch --tags --force origin 2>/dev/null || true
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)
+          if [ -n "$PREV_TAG" ]; then
+            git log --no-merges --pretty=format:'%s' "$PREV_TAG..${GITHUB_REF_NAME}" | head -30 > /tmp/raw_subjects.txt
+          else
+            echo "首次发布" > /tmp/raw_subjects.txt
+          fi
+
+          python3 << 'PYCHANGES'
+          import json, os, subprocess, sys, re
+          tag = os.environ["GITHUB_REF_NAME"]
+
+          # 1) 优先读 tag 注释(手工精写的发布说明);没有则回退提交标题
+          msg = ""
+          try:
+              raw = subprocess.run(["git", "cat-file", "-p", tag],
+                                   capture_output=True, text=True).stdout or ""
+              if raw.startswith("object "):
+                  parts = raw.split("\n\n", 1)
+                  msg = parts[1].strip() if len(parts) > 1 else ""
+          except Exception:
+              pass
+          notes = msg if msg else open("/tmp/raw_subjects.txt", encoding="utf-8").read()
+
+          # 2) feat/fix(可带 scope)映射为 新增/修复;工程 scope 不入榜
+          ENG = r"(?:ci|deps|build|chore|docs|refactor|style|test|perf|release)"
+          RE_FEAT = re.compile(r"^feat(?:\((?!(?:" + ENG + r")\))(?P<scope>[^)]*)\))?:(?P<rest>.*)$", re.I)
+          RE_FIX = re.compile(r"^fix(?:\((?!(?:" + ENG + r")\))(?P<scope>[^)]*)\))?:(?P<rest>.*)$", re.I)
+
+          def map_line(l):
+              l = l.strip()
+              if not l:
+                  return None, None
+              zh_part, sep, en_part = l.partition(" | ")
+              zh_part, en_part = zh_part.strip(), en_part.strip()
+              low = zh_part.lower()
+              if low.startswith("新增") or low.startswith("修复"):
+                  # 已是"新增:/修复:"格式;en 半段缺省时留给网站回退中文
+                  return zh_part, en_part
+              for kind, rx, en_kind in (("新增", RE_FEAT, "Add"), ("修复", RE_FIX, "Fix")):
+                  m = rx.match(zh_part)
+                  if m:
+                      zh = f"{kind}: {m.group('rest').strip()}"
+                      en = en_part or f"{en_kind}: {m.group('rest').strip()}"
+                      return zh, en
+              return None, None  # ci/chore/docs/... 不入榜
+
+          zh_lines, en_lines = [], []
+          for l in notes.splitlines():
+              z, e = map_line(l)
+              if z:
+                  zh_lines.append(z)
+                  en_lines.append(e)
+
+          seen, out, out_en = set(), [], []
+          for z, e in zip(zh_lines, en_lines):
+              if z not in seen:
+                  seen.add(z)
+                  out.append(z)
+                  out_en.append(e)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write("changes_json<<EOF\n" + json.dumps(out[:30], ensure_ascii=False) + "\nEOF\n")
+              f.write("changes_en_json<<EOF\n" + json.dumps(out_en[:30], ensure_ascii=False) + "\nEOF\n")
+          print(json.dumps(out, ensure_ascii=False))
+          print(json.dumps(out_en, ensure_ascii=False))
+          PYCHANGES
+
+      - name: 生成 latest.json(合并历史)
+        env:
+          VERSION: ${{ github.ref_name }}
+          CHANGES_JSON: ${{ steps.changelog.outputs.changes_json }}
+          CHANGES_EN_JSON: ${{ steps.changelog.outputs.changes_en_json }}
+          PYTHONUTF8: "1"
+        run: |
+          # sha256 文件由各平台 runner 产出,Windows 写 CRLF,统一剥离
+          clean() { tr -d '\r\n \t' < "artifacts/$1" 2>/dev/null || true; }
+          LIN_APP_SHA=$(clean linux-build/veditor-${VERSION}-linux-x86_64.AppImage.sha256)
+          LIN_DEB_SHA=$(clean linux-build/veditor-${VERSION}-linux-amd64.deb.sha256)
+          WIN_MSI_SHA=$(clean windows-build/veditor-${VERSION}-windows-x64.msi.sha256)
+          WIN_EXE_SHA=$(clean windows-build/veditor-${VERSION}-windows-x64-setup.exe.sha256)
+          MAC_DMG_SHA=$(clean macos-build/veditor-${VERSION}-macos-aarch64.dmg.sha256)
+          MAC_ZIP_SHA=$(clean macos-build/veditor-${VERSION}-macos-aarch64.app.zip.sha256)
+          export LIN_APP_SHA LIN_DEB_SHA WIN_MSI_SHA WIN_EXE_SHA MAC_DMG_SHA MAC_ZIP_SHA
+
+          python3 << 'PYEOF'
+          import json, os, subprocess
+          V = os.environ["VERSION"]
+          N = V.lstrip("v")
+          URL = os.environ["R2_PUBLIC_URL"]
+          base = f"{URL}/{V}/veditor-{V}"
+          sha = lambda name: os.environ.get(name, "")
+          current = {
+              "version": N,
+              "date": __import__("datetime").date.today().isoformat(),
+              "download_url": os.environ["SITE_DOWNLOAD_URL"],
+              "changes": json.loads(os.environ.get("CHANGES_JSON", "[]") or "[]"),
+              "changes_en": json.loads(os.environ.get("CHANGES_EN_JSON", "[]") or "[]"),
+              "files": {
+                  "linux": {
+                      "portable": f"{base}-linux-x86_64.AppImage",
+                      "sha256_portable": sha("LIN_APP_SHA"),
+                      "installer": f"{base}-linux-amd64.deb",
+                      "sha256": sha("LIN_DEB_SHA"),
+                  },
+                  "windows": {
+                      "installer": f"{base}-windows-x64.msi",
+                      "sha256": sha("WIN_MSI_SHA"),
+                      "portable": f"{base}-windows-x64-setup.exe",
+                      "sha256_portable": sha("WIN_EXE_SHA"),
+                  },
+                  "macos": {
+                      "installer": f"{base}-macos-aarch64.dmg",
+                      "sha256": sha("MAC_DMG_SHA"),
+                      "portable": f"{base}-macos-aarch64.app.zip",
+                      "sha256_portable": sha("MAC_ZIP_SHA"),
+                  },
+              },
+          }
+          # 合并 R2 上已有的 latest.json 历史(同版本覆盖)
+          old_hist = []
+          try:
+              r = subprocess.run(["wrangler", "r2", "object", "get",
+                                  f"{os.environ['R2_BUCKET']}/latest.json",
+                                  "--file", "/tmp/old_latest.json", "--remote"],
+                                 capture_output=True, text=True)
+              if r.returncode == 0:
+                  old = json.load(open("/tmp/old_latest.json", strict=False))
+                  h = old.get("history", []) if isinstance(old, dict) else []
+                  old_hist = h if isinstance(h, list) else []
+          except FileNotFoundError:
+              pass  # wrangler 不存在(本地 dry-run):跳过历史合并
+          entry = {k: current[k] for k in ("version", "date", "changes", "changes_en")}
+          latest = {
+              "version": current["version"],
+              "date": current["date"],
+              "download_url": current["download_url"],
+              "changes": current["changes"],
+              "changes_en": current["changes_en"],
+              "files": current["files"],
+              "history": [entry] + [h for h in old_hist if h.get("version") != current["version"]],
+          }
+          with open("latest.json", "w", encoding="utf-8") as f:
+              json.dump(latest, f, ensure_ascii=False, indent=2)
+          print(json.dumps(latest["files"], ensure_ascii=False))
+          print("history 条目:", len(latest["history"]))
+          PYEOF
+
+      - name: 签名 latest.json(Ed25519,签名做往返自校验)
+        env:
+          VEDITOR_UPDATE_SIGNING_KEY: ${{ secrets.VEDITOR_UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$VEDITOR_UPDATE_SIGNING_KEY" ]; then
+            echo "::error::缺少 VEDITOR_UPDATE_SIGNING_KEY secret,客户端将拒绝未签名清单。"
+            exit 1
+          fi
+          printf '%s' "$VEDITOR_UPDATE_SIGNING_KEY" > /tmp/signing-key.pem
+          openssl pkeyutl -sign -inkey /tmp/signing-key.pem -rawin \
+            -in latest.json | base64 -w0 > latest.json.sig
+          openssl pkey -in /tmp/signing-key.pem -pubout -out /tmp/pub.pem
+          base64 -d latest.json.sig > /tmp/latest.sig.raw
+          openssl pkeyutl -verify -pubin -inkey /tmp/pub.pem -rawin \
+            -in latest.json -sigfile /tmp/latest.sig.raw
+          rm -f /tmp/signing-key.pem /tmp/pub.pem /tmp/latest.sig.raw
+
+      - name: 上传 latest.json 与签名到 R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler r2 object put "${{ env.R2_BUCKET }}/latest.json" --file=latest.json --remote
+          wrangler r2 object put "${{ env.R2_BUCKET }}/latest.json.sig" --file=latest.json.sig --remote
+
+      - name: 生成 Release 说明
+        env:
+          CHANGES_JSON: ${{ steps.changelog.outputs.changes_json }}
+          CHANGES_EN_JSON: ${{ steps.changelog.outputs.changes_en_json }}
+          PYTHONUTF8: "1"
+        run: |
+          mkdir -p deploy
+          python3 << 'PYREL'
+          import json, os
+          try:
+              changes = json.loads(os.environ.get("CHANGES_JSON", "[]") or "[]")
+          except Exception:
+              changes = []
+          try:
+              changes_en = json.loads(os.environ.get("CHANGES_EN_JSON", "[]") or "[]")
+          except Exception:
+              changes_en = []
+          feats = [c for c in changes if c.startswith("新增:")]
+          fixes = [c for c in changes if c.startswith("修复:")]
+          lines = [f"# VEditor {os.environ.get('GITHUB_REF_NAME', '')}", ""]
+          if feats:
+              lines.append("## 新增")
+              lines += [f"- {c[3:].strip()}" for c in feats]
+              lines.append("")
+          if fixes:
+              lines.append("## 修复")
+              lines += [f"- {c[3:].strip()}" for c in fixes]
+              lines.append("")
+          if not feats and not fixes:
+              lines += ["稳定性与内部工程改进。", ""]
+          if changes_en:
+              lines.append("## Changes (EN)")
+              lines += [f"- {c}" for c in changes_en if c]
+              lines.append("")
+          with open("deploy/release_body.md", "w", encoding="utf-8") as f:
+              f.write("\n".join(lines).rstrip() + "\n")
+          PYREL
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: deploy/release_body.md
+          files: |
+            artifacts/linux-build/*
+            artifacts/windows-build/*
+            artifacts/macos-build/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

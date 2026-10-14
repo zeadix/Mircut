@@ -74,17 +74,58 @@ interface Props {
 /// Canvas 主题色:CSS 变量经一次性读取缓存(canvas 不接 var(),
 /// 主题切换时由 useEffect 失效重读)。
 const themeColors = { cache: null as Record<string, string> | null };
-function canvasColor(name: string, fallback: string): string {
+/// CSS 变量 -> 缓存键(含片段绘色 --clip-* 系列,随主题切换整表失效重读)
+const THEME_VAR_PAIRS: [string, string, string][] = [
+  ["panel", "--panel", "#16171c"],
+  ["border", "--border", "#26282f"],
+  ["surface", "--surface", "#22242b"],
+  ["accent", "--accent", "#ffd75e"],
+  ["clipV1", "--clip-v1", "#2e5666"],
+  ["clipV2", "--clip-v2", "#1b2d3d"],
+  ["clipI1", "--clip-i1", "#2b6b6b"],
+  ["clipI2", "--clip-i2", "#1e4a4a"],
+  ["clipA1", "--clip-a1", "#1c3a2b"],
+  ["clipA2", "--clip-a2", "#12271d"],
+  ["clipT1", "--clip-t1", "#3b2d55"],
+  ["clipT2", "--clip-t2", "#241b38"],
+  ["clipTxt", "--clip-txt", "#f2f6fa"],
+  ["clipSub", "--clip-sub", "rgba(255,255,255,0.75)"],
+  ["clipWave", "--clip-wave", "rgba(74,222,128,0.78)"],
+  ["clipEnv", "--clip-env", "rgba(253,186,116,0.85)"],
+  ["clipSep", "--clip-sep", "rgba(5,10,16,0.55)"],
+  ["clipSpr", "--clip-spr", "rgba(255,255,255,0.16)"],
+  ["clipRadius", "--clip-radius", "7"],
+  ["ok", "--ok", "#7ed957"],
+  ["primary", "--primary", "#4ec9ff"],
+  ["accentDim", "--accent-dim", "rgba(255,215,94,0.12)"],
+];
+function canvasColor(name: string, fallback = "#ffd75e"): string {
   if (!themeColors.cache) {
     const cs = getComputedStyle(document.documentElement);
-    themeColors.cache = {
-      panel: cs.getPropertyValue("--panel").trim() || fallback,
-      border: cs.getPropertyValue("--border").trim() || fallback,
-      surface: cs.getPropertyValue("--surface").trim() || fallback,
-      accent: cs.getPropertyValue("--accent").trim() || "#ffd75e",
-    };
+    themeColors.cache = {};
+    for (const [key, cssVar, fb] of THEME_VAR_PAIRS) {
+      themeColors.cache[key] = cs.getPropertyValue(cssVar).trim() || fb;
+    }
   }
   return themeColors.cache[name] ?? fallback;
+}
+
+/// 元素块圆角(随主题 --clip-radius;铂金等硬朗风格为小圆角)。
+function clipRadiusPx(): number {
+  const v = parseFloat(canvasColor("clipRadius"));
+  return Number.isFinite(v) ? v : 6;
+}
+
+/// 圆角矩形路径(元素块体/描边/内容裁剪共用)。
+function rrPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  const rr = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
 }
 
 /// 主题切换后失效缓存(下一次绘制重读;注册到 theme 模块)。
@@ -131,8 +172,6 @@ function envValFromY(yIn: number, laneTop: number, h: number): number {
 }
 
 /// 稳定渐变(模块级缓存,避免每片段每帧新建)。
-const GRAD_VIDEO: [string, string] = ["#3f9d5a", "#2c7040"];
-const GRAD_AUDIO: [string, string] = ["#2f6fb8", "#1f4e86"];
 
 /// 缩略图 Image 缓存(dataURL -> HTMLImageElement);加载完成后回调触发重绘。
 /// base64 dataURL 作 key 很占内存,限制条数防无上限增长。
@@ -311,6 +350,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
   /// 自动跟随时间帧:播放/定位时滚动视口使播放头处于窗口中心。
   const autoFollow = useAppSettings((st) => st.autoFollow);
   const setAutoFollow = (v: boolean) => useAppSettings.getState().set({ autoFollow: v });
+  /// 元素块预览:开启 = 片段内绘制帧图像/图片/文字/波形;关闭 = 按类型纯色块,省渲染。
+  const clipPreview = useAppSettings((st) => st.clipPreview);
+  const setClipPreview = (v: boolean) => useAppSettings.getState().set({ clipPreview: v });
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap || !autoFollow) return;
@@ -487,7 +529,10 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     selected: boolean,
     hovered: boolean,
     vx0: number,
-    vx1: number
+    vx1: number,
+    preview: boolean,
+    c1: string,
+    c2: string
   ) {
     const { timeTop, videoTop, audioTop, timeH, videoH, audioH, totalH } = row;
     const clipTrack = track;
@@ -501,28 +546,35 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
 
     // 文字片段:整块紫底 + 内容文本(与视频块同几何,拖拽/裁剪/命中通用)
     if (clip.text) {
-      ctx.fillStyle = clipTrack.text_on === false ? "rgba(107, 74, 138, 0.3)" : "#6b4a8a";
-      ctx.fillRect(x + 1, videoTop + 1, Math.max(cw - 2, 2), videoH - 2);
-      const borderColor = selected ? "#0071e3" : (hovered ? "#5a5a5a" : "rgba(255,255,255,0.28)");
+      const tGrad = ctx.createLinearGradient(0, videoTop, 0, videoTop + videoH);
+      tGrad.addColorStop(0, canvasColor("clipT1"));
+      tGrad.addColorStop(1, canvasColor("clipT2"));
+      ctx.fillStyle = clipTrack.text_on === false ? "rgba(107, 74, 138, 0.3)" : tGrad;
+      rrPath(ctx, x + 1, videoTop + 1, Math.max(cw - 2, 2), videoH - 2, Math.max(clipRadiusPx() - 1, 0));
+      ctx.fill();
+      const borderColor = selected ? canvasColor("accent") : hovered ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.22)";
       const shadowBlur = selected ? 8 : (hovered ? 4 : 0);
       ctx.strokeStyle = borderColor;
       ctx.lineWidth = selected ? 2 : 1;
       if (shadowBlur > 0) {
-        ctx.shadowColor = "rgba(0, 113, 227, 0.3)";
+        ctx.shadowColor = canvasColor("accentDim");
         ctx.shadowBlur = shadowBlur;
       }
-      ctx.strokeRect(x, videoTop, Math.max(cw, 2), videoH);
+      rrPath(ctx, x, videoTop, Math.max(cw, 2), videoH, clipRadiusPx());
+      ctx.stroke();
       ctx.shadowBlur = 0;
       ctx.save();
-      ctx.beginPath();
-      ctx.rect(x, videoTop, Math.max(cw, 2), videoH);
+      rrPath(ctx, x, videoTop, Math.max(cw, 2), videoH, clipRadiusPx());
       ctx.clip();
-      ctx.fillStyle = "#f3ebfa";
-      ctx.font = `${Math.min(11, Math.max(9, videoH - 8))}px sans-serif`;
-      ctx.fillText(`T ${clip.text.content.slice(0, Math.max(2, Math.floor(cw / 10)))}`, x + 5, videoTop + videoH / 2 + 4);
+      // 元素块预览开 = 显示文字内容;关 = 纯色块(省渲染)
+      if (preview) {
+        ctx.fillStyle = canvasColor("clipTxt");
+        ctx.font = `${Math.min(11, Math.max(9, videoH - 8))}px sans-serif`;
+        ctx.fillText(`T ${clip.text.content.slice(0, Math.max(2, Math.floor(cw / 10)))}`, x + 5, videoTop + videoH / 2 + 4);
+      }
       ctx.restore();
       if (selected) {
-        ctx.fillStyle = "#ffd75e";
+        ctx.fillStyle = canvasColor("accent");
         ctx.fillRect(x - 1, videoTop + videoH / 2 - 6, 6, 12);
         ctx.fillRect(x + cw - 5, videoTop + videoH / 2 - 6, 6, 12);
       }
@@ -530,22 +582,23 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     }
 
     // 1. 绘制整体边框
-    const borderColor = selected ? "#0071e3" : (hovered ? "#5a5a5a" : "rgba(255,255,255,0.28)");
+    const borderColor = selected ? canvasColor("accent") : hovered ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.22)";
     const shadowBlur = selected ? 8 : (hovered ? 4 : 0);
 
     if (shadowBlur > 0) {
-      ctx.shadowColor = "rgba(0, 113, 227, 0.3)";
+      ctx.shadowColor = canvasColor("accentDim");
       ctx.shadowBlur = shadowBlur;
     }
 
     ctx.strokeStyle = borderColor;
     ctx.lineWidth = selected ? 2 : 1;
-    ctx.strokeRect(x, videoTop, Math.max(cw, 2), videoH);
+    rrPath(ctx, x, videoTop, Math.max(cw, 2), videoH, clipRadiusPx());
+    ctx.stroke();
     ctx.shadowBlur = 0;
 
     // 2. 绘制时间块（详细模式：入点 + 出点 + 时长;仅视频/音频块）
     if (timeH > 0 && showTimeInfo) {
-      ctx.fillStyle = "#f5f5f7";
+      ctx.fillStyle = "rgba(8, 12, 18, 0.4)";
       ctx.fillRect(x + 1, timeTop + 1, Math.max(cw - 2, 0), timeH - 2);
 
       // 时间文字:始/终 = 素材内截取区间,总时长 = 终 - 始
@@ -556,8 +609,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const outStr = srcOut.toFixed(2);
       const durSecs = Math.max(0, srcOut - srcIn);
 
-      ctx.fillStyle = "#666";
-      ctx.font = "10px sans-serif";
+      ctx.fillStyle = canvasColor("clipSub");
+      ctx.font = "9px ui-monospace, monospace";
       const inText = `始 ${inStr} → 终 ${outStr}`;
       const durText = `| ${durSecs.toFixed(1)}s`;
       if (cw > 110) {
@@ -578,19 +631,24 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         ctx.fillStyle = "rgba(128, 128, 128, 0.3)";
         ctx.fillRect(x + 1, videoTop + 1, Math.max(cw - 2, 0), videoH - 2);
       } else {
-        // 背景
+        // 背景:主题渐变(预览关 = 纯 c2 色块省渲染)
         const grad = ctx.createLinearGradient(0, videoTop, 0, videoTop + videoH);
-        grad.addColorStop(0, "#e8f4fd");
-        grad.addColorStop(1, "#d4e8fa");
+        grad.addColorStop(0, c1);
+        grad.addColorStop(1, c2);
         ctx.fillStyle = grad;
-        ctx.fillRect(x + 1, videoTop + 1, Math.max(cw - 2, 0), videoH - 2);
+        rrPath(ctx, x + 1, videoTop + 1, Math.max(cw - 2, 2), videoH - 2, Math.max(clipRadiusPx() - 1, 0));
+        ctx.fill();
 
-        // 缩略图胶片（3-5 帧）
-        if (videoClip && cw > 40) {
+        // 缩略图胶片（3-5 帧;元素块预览关闭时跳过）
+        if (videoClip && cw > 40 && preview) {
           const thumbData = thumbs?.[videoClip.asset.asset_id];
           const img = thumbData ? getThumbImg(thumbData, onThumbLoad) : null;
 
           const numThumbs = Math.min(5, Math.max(1, Math.floor(cw / 40)));
+          // 缩略图区域按圆角裁剪(方角会溢出元素块圆角)
+          ctx.save();
+          rrPath(ctx, x + 1, videoTop + 1, Math.max(cw - 2, 2), videoH - 2, Math.max(clipRadiusPx() - 1, 0));
+          ctx.clip();
           const thumbW = (cw - 8) / numThumbs;
           for (let i = 0; i < numThumbs; i++) {
             const tx = x + 4 + i * thumbW;
@@ -618,6 +676,33 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
               ctx.fillRect(tx, ty, thumbW - 2, th);
             }
           }
+          // 胶片质感:帧分隔线 + 顶部齿孔(设计稿元素块样式)
+          ctx.strokeStyle = canvasColor("clipSep");
+          ctx.lineWidth = 1;
+          for (let i = 1; i < numThumbs; i++) {
+            const sx = Math.round(x + 4 + i * thumbW) + 0.5;
+            ctx.beginPath();
+            ctx.moveTo(sx, videoTop + 2);
+            ctx.lineTo(sx, videoTop + videoH - 2);
+            ctx.stroke();
+          }
+          ctx.fillStyle = canvasColor("clipSpr");
+          for (let sx = x + 6; sx < x + cw - 8; sx += 9) {
+            ctx.fillRect(sx, videoTop + 2, 3, 3);
+          }
+          ctx.restore();
+        }
+        // 片名 + 时长(素材名;预览关也保留文字信息)
+        const aMeta = doc.assets.find((it) => it.id === videoClip?.asset.asset_id);
+        const nm = aMeta?.name || aMeta?.path?.split(/[\\/]/).pop() || "";
+        ctx.fillStyle = canvasColor("clipTxt");
+        ctx.font = "bold 9px sans-serif";
+        if (nm && cw > 34) ctx.fillText(nm, x + 5, videoTop + 11);
+        ctx.fillStyle = canvasColor("clipSub");
+        ctx.font = "8px ui-monospace, monospace";
+        if (cw > 26) {
+          const durS = Math.max(0, (videoClip?.asset.source_out ?? 0) - (videoClip?.asset.source_in ?? 0));
+          ctx.fillText(`${durS.toFixed(1)}s`, x + 5, videoTop + videoH - 4);
         }
       }
     }
@@ -675,9 +760,9 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
               ctx.closePath();
               ctx.fill();
             }
-            ctx.fillStyle = finLive !== null || (afx?.fade_in ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
+            ctx.fillStyle = finLive !== null || (afx?.fade_in ?? 0) > 0.01 ? canvasColor("ok") : "rgba(126,217,87,0.45)";
             ctx.fillRect(x + finX - 3, waveTop + 1, 6, 5);
-            ctx.fillStyle = foutLive !== null || (afx?.fade_out ?? 0) > 0.01 ? "#7ed957" : "rgba(126,217,87,0.45)";
+            ctx.fillStyle = foutLive !== null || (afx?.fade_out ?? 0) > 0.01 ? canvasColor("ok") : "rgba(126,217,87,0.45)";
             ctx.fillRect(x + cw - foutX - 3, waveTop + 1, 6, 5);
           }
 
@@ -687,8 +772,8 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             realWf && realWf.some((p) => p > 0.01)
               ? realWf
               : placeholderWaveform(audioClip.asset.asset_id, audioClip.duration / tps);
-          if (wf && cw > 8) {
-            ctx.strokeStyle = "rgba(47, 111, 184, 0.85)";
+          if (wf && cw > 8 && preview) {
+            ctx.strokeStyle = canvasColor("clipWave");
             ctx.beginPath();
             const x0 = Math.max(x, vx0);
             const x1 = Math.min(x + cw, vx1);
@@ -714,7 +799,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             const kfs = audioClip.fx?.volume?.keyframes ?? [];
             const vAt = (tl: number) => valueAt(kfs, tl) ?? audioClip.volume;
             // 深红强对比:纯音频块浅绿底,白/蓝线均不可见(蓝与波形混淆)
-            ctx.strokeStyle = "rgba(190,40,70,0.95)";
+            ctx.strokeStyle = canvasColor("clipEnv");
             ctx.beginPath();
             const ex0 = Math.max(x, vx0);
             const ex1 = Math.min(x + cw, vx1);
@@ -726,7 +811,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             ctx.stroke();
 
             // 关键帧点(canvas 不解析 CSS 变量,用字面色值)
-            ctx.fillStyle = "#4da3ff";
+            ctx.fillStyle = canvasColor("primary");
             for (const k of kfs) {
               const kx = (audioClip.start + k.t) * pxPerTick;
               if (kx < vx0 - 4 || kx > vx1 + 4) continue;
@@ -738,7 +823,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
             // 实时拖拽点
             if (envLive?.clipId === audioClip.id) {
               const lx = (audioClip.start + envLive.tLocal) * pxPerTick;
-              ctx.fillStyle = "#ff9f43";
+              ctx.fillStyle = canvasColor("accent");
               ctx.beginPath();
               ctx.arc(lx, envY(envLive.v, envLaneTop, envLaneH), 3.5, 0, Math.PI * 2);
               ctx.fill();
@@ -747,7 +832,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
 
           // 音量指示(块足够宽才显示)
           if (cw > 60) {
-            ctx.fillStyle = "#34c759";
+            ctx.fillStyle = canvasColor("clipSub");
             ctx.font = "9px sans-serif";
             ctx.fillText(`Vol: ${Math.round(audioClip.volume * 100)}%`, x + cw - 45, waveTop + 12);
           }
@@ -783,7 +868,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
 
     // 块左下角:元素 ID(类型前缀+数字;与属性面板标题一致)
     if (cw > 26) {
-      ctx.fillStyle = "rgba(30, 33, 40, 0.78)";
+      ctx.fillStyle = canvasColor("clipSub");
       ctx.font = "9px sans-serif";
       ctx.fillText(clip.id, x + 4, videoTop + videoH - 3);
     }
@@ -937,7 +1022,13 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         const selected = blockClips.some((bc) => selectedSet.has(bc.clip.id));
         const hovered = hoveredClipId === `${track.id}-${b.assetId}-${b.start}`;
 
-        renderFileBlock(ctx, blockClips, row, rep, track, x, cw, selected, hovered, vx0, vx1);
+        // 主题化片段绘色:按块类型选渐变对(视频/图片/纯音频)
+        const hasV = blockClips.some((c) => c.lane === "Video");
+        const aMeta = doc.assets.find((it) => it.id === rep.asset.asset_id);
+        const isImg = hasV && !!aMeta && !aMeta.has_audio && !aMeta.fps;
+        const c1 = canvasColor(hasV ? (isImg ? "clipI1" : "clipV1") : "clipA1");
+        const c2 = canvasColor(hasV ? (isImg ? "clipI2" : "clipV2") : "clipA2");
+        renderFileBlock(ctx, blockClips, row, rep, track, x, cw, selected, hovered, vx0, vx1, clipPreview, c1, c2);
       }
     }
 
@@ -961,18 +1052,21 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       if (x + cw < vx0 || x > vx1) continue; // 视口裁剪
       const ti = (docIndex.trackIdxById.get(clip.track_id) ?? -1);
       const isAudioBlock = clip.lane === "Audio" || track.kind === "Audio";
-      const [c0, c1] = isAudioBlock ? GRAD_AUDIO : GRAD_VIDEO;
+      const [c0, c1] = isAudioBlock
+        ? [canvasColor("clipA1"), canvasColor("clipA2")]
+        : [canvasColor("clipV1"), canvasColor("clipV2")];
       ctx.globalAlpha = laneHidden ? 0.25 : 1;
       const grad = ctx.createLinearGradient(0, laneTop, 0, laneTop + h);
       grad.addColorStop(0, c0);
       grad.addColorStop(1, c1);
       ctx.fillStyle = grad;
-      ctx.fillRect(x, laneTop, Math.max(cw, 2), h);
+      rrPath(ctx, x, laneTop, Math.max(cw, 2), h, clipRadiusPx());
+      ctx.fill();
       ctx.globalAlpha = 1;
       // 波形(视口内部分)
       const wf = waveforms?.[clip.asset.asset_id];
       if (wf && cw > 8) {
-        ctx.strokeStyle = "rgba(220, 235, 255, 0.55)";
+        ctx.strokeStyle = canvasColor("clipWave");
         ctx.beginPath();
         const x0 = Math.max(x, vx0);
         const x1 = Math.min(x + cw, vx1);
@@ -1299,7 +1393,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         staticRafRef.current = 0;
       }
     };
-  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, viewSize, curveEditIds]);
+  }, [doc, selectedSet, geo, contentW, scrollX, pxPerTick, waveforms, thumbs, thumbVersion, ghost, trimHint, hoverEdge, dropHint, trackH, tps, envLive, fadeLive, viewVideo, viewAudio, viewSize, curveEditIds, clipPreview]);
 
   // 卸载兜底:取消未决的静态层重绘/滚动合帧
   useEffect(
@@ -1609,7 +1703,6 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     if (hit) {
       const clip = docIndex.clipsById.get(hit.clipId)!;
-      // 曲线编辑模式:非编辑块被遮罩封锁 —— 不选中/不拖拽/不修剪
       if (curveEditIds && !curveEditIds.has(hit.clipId)) return;
       const track = docIndex.trackById.get(clip.track_id);
       if (track?.locked) return;
@@ -1696,6 +1789,29 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       // 增选(Shift/Ctrl):切换选中,不进入拖拽
       if (additive) {
         onClipClick(clip.id, true);
+        return;
+      }
+      // 文字 / 图片 / 定格等"无源"元素:没有源窗口可裁,左缘拖拽 = 平移出现
+      // 时间(整块移动,时长不变);右缘拖拽仍走 trimR 调整显示时长。
+      const noSource = !!clip.text || (clip.speed ?? 1) === 0;
+      if (isEdge && noSource && hit.edge === "left") {
+        onClipClick(clip.id, false);
+        let canvasRowM = 0;
+        for (let ti = 0; ti < doc.tracks.length; ti++) {
+          if (doc.tracks[ti].id === clip.track_id) break;
+          const tr = doc.tracks[ti];
+          canvasRowM += tr.kind === "File" ? (collapsed[tr.id]?.time ? 0 : 1) + 1 : 1;
+        }
+        dragRef.current = {
+          kind: "move",
+          clipId: hit.clipId,
+          startX: e.clientX,
+          origStart: clip.start,
+          grabTicks: 0, // 左缘贴合光标
+          fromRow: canvasRowM,
+          rightBtn: false,
+        };
+        moveTargetRef.current = { trackId: clip.track_id, row: canvasRowM, lane: clip.lane ?? null };
         return;
       }
       onClipClick(clip.id, false);
@@ -1849,6 +1965,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
       const t = ticksFromClientX(e.clientX);
       const hit = hitTest(t, e.clientX, e.clientY);
       setHoverEdge(hit?.edge === "left" || hit?.edge === "right" ? hit.edge : null);
+
       // 悬停文件块(用于整体高亮);同值跳过避免无谓重绘
       const nextHover = hit ? blockKeyOf(hit.clipId) : null;
       setHoveredClipId((prev) => (prev === nextHover ? prev : nextHover));
@@ -1856,6 +1973,7 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
     }
     const clip = docIndex.clipsById.get(d.clipId);
     if (!clip) return;
+
     // 修剪/滚动/滑切的吸附排除整个文件块(视频+音频同值边缘互吸会粘住拖动)
     const blockEx = blockClipIds(d.clipId);
     // move 拖动用鼠标原始 ticks(不吸附),其它操作(trim 等)继续用 snapTicks
@@ -2426,6 +2544,12 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
         >
           <input type="checkbox" checked={autoFollow} onChange={(e) => setAutoFollow(e.target.checked)} /> 自动跟随
         </label>
+        <label
+          title="元素块预览:开启后片段内显示帧图像/图片/文字/波形等可视化信息;关闭后用按类型着色的纯色块代替(视频蓝/图片青/音频绿/文字紫),节省渲染性能"
+          style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 10, color: clipPreview ? "var(--accent)" : undefined }}
+        >
+          <input type="checkbox" checked={clipPreview} onChange={(e) => setClipPreview(e.target.checked)} /> 元素块预览
+        </label>
         <label>
           轨高
           <input
@@ -2800,7 +2924,22 @@ const canvasRef = useRef<HTMLCanvasElement>(null);
           <div style={{ position: "relative", width: contentW, height: canvasH }}>
             <canvas
               ref={canvasRef}
-              style={{ display: "block", width: contentW, height: canvasH, cursor: spaceHeld ? "grab" : undefined }}
+              style={{
+                display: "block",
+                width: contentW,
+                height: canvasH,
+                cursor: spaceHeld
+                  ? "grab"
+                  : dragRef.current
+                    ? dragRef.current.kind === "move" || dragRef.current.kind === "slip"
+                      ? "grabbing"
+                      : "ew-resize"
+                    : hoverEdge
+                      ? "ew-resize"
+                      : hoveredClipId
+                        ? "grab"
+                        : undefined,
+              }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}

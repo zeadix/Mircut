@@ -3,7 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ChromaKey, Clip, ClipAnimKind, ColorGrade, Document, FxRect, LutApply, Mask, TextClipData, Transition } from "./types";
 import { sourceSecsAt, valueAt } from "./anim";
 import { Crosshair, FrameCorners, Magnet, ChartLine } from "@phosphor-icons/react";
-import Dock from "./bits/Dock";
 
 /// 转场类型(types.ts 未单独导出,从 Transition 派生)。
 type TransitionKind = Transition["kind"];
@@ -23,6 +22,9 @@ interface Props {
   autoSelect?: boolean;
   editMode?: boolean;
   snapOn?: boolean;
+  /** 底部进度条显示模式(受控;缺省用内部状态)。 */
+  progressMode?: "show" | "hide" | "auto";
+  onSetProgressMode?: (m: "show" | "hide" | "auto") => void;
   onToggleAutoSelect?: () => void;
   onToggleEditMode?: () => void;
   onToggleSnap?: () => void;
@@ -268,9 +270,11 @@ function PreviewInner({
   autoSelect: autoSelectProp,
   editMode: editModeProp,
   snapOn: snapOnProp,
+  progressMode: progressModeProp,
   onToggleAutoSelect,
   onToggleEditMode,
   onToggleSnap,
+  onSetProgressMode,
   playheadTicks,
   fps,
   playing,
@@ -302,7 +306,14 @@ const [url, setUrl] = useState<string | null>(null);
   /// 自动选取(快捷工具栏开关)。
   const [autoSelectState, setAutoSelect] = useState(true);
   /// 播放条显示模式:show 常显 / hide 隐藏 / auto 划过画布下方显示。
-  const [progressMode, setProgressMode] = useState<"show" | "hide" | "auto">("auto");
+  /// 顶栏按钮组受控(App 持有);缺省回退内部状态。
+  const [progressModeState, setProgressModeState] = useState<"show" | "hide" | "auto">("auto");
+  const progressMode = progressModeProp ?? progressModeState;
+  const cycleProgressMode = () => {
+    const next = progressMode === "show" ? "hide" : progressMode === "hide" ? "auto" : "show";
+    setProgressModeState(next);
+    onSetProgressMode?.(next);
+  };
   const [progressHover, setProgressHover] = useState(false);
   const autoSelect = autoSelectProp ?? autoSelectState;
   /// 变换编辑模式(显示调整框;默认开)。
@@ -1123,45 +1134,6 @@ const [url, setUrl] = useState<string | null>(null);
       }}
       onMouseLeave={() => setProgressHover(false)}
     >
-      {/* 预览工具浮动组(React Bits · Dock:悬停视差放大):画布右上角(仅画布形态) */}
-      {!isPlayer && (
-      <div style={{ position: "absolute", right: 8, top: 8, zIndex: 12 }}>
-      <Dock baseSize={22} magnification={30}>
-        <button
-          className={`chip${autoSelect ? " on" : ""}`}
-          onClick={() => onToggleAutoSelect?.()}
-          title={autoSelect ? "自动选取开:点击画面中任意视频框直接选中" : "自动选取关"}
-        >
-          <Crosshair size={14} weight={autoSelect ? "fill" : "regular"} />
-        </button>
-        <button
-          className={`chip${editMode ? " on" : ""}`}
-          onClick={() => onToggleEditMode?.()}
-          title={editMode ? "变换开:选中层显示调整框(拖拽移动/缩放/旋转)" : "变换关"}
-        >
-          <FrameCorners size={14} weight={editMode ? "fill" : "regular"} />
-        </button>
-        <button
-          className={`chip${snapOn ? " on" : ""}`}
-          onClick={() => onToggleSnap?.()}
-          title={snapOn ? "磁吸开(拖拽吸附到边界/其他层)" : "磁吸关"}
-        >
-          <Magnet size={14} weight={snapOn ? "fill" : "regular"} />
-        </button>
-        {!isPlayer && (
-        <button
-          className="chip"
-          onClick={() =>
-            setProgressMode(progressMode === "show" ? "hide" : progressMode === "hide" ? "auto" : "show")
-          }
-          title={`进度条:${progressMode === "show" ? "常显" : progressMode === "hide" ? "隐藏" : "自动(划过画布下方显示)"}(点击切换)`}
-        >
-          <ChartLine size={14} weight={progressMode !== "hide" ? "fill" : "light"} />
-        </button>
-        )}
-      </Dock>
-      </div>
-      )}
 
       {/* 播放条:player 形态专属(播放器风格常显,点击/拖拽 seek,与时间轴帧同步) */}
       {isPlayer && totalTicks > 0 && (

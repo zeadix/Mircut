@@ -191,7 +191,10 @@ pub(crate) fn remove_asset(asset_id: String, state: State<'_, AppState>) -> bool
 
 /// 删除素材:从列表移除并删除磁盘文件(文件删除不可撤销)。
 #[tauri::command(async)]
-pub(crate) fn delete_asset_file(asset_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+pub(crate) fn delete_asset_file(
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
     let path = {
         let mut inner = state.inner.lock().unwrap();
         inner.ensure();
