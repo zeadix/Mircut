@@ -1309,3 +1309,59 @@ fieldset legend {
   backdrop-filter: blur(22px) saturate(1.25);
   -webkit-backdrop-filter: blur(22px) saturate(1.25);
 }
+
+
+/* ===== 浮动窗口 chrome 与弹窗/停靠面板同语言 =====
+   修复:浮动独立窗口(媒体库/字幕等)此前是"21px 透明头 + 无边框投影",
+   与停靠面板、弹窗三种观感。统一为:圆角/边框/投影/--modal-bg 全走 token。 */
+[data-theme="cinema"] .dock-host .flexlayout__float_window,
+[data-theme="aurora"] .dock-host .flexlayout__float_window,
+[data-theme="filmlab"] .dock-host .flexlayout__float_window,
+[data-theme="glass"] .dock-host .flexlayout__float_window {
+  border-radius: var(--radius-pop);
+  border: 1px solid var(--border-strong);
+  background: var(--modal-bg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+[data-theme="cinema"] .dock-host .flexlayout__float_window_header,
+[data-theme="aurora"] .dock-host .flexlayout__float_window_header,
+[data-theme="filmlab"] .dock-host .flexlayout__float_window_header,
+[data-theme="glass"] .dock-host .flexlayout__float_window_header {
+  background: var(--header);
+  border-bottom: 1px solid var(--border);
+  min-height: 26px;
+  padding: 0 6px;
+}
+[data-theme="cinema"] .dock-host .flexlayout__float_window_content,
+[data-theme="aurora"] .dock-host .flexlayout__float_window_content,
+[data-theme="filmlab"] .dock-host .flexlayout__float_window_content,
+[data-theme="glass"] .dock-host .flexlayout__float_window_content {
+  background: transparent;
+}
+[data-theme="glass"] .dock-host .flexlayout__float_window,
+[data-theme="aurora"] .dock-host .flexlayout__float_window {
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+}
+[data-theme="platinum"] .dock-host .flexlayout__float_window {
+  border-radius: var(--radius-pop);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+[data-theme="platinum"] .dock-host .flexlayout__float_window_header {
+  background: var(--header);
+  border-bottom: 1px solid var(--border);
+}
+/* 浮动窗口内容区:避免半透明双叠(tab content 又画一遍 --panel) */
+[data-theme="cinema"] .dock-host .flexlayout__float_window .flexlayout__tab,
+[data-theme="aurora"] .dock-host .flexlayout__float_window .flexlayout__tab,
+[data-theme="filmlab"] .dock-host .flexlayout__float_window .flexlayout__tab,
+[data-theme="glass"] .dock-host .flexlayout__float_window .flexlayout__tab {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
