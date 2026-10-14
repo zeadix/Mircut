@@ -6,7 +6,7 @@ const KEY = "veditor-lang";
 
 const DICT: Record<Lang, Record<string, string>> = {
   zh: {
-    "app.title": "VEditor",
+    "app.title": "MirCut",
     "menu.project": "项目",
     "menu.settings": "设置",
     "menu.checkUpdate": "检查更新",
@@ -18,10 +18,10 @@ const DICT: Record<Lang, Record<string, string>> = {
     "menu.settingsAppearance": "外观",
     "menu.settingsShortcuts": "快捷键",
     "menu.help": "帮助",
-    "menu.about": "关于 VEditor",
+    "menu.about": "关于 MirCut",
     "menu.helpTopics": "使用帮助",
-    "about.title": "关于 VEditor",
-    "about.desc": "面向专业/半专业创作者的开源桌面视频编辑器:多轨帧精度剪辑、曲线变速、关键帧动画、AI 字幕 / 抠像 / 人声分离,全部本地运行。",
+    "about.title": "关于 MirCut",
+    "about.desc": "镜刻(MirCut)是面向专业/半专业创作者的开源桌面视频编辑器:多轨帧精度剪辑、曲线变速、关键帧动画、AI 字幕 / 抠像 / 人声分离,全部本地运行。",
     "about.version": "版本",
     "about.homepage": "主页",
     "about.source": "开源",
@@ -141,7 +141,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     "status.loading": "加载中...",
   },
   ja: {
-    "app.title": "VEditor",
+    "app.title": "MirCut",
     "menu.project": "プロジェクト",
     "menu.checkUpdate": "アップデートを確認",
     "menu.settings": "設定",
@@ -241,7 +241,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     "status.loading": "読み込み中…",
   },
   fr: {
-    "app.title": "VEditor",
+    "app.title": "MirCut",
     "menu.project": "Projet",
     "menu.checkUpdate": "Rechercher les mises à jour",
     "menu.settings": "Paramètres",
@@ -340,7 +340,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     "status.loading": "Chargement…",
   },
   de: {
-    "app.title": "VEditor",
+    "app.title": "MirCut",
     "menu.project": "Projekt",
     "menu.checkUpdate": "Nach Updates suchen",
     "menu.settings": "Einstellungen",
@@ -439,7 +439,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     "status.loading": "Wird geladen…",
   },
   en: {
-    "app.title": "VEditor",
+    "app.title": "MirCut",
     "menu.project": "Project",
     "menu.settings": "Settings",
     "menu.checkUpdate": "Check for updates",
@@ -451,10 +451,10 @@ const DICT: Record<Lang, Record<string, string>> = {
     "menu.settingsAppearance": "Appearance",
     "menu.settingsShortcuts": "Keyboard Shortcuts",
     "menu.help": "Help",
-    "menu.about": "About VEditor",
+    "menu.about": "About MirCut",
     "menu.helpTopics": "User Guide",
-    "about.title": "About VEditor",
-    "about.desc": "An open-source desktop video editor for pro and semi-pro creators: multi-track frame-accurate editing, curve speed ramps, keyframe animation, and local AI subtitles / matting / vocal separation.",
+    "about.title": "About MirCut",
+    "about.desc": "MirCut is an open-source desktop video editor for pro and semi-pro creators: multi-track frame-accurate editing, curve speed ramps, keyframe animation, and local AI subtitles / matting / vocal separation.",
     "about.version": "Version",
     "about.homepage": "Website",
     "about.source": "Source",

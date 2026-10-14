@@ -1955,7 +1955,7 @@ export default function App() {  /// 全局编辑器状态(store):doc/selected/p
       <header style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 16px", background: "var(--header)", borderBottom: "1px solid var(--border)" }}>
         <FilmSlate size={22} />
         <strong style={{ marginRight: 8 }}>
-          <SplitText text="VEditor" />
+          <SplitText text="MirCut" />
         </strong>
         <MenuBar
           menus={[

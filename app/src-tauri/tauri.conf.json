@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VEditor",
+  "productName": "MirCut",
   "version": "0.2.0",
   "identifier": "com.veditor.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "VEditor",
+        "title": "MirCut 镜刻",
         "width": 1280,
         "height": 800,
         "dragDropEnabled": false
@@ -31,8 +31,8 @@
     "targets": "all",
     "icon": ["icons/icon.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/32x32.png"],
     "category": "Video",
-    "shortDescription": "VEditor - 开源剪映式视频编辑器",
-    "longDescription": "VEditor 是基于 Rust/Tauri/FFmpeg 的开源桌面视频编辑器,支持多轨剪辑、关键帧动画、蒙版、混合模式、字幕/ASR、导出等。",
+    "shortDescription": "MirCut 镜刻 - 开源专业视频剪辑器",
+    "longDescription": "MirCut(镜刻)是基于 Rust/Tauri/FFmpeg 的开源桌面视频编辑器,支持多轨剪辑、关键帧动画、蒙版、混合模式、字幕/ASR、导出等。",
     "copyright": "Copyright © 2026 VEditor contributors",
     "linux": {
       "deb": {

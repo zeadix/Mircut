@@ -14,8 +14,8 @@ use crate::models::install_whisper_engine;
 
 /// 软件更新:公开清单地址(release CI 生成并上传到 R2,内容格式见
 /// docs/latest.manifest.example.json)。
-const UPDATE_MANIFEST_URL: &str = "https://updates.veditor.app/latest.json";
-const UPDATE_SIG_URL: &str = "https://updates.veditor.app/latest.json.sig";
+const UPDATE_MANIFEST_URL: &str = "https://mircut.download.zeadix.com/latest.json";
+const UPDATE_SIG_URL: &str = "https://mircut.download.zeadix.com/latest.json.sig";
 
 /// Ed25519 公钥(原始 32 字节),对应私钥只存在于 release CI 的
 /// `VEDITOR_UPDATE_SIGNING_KEY` secret。清单必须携带有效 detached 签名

@@ -2,7 +2,7 @@
   "_comment": "软件更新清单样例(release CI 自动生成,含 Ed25519 detached 签名 latest.json.sig)。托管于 UPDATE_MANIFEST_URL(app/src-tauri/src/main.rs 常量,即 R2 自定义域)。version 与发布 tag 一致;files 为各平台直链(sha256=安装包,sha256_portable=便携包);history 保留最近若干版供官网展示。",
   "version": "0.2.0",
   "date": "2026-09-18",
-  "download_url": "https://veditor.app/zh/download",
+  "download_url": "https://mircut.zeadix.com/zh/download",
   "changes": [
     "新增: 曲线变速与速度关键帧",
     "修复: 时间轴拖动卡顿"
@@ -13,21 +13,21 @@
   ],
   "files": {
     "linux": {
-      "portable": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-linux-x86_64.AppImage",
+      "portable": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-linux-x86_64.AppImage",
       "sha256_portable": "<64 位十六进制>",
-      "installer": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-linux-amd64.deb",
+      "installer": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-linux-amd64.deb",
       "sha256": "<64 位十六进制>"
     },
     "windows": {
-      "installer": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-windows-x64.msi",
+      "installer": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-windows-x64.msi",
       "sha256": "<64 位十六进制>",
-      "portable": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-windows-x64-setup.exe",
+      "portable": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-windows-x64-setup.exe",
       "sha256_portable": "<64 位十六进制>"
     },
     "macos": {
-      "installer": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-macos-aarch64.dmg",
+      "installer": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-macos-aarch64.dmg",
       "sha256": "<64 位十六进制>",
-      "portable": "https://updates.veditor.app/v0.2.0/veditor-v0.2.0-macos-aarch64.app.zip",
+      "portable": "https://mircut.download.zeadix.com/v0.2.0/mircut-v0.2.0-macos-aarch64.app.zip",
       "sha256_portable": "<64 位十六进制>"
     }
   },

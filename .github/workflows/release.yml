@@ -18,9 +18,9 @@ permissions:
   contents: write
 
 env:
-  R2_BUCKET: veditor-releases
-  R2_PUBLIC_URL: https://updates.veditor.app
-  SITE_DOWNLOAD_URL: https://veditor.app/zh/download
+  R2_BUCKET: mircut-ci
+  R2_PUBLIC_URL: https://mircut.download.zeadix.com
+  SITE_DOWNLOAD_URL: https://mircut.zeadix.com/zh/download
 
 jobs:
   # ---------------- Linux(deb / AppImage) ----------------
@@ -67,8 +67,8 @@ jobs:
       - name: 收集产物与校验值
         run: |
           mkdir -p dist
-          find app/src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-linux-x86_64.AppImage" \;
-          find app/src-tauri/target/release/bundle -name "*.deb" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-linux-amd64.deb" \;
+          find app/src-tauri/target/release/bundle -name "*.AppImage" -exec cp {} "dist/mircut-${GITHUB_REF_NAME}-linux-x86_64.AppImage" \;
+          find app/src-tauri/target/release/bundle -name "*.deb" -exec cp {} "dist/mircut-${GITHUB_REF_NAME}-linux-amd64.deb" \;
           cd dist
           for f in *.AppImage *.deb; do sha256sum "$f" > "$f.sha256"; done
           ls -la
@@ -114,8 +114,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find app/src-tauri/target/release/bundle/msi -name "*.msi" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-windows-x64.msi" \;
-          find app/src-tauri/target/release/bundle/nsis -name "*-setup.exe" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-windows-x64-setup.exe" \;
+          find app/src-tauri/target/release/bundle/msi -name "*.msi" -exec cp {} "dist/mircut-${GITHUB_REF_NAME}-windows-x64.msi" \;
+          find app/src-tauri/target/release/bundle/nsis -name "*-setup.exe" -exec cp {} "dist/mircut-${GITHUB_REF_NAME}-windows-x64-setup.exe" \;
           cd dist
           for f in *.msi *.exe; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
           ls -la
@@ -159,9 +159,9 @@ jobs:
       - name: 收集产物与校验值
         run: |
           mkdir -p dist
-          find app/src-tauri/target/release/bundle/dmg -name "*.dmg" -exec cp {} "dist/veditor-${GITHUB_REF_NAME}-macos-aarch64.dmg" \;
+          find app/src-tauri/target/release/bundle/dmg -name "*.dmg" -exec cp {} "dist/mircut-${GITHUB_REF_NAME}-macos-aarch64.dmg" \;
           APP=$(find app/src-tauri/target/release/bundle/macos -maxdepth 1 -name "*.app" | head -1)
-          (cd app/src-tauri/target/release/bundle/macos && zip -qry "$GITHUB_WORKSPACE/dist/veditor-${GITHUB_REF_NAME}-macos-aarch64.app.zip" "$(basename "$APP")")
+          (cd app/src-tauri/target/release/bundle/macos && zip -qry "$GITHUB_WORKSPACE/dist/mircut-${GITHUB_REF_NAME}-macos-aarch64.app.zip" "$(basename "$APP")")
           cd dist
           for f in *.dmg *.zip; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done
           ls -la
@@ -292,12 +292,12 @@ jobs:
         run: |
           # sha256 文件由各平台 runner 产出,Windows 写 CRLF,统一剥离
           clean() { tr -d '\r\n \t' < "artifacts/$1" 2>/dev/null || true; }
-          LIN_APP_SHA=$(clean linux-build/veditor-${VERSION}-linux-x86_64.AppImage.sha256)
-          LIN_DEB_SHA=$(clean linux-build/veditor-${VERSION}-linux-amd64.deb.sha256)
-          WIN_MSI_SHA=$(clean windows-build/veditor-${VERSION}-windows-x64.msi.sha256)
-          WIN_EXE_SHA=$(clean windows-build/veditor-${VERSION}-windows-x64-setup.exe.sha256)
-          MAC_DMG_SHA=$(clean macos-build/veditor-${VERSION}-macos-aarch64.dmg.sha256)
-          MAC_ZIP_SHA=$(clean macos-build/veditor-${VERSION}-macos-aarch64.app.zip.sha256)
+          LIN_APP_SHA=$(clean linux-build/mircut-${VERSION}-linux-x86_64.AppImage.sha256)
+          LIN_DEB_SHA=$(clean linux-build/mircut-${VERSION}-linux-amd64.deb.sha256)
+          WIN_MSI_SHA=$(clean windows-build/mircut-${VERSION}-windows-x64.msi.sha256)
+          WIN_EXE_SHA=$(clean windows-build/mircut-${VERSION}-windows-x64-setup.exe.sha256)
+          MAC_DMG_SHA=$(clean macos-build/mircut-${VERSION}-macos-aarch64.dmg.sha256)
+          MAC_ZIP_SHA=$(clean macos-build/mircut-${VERSION}-macos-aarch64.app.zip.sha256)
           export LIN_APP_SHA LIN_DEB_SHA WIN_MSI_SHA WIN_EXE_SHA MAC_DMG_SHA MAC_ZIP_SHA
 
           python3 << 'PYEOF'
@@ -305,7 +305,7 @@ jobs:
           V = os.environ["VERSION"]
           N = V.lstrip("v")
           URL = os.environ["R2_PUBLIC_URL"]
-          base = f"{URL}/{V}/veditor-{V}"
+          base = f"{URL}/{V}/mircut-{V}"
           sha = lambda name: os.environ.get(name, "")
           current = {
               "version": N,
